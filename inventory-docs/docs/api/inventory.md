@@ -57,21 +57,86 @@ Response `201` gồm `reservation_id`, status `RESERVED`, expires_at và items. 
 
 ### 3.3 Commit/release
 
-- `POST /internal/inventory/reservations/{id}/commit` body `{order_id,reason?}`; `RESERVED → COMMITTED`, giảm reserved, append movement.
-- `POST /internal/inventory/reservations/{id}/release` body `{reason}`; `RESERVED → RELEASED`, trả available, append movement.
-- Gọi lại cùng command sau trạng thái hoàn tất trả idempotent result; commit reservation released/expired trả `409 INVENTORY_RESERVATION_STATE_INVALID`.
+`POST /internal/inventory/reservations/{id}/commit` body `{order_id,reason?}`. Response `200`:
+
+```json
+{ "data": { "reservation_id": "res-01912fa1", "status": "COMMITTED", "order_id": "order-01912f91", "committed_at": "2026-08-30T09:05:00Z" }, "meta": { "request_id": "01912fa2" } }
+```
+
+`RESERVED → COMMITTED`, giảm reserved, append movement.
+
+`POST /internal/inventory/reservations/{id}/release` body `{reason}`. Response `200`:
+
+```json
+{ "data": { "reservation_id": "res-01912fa1", "status": "RELEASED", "reason": "ORDER_CANCELLED", "released_at": "2026-08-30T09:05:00Z" }, "meta": { "request_id": "01912fa3" } }
+```
+
+`RESERVED → RELEASED`, trả available, append movement. Gọi lại cùng command sau trạng thái hoàn tất trả idempotent result (cùng response); commit reservation released/expired trả `409 INVENTORY_RESERVATION_STATE_INVALID`.
 
 ### 3.4 `GET /seller/inventory`
 
 Query `sku_id?`, `product_id?`, `status?`, `page`, `size`; seller chỉ thấy shop scope. Trả available/reserved, version, updated_at; không cho sửa reserved.
 
+```json
+{
+  "data": [
+    {
+      "sku_id": "sku-01912f33",
+      "product_id": "product-01912f31",
+      "seller_sku": "AC-COTTON-01",
+      "available_qty": 42,
+      "reserved_qty": 5,
+      "status": "ACTIVE",
+      "low_stock": false,
+      "version": 12,
+      "updated_at": "2026-08-30T09:00:00Z"
+    }
+  ],
+  "meta": { "request_id": "01912fb5-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 84 }
+}
+```
+
+`low_stock` là display hint (`available_qty <= LOW_STOCK_THRESHOLD`, ngưỡng do Product Catalog quản lý — xem `product-catalog-docs/docs/lld/product-catalog.md`), **không** phải trạng thái nghiệp vụ; Inventory không tự chặn hành động dựa trên field này.
+
 ### 3.5 `PATCH /seller/inventory/{skuId}/adjust`
 
-Headers Idempotency-Key. Request `{ "delta_available": 10, "reason": "Nhập thêm hàng", "version": 4 }`. Chỉ adjustment available; nếu delta âm làm quantity <0 trả `409 INVENTORY_ADJUSTMENT_INVALID/INVENTORY_STOCK_INSUFFICIENT`; append movement/audit/outbox atomically.
+Headers Idempotency-Key. Request:
+
+```json
+{ "delta_available": 10, "reason": "Nhập thêm hàng", "version": 4 }
+```
+
+Response `200`:
+
+```json
+{ "data": { "sku_id": "sku-01912f33", "available_qty": 52, "reserved_qty": 5, "version": 5 }, "meta": { "request_id": "01912fa4" } }
+```
+
+Chỉ adjustment available; nếu delta âm làm quantity <0 trả `409 INVENTORY_ADJUSTMENT_INVALID/INVENTORY_STOCK_INSUFFICIENT`; append movement/audit/outbox atomically.
 
 ### 3.6 `GET /admin/inventory/reconciliation`
 
-Query SKU/shop/time; trả balance, aggregate movement, active reservations, difference và `reconciliation_status`. Chỉ admin; không sửa dữ liệu qua GET.
+Query `sku_id?`, `shop_id?`, `from?`, `to?`, `status?` (`MATCHED`|`MISMATCH`), `page`, `size`. Chỉ admin; không sửa dữ liệu qua GET.
+
+```json
+{
+  "data": [
+    {
+      "sku_id": "sku-01912f33",
+      "shop_id": "shop-01912f31",
+      "balance": { "available_qty": 42, "reserved_qty": 5 },
+      "movement_sum": { "delta_available": 42, "delta_reserved": 5 },
+      "active_reservations": 2,
+      "difference": 0,
+      "reconciliation_status": "MATCHED",
+      "as_of": "2026-08-30T09:00:00Z"
+    }
+  ],
+  "meta": { "request_id": "01912fb6-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 3 }
+}
+```
+
+`difference = balance.available_qty − Σ movement_sum.delta_available` (kỳ vọng luôn `0`); khác `0` → `reconciliation_status="MISMATCH"`, dòng này cần vận hành điều tra thủ công — endpoint chỉ đọc, không tự sửa.
 
 ### 3.7 Health
 

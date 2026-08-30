@@ -61,8 +61,21 @@ Không có public endpoint để client tự gửi Email hoặc chọn template 
 
 ### 3.2 Mark read
 
-- `PATCH /notifications/{id}/read` body `{version?}`; user scope, idempotent.
-- `PATCH /notifications/read-all` body `{before?}`; chỉ in-app notifications của user; không thay đổi email delivery status.
+`PATCH /notifications/{id}/read` body `{ "version": 3 }` (optional). Response `200`:
+
+```json
+{ "data": { "notification_id": "ntf-01912fe0", "read": true }, "meta": { "request_id": "01912fe4-7a1b-7c12-9c55-8b1c34a6d921" } }
+```
+
+User scope, idempotent.
+
+`PATCH /notifications/read-all` body `{ "before": "2026-08-30T09:00:00Z" }` (optional). Response `200`:
+
+```json
+{ "data": { "marked_count": 8 }, "meta": { "request_id": "01912fe5-7a1b-7c12-9c55-8b1c34a6d921", "unread_count": 4 } }
+```
+
+Chỉ in-app notifications của user; không thay đổi email delivery status.
 
 ### 3.3 Preferences
 
@@ -86,18 +99,68 @@ Không có public endpoint để client tự gửi Email hoặc chọn template 
 
 ### 3.4 Admin delivery
 
-`GET /admin/notifications/deliveries` query status/channel/template/date/page/size; trả safe attempt/provider status/error code, recipient masked/hash, không raw body/token. Admin role/permission do Gateway/Auth User enforce.
+`GET /admin/notifications/deliveries` query `status?` (`QUEUED`|`SENT`|`FAILED`|`SKIPPED`|`EXPIRED`), `channel?`, `template?`, `from?`, `to?`, `recipient_hash?`, `page`, `size`. Admin role/permission do Gateway/Auth User enforce.
+
+```json
+{
+  "data": [
+    {
+      "notification_id": "ntf-01912fe0",
+      "channel": "EMAIL",
+      "template": "order-success-v1",
+      "status": "SENT",
+      "attempt_count": 1,
+      "recipient_masked": "ng***@gmail.com",
+      "provider_status": "delivered",
+      "error_code": null,
+      "queued_at": "2026-08-30T09:03:15Z",
+      "sent_at": "2026-08-30T09:03:20Z"
+    },
+    {
+      "notification_id": "ntf-01912fe1",
+      "channel": "EMAIL",
+      "template": "payout-result-v1",
+      "status": "FAILED",
+      "attempt_count": 3,
+      "recipient_masked": "se***@shop.vn",
+      "provider_status": "bounced",
+      "error_code": "SMTP_MAILBOX_UNAVAILABLE",
+      "queued_at": "2026-08-30T08:00:00Z",
+      "sent_at": null
+    }
+  ],
+  "meta": { "request_id": "01912fe3-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 4210 }
+}
+```
+
+`recipient_masked`/`recipient_hash` — không bao giờ trả email/phone đầy đủ. `error_code` chỉ dùng allowlist từ provider adapter đã redact, không trả raw provider error string.
 
 ### 3.5 Internal command contract
 
 Notification nhận **hai loại input** (chi tiết ở LLD §6.2):
 
-1. **Domain event** trên topic của service chủ — `order.paid`, `order.cancelled`, `invoice.issued`, `shipment.delivered`, `shipment.failed`, `payment.succeeded/failed`, `payout.succeeded/failed`. Notification **tự** map event → template; producer không cần biết template.
+1. **Domain event** trên topic của service chủ — `order.confirmed`, `order.paid`, `order.cancelled`, `invoice.issued`, `shipment.delivered`, `shipment.failed`, `payment.succeeded/failed`, `payout.succeeded/failed`. Notification **tự** map event → template; producer không cần biết template.
 2. **Command** trên `notification.commands.v1` — chỉ gồm `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED`, `MESSAGE_RECEIVED`, `REVIEW_REQUESTED`.
 
-> **Không có command `ORDER_SUCCESS`** — email đơn hàng đến từ domain event `order.paid`, map sang template `order-success-v1`.
+> **Không có command `ORDER_SUCCESS`** — email xác nhận đơn hàng đến từ domain event `order.confirmed`, map sang template `order-success-v1`. Không dùng `order.paid` cho email này: với COD `order.paid` chỉ tới sau khi giao hàng xong.
 
-Mọi input có `event_id`, `dedupe_key`, `schema_version` và data theo allowlist; consumer persist rồi mới dispatch. Producer **không** được gọi public API để bypass dedupe.
+Envelope command (producer khác — auth-user, message, rating-comment — phải phát đúng hình dạng này lên `notification.commands.v1`):
+
+```json
+{
+  "event_id": "01912fb0-7a1b-7c12-9c55-8b1c34a6d921",
+  "schema_version": 1,
+  "command_type": "AUTH_VERIFICATION_REQUESTED",
+  "occurred_at": "2026-08-30T12:00:00Z",
+  "dedupe_key": "auth-verification:user-1:token-01912fb1",
+  "recipient": { "user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921", "email": "masked-at-runtime" },
+  "channels": ["EMAIL"],
+  "template": "auth-verification-v1",
+  "data": { "verification_url": "https://taca.vn/verify?t=…", "expires_in_minutes": 30 }
+}
+```
+
+Mọi input có `event_id`, `dedupe_key`, `schema_version` và data theo allowlist; consumer persist rồi mới dispatch. Producer **không** được gọi public API để bypass dedupe. `command_type` ngoài 5 giá trị allowlist ở trên → `400 NOTIFICATION_INVALID_INPUT`, không tự tạo template mới.
 
 ### 3.6 Health
 

@@ -90,12 +90,40 @@ Append-only: `id`, `sku_id`, `reservation_id` nullable, `order_intent_id` nullab
 
 ## 6. Migration và seed
 
-1. Tạo balance/reservation/movement/outbox/idempotency/audit tables.
-2. Tạo unique indexes sau duplicate preflight.
-3. Seed SKU active quantity 10, 0, disabled và reserved fixture.
-4. Reconcile `available + reserved`, movement ledger và reservations.
-5. Test deadlock/lock timeout/expiry job hai instance trước production.
-6. Không hard-delete movement/reservation history; archive theo retention policy sau khi chốt.
+### 6.1 Thứ tự migration
+
+| Thứ tự | Nội dung | Phụ thuộc |
+|---:|---|---|
+| 001 | Tạo database `inventorydb`, charset/collation, migration metadata | — |
+| 002 | Tạo `inventory_items` (unique `sku_id`) | — |
+| 003 | Tạo `stock_reservations` | — |
+| 004 | Tạo `stock_reservation_items` (unique `(reservation_id,sku_id)`), FK → `stock_reservations` | `stock_reservations` |
+| 005 | Tạo `stock_movements` (append-only) | `inventory_items`, `stock_reservations` |
+| 006 | Tạo `idempotency_keys` | — |
+| 007 | Tạo `outbox_events` | — |
+| 008 | Tạo `inventory_audits` | `inventory_items` |
+| 009 | Thêm index `(order_intent_id,status)`, `(status,expires_at)` trên `stock_reservations`; `(sku_id,occurred_at)` trên `stock_movements` | Tất cả bảng liên quan |
+| 010 | Thêm CHECK constraint `qty_available>=0`, `qty_reserved>=0` trên `inventory_items` | `inventory_items` |
+| 011 | Seed fixture cho local/test (§6.2) | Tất cả bảng trên |
+
+Mỗi migration có `up`/`down` cho local/test. Production không hard-delete `stock_movements`/`stock_reservations` — retention policy áp dụng archive job, không phải migration xoá bảng.
+
+### 6.2 Seed tối thiểu cho local/test
+
+| Seed | Giá trị |
+|---|---|
+| `inventory_items` | 1 SKU `qty_available=10, qty_reserved=0` (bình thường); 1 SKU `qty_available=0` (hết hàng); 1 SKU `status=DISABLED`; 1 SKU `qty_available=5, qty_reserved=5` (đang bị giữ hết). |
+| `stock_reservations` | 1 `RESERVED` chưa hết hạn; 1 `RESERVED` đã hết `expires_at` (test job expire); 1 `COMMITTED`; 1 `RELEASED`. |
+| `stock_movements` | Đủ movement khớp balance hiện tại của từng `inventory_items` fixture ở trên — dùng để test reconciliation (§3.6 API `/admin/inventory/reconciliation`) ra `MATCHED`. |
+| `idempotency_keys` | 1 key đã dùng cho reserve, còn hạn 24h — test replay trả cùng response. |
+
+Không seed dữ liệu liên quan tới order/shop thật; `sku_id`/`order_intent_id` dùng UUID cố định để test khác cross-reference được.
+
+### 6.3 Kiểm tra bắt buộc trước khi chạy migration production
+
+1. Reconcile `qty_available + qty_reserved` khớp `Σ stock_movements.delta` cho từng SKU — migration phải fail nếu lệch, không tự sửa.
+2. Test deadlock/lock timeout với 2 instance ghi đồng thời cùng SKU trước khi rollout.
+3. Verify `stock_reservation_items` không có `(reservation_id,sku_id)` trùng trước khi tạo unique index.
 
 ## 7. Giả định & câu hỏi mở
 

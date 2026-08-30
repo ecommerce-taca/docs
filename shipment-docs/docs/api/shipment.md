@@ -21,7 +21,8 @@
 |---:|---|---|---|
 | 1 | `GET /orders/{orderId}/shipment` | Buyer | Tracking shipment own order. |
 | 2 | `GET /seller/orders/{orderId}/shipment` | Seller | Shop tracking. |
-| 3 | `GET /internal/shipping/quote` | Order/internal | Shipping fee estimate. |
+| 2a | `GET /seller/orders/{orderId}/shipment/carriers` | Seller | So sánh phí/ETA từng carrier trước khi chọn. |
+| 3 | `GET /internal/shipping/quote` | Order/internal | Shipping fee estimate (buyer checkout, carrier mặc định). |
 | 4 | `POST /internal/shipments` | Order/Seller internal | Create shipment. |
 | 5 | `POST /internal/shipments/{shipmentId}/cancel` | Order/Seller internal | Cancel before pickup. |
 | 6 | `POST /webhooks/shipping/{carrier}` | Carrier | Receive status webhook. |
@@ -60,6 +61,31 @@
 
 `timeline` chỉ chứa trạng thái an toàn — **không** trả địa chỉ thô, số điện thoại tài xế, hay payload carrier gốc. Đơn chưa tạo vận đơn → `404 SHIPMENT_NOT_FOUND` (không trả object rỗng).
 
+### 3.1a `GET /seller/orders/{orderId}/shipment/carriers` — so sánh carrier
+
+**Seller tự chọn carrier** khi chuẩn bị hàng (Penpot: `Overlay / Prepare shipment`, `Field / Carrier` với `GHN Express`/`SPX Express`/`J&T Express`). Endpoint này phục vụ đúng màn đó — trả phí + ETA của **từng** carrier khả dụng để seller so sánh trước khi bấm "Xác nhận & chuẩn bị".
+
+Chỉ gọi được khi order đã `CONFIRMED` và **chưa có shipment** (`shipment.status = NOT_CREATED`); order đã có shipment → `409 SHIPMENT_ALREADY_EXISTS`, seller xem quote cũ qua §3.1.
+
+Response `200`:
+
+```json
+{
+  "data": {
+    "order_id": "order-01912f91",
+    "carriers": [
+      { "carrier": "GHN",  "available": true,  "fee": 32000, "estimate": { "min_days": 2, "max_days": 4 } },
+      { "carrier": "SPX",  "available": true,  "fee": 28000, "estimate": { "min_days": 3, "max_days": 5 } },
+      { "carrier": "J&T",  "available": false, "fee": null,  "estimate": null, "unavailable_reason": "REGION_NOT_COVERED" }
+    ],
+    "quote_expires_at": "2026-08-30T09:30:00Z"
+  },
+  "meta": { "request_id": "01912fb4-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`available:false` khi carrier không phủ khu vực giao/lấy hàng hoặc adapter đang lỗi — FE disable option đó, không ẩn hẳn (để seller hiểu vì sao không chọn được). Quote hết hạn không chặn tạo shipment — giống `GET /internal/shipping/quote`, phí thật chốt tại lúc tạo. `MOCK` không xuất hiện trong danh sách này (chỉ dùng nội bộ cho test/staging).
+
 ### 3.2 `GET /internal/shipping/quote`
 
 | Query | Kiểu | Bắt buộc | Ràng buộc |
@@ -67,7 +93,7 @@
 | `from_shop_id` | string | Có | — |
 | `to_address_id` | string | Có | Snapshot địa chỉ ≤ 16 KiB |
 | `items` | array | Có | `{sku_id, quantity, weight_gram?, length_cm?, width_cm?, height_cm?}`, ≤100 dòng |
-| `carrier` | enum | Không | `GHN` \| `MOCK`, mặc định `GHN` |
+| `carrier` | enum | Không | `GHN` \| `SPX` \| `J&T` \| `MOCK`, mặc định `GHN` |
 
 ```json
 {
@@ -83,6 +109,8 @@
 ```
 
 Không tạo shipment. Không log địa chỉ thô. Quote hết hạn không chặn tạo shipment — phí thật chốt tại `POST /internal/shipments`.
+
+Endpoint này phục vụ **buyer checkout** (Order-Commerce gọi để hiển thị phí ship trước khi đặt hàng — hệ thống tự dùng carrier mặc định `GHN`, buyer không chọn carrier). Việc **seller chọn carrier lúc chuẩn bị hàng** dùng endpoint riêng — xem §3.1a.
 
 ### 3.3 `POST /internal/shipments`
 
@@ -128,9 +156,15 @@ Response `201`:
 
 Mỗi shop-order **một** shipment; gọi trùng trả shipment cũ (`200`, không tạo mới). `cod_amount > 0` chỉ hợp lệ khi order dùng COD. Carrier timeout → **không** retry create một cách mù quáng: shipment vào `PENDING_RECONCILIATION`, job đối soát sẽ tra theo `Idempotency-Key`/`order_id`.
 
+`carrier` trong body này là carrier **seller đã chọn** ở §3.1a, do Order-Commerce truyền xuống nguyên văn khi seller bấm "Xác nhận & chuẩn bị" (`PATCH /seller/orders/{id}/fulfill` action=`SHIP` — xem `order-commerce-docs/docs/api/order-commerce.md` §3.7). Shipment **không** tự chọn carrier thay seller; carrier không nằm trong danh sách khả dụng của order đó (theo §3.1a tại thời điểm gọi) → `400 SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER`.
+
 ### 3.4 Cancel
 
-`POST /internal/shipments/{shipmentId}/cancel` body `{ "reason": "BUYER_CANCELLED", "version": 1 }`.
+`POST /internal/shipments/{shipmentId}/cancel` body `{ "reason": "BUYER_CANCELLED", "version": 1 }`. Response `200`:
+
+```json
+{ "data": { "shipment_id": "shp-01912fb0", "status": "CANCELLED", "reason": "BUYER_CANCELLED", "version": 2 }, "meta": { "request_id": "01912fbd-7a1b-7c12-9c55-8b1c34a6d921" } }
+```
 
 Chỉ hợp lệ trước `PICKED_UP` → sau đó `409 SHIPMENT_STATE_INVALID`. `version` lệch → `409`. Gọi carrier cancel idempotently; state về `CANCELLED` khi carrier xác nhận hoặc theo policy timeout. **Không** chạm refund/payment — đó là việc của Order/Payment.
 
@@ -170,6 +204,7 @@ Response `200 {"data":{"accepted":true}}`. Quy tắc:
 | `SHIPMENT_NOT_FOUND` | 404 | Shipment/tracking không tồn tại. |
 | `SHIPMENT_STATE_INVALID` | 409 | Transition/cancel sai. |
 | `SHIPMENT_ALREADY_EXISTS` | 409 | Shop-order đã có shipment. |
+| `SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` | 400 | Carrier không phủ khu vực/không khả dụng cho order này tại thời điểm tạo. |
 | `SHIPMENT_CARRIER_UNAVAILABLE` | 503 | Carrier down. |
 | `SHIPMENT_CARRIER_TIMEOUT` | 504 | Carrier timeout. |
 | `SHIPMENT_WEBHOOK_INVALID` | 400 | Signature/payload sai. |
@@ -182,7 +217,7 @@ Response `200 {"data":{"accepted":true}}`. Quy tắc:
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
-| 1 | GHN sandbox + MOCK adapter baseline. | Ảnh hưởng carrier API/signature. | Shipment/DevOps |
+| 1 | ~~GHN sandbox + MOCK adapter baseline~~ → **Đã chốt**: seller chọn tay 1 trong 3 carrier thật (`GHN`/`SPX`/`J&T`) qua `GET /seller/orders/{orderId}/shipment/carriers` (§3.1a); `MOCK` chỉ dùng nội bộ test/staging. Cần: hợp đồng/API key thật với SPX và J&T trước go-live — hiện chỉ có adapter GHN sandbox + MOCK, **2 carrier còn lại chưa có adapter thật**. | Nếu thiếu adapter SPX/J&T lúc go-live, seller chọn được nhưng tạo shipment fail runtime. | Shipment/DevOps |
 | 2 | Một shop-order một shipment; multi-package chưa v1. | Cần package API nếu bật. | Order owner |
 | 3 | Carrier webhook auth policy chưa chốt. | Cần threat model/contract test. | Security |
 | 4 | Return/exchange chưa thuộc v1. | Cần state/fee/refund workflow. | Product/Finance |

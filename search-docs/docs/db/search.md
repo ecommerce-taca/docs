@@ -106,12 +106,36 @@ Không dùng ES dynamic mapping không kiểm soát cho user-provided field name
 
 ## 6. Migration và seed
 
-1. Tạo index version mới với explicit mapping/settings.
-2. Validate analyzer, dynamic attributes, completion và numeric range.
-3. Backfill/replay event theo checkpoint.
-4. Chạy count/sample/version comparison và query smoke test.
-5. Atomic alias swap; giữ index cũ theo retention.
-6. Seed test product bằng event fixture, không viết trực tiếp public index bằng tay trong integration test.
+Search không dùng SQL/NoSQL schema migration truyền thống — "migration" ở đây là **quy trình reindex có version**, khớp với `POST /admin/search/reindex` (`docs/api/search.md` §3.5/§3.6).
+
+### 6.1 Thứ tự reindex (một lần deploy mapping mới)
+
+| Thứ tự | Nội dung | Phụ thuộc |
+|---:|---|---|
+| 001 | Tạo index mới `products-v{mapping_version+1}` với explicit mapping/settings (không dynamic mapping không kiểm soát) | Mapping version hiện tại |
+| 002 | Validate analyzer tiếng Việt, `attributes` flattened, `suggest` completion, `price` numeric range trên index rỗng bằng test document | 001 |
+| 003 | Backfill: replay toàn bộ event từ Kafka (hoặc CDC snapshot) theo checkpoint vào index mới, ghi tiến trình vào `reindex_jobs` | 001, 002 |
+| 004 | Chạy count/sample/version comparison giữa index cũ và mới; query smoke test (search cơ bản + facet + suggest) | 003 |
+| 005 | Atomic alias swap `products-read` → index mới | 004 đạt |
+| 006 | Giữ index cũ theo retention (không xoá ngay) — rollback bằng swap alias ngược nếu phát hiện lỗi sau swap | 005 |
+| 007 | Seed fixture cho local/test (§6.2) — chỉ trên index/mapping version dev, không chạy trên `products-read` thật | — |
+
+### 6.2 Seed tối thiểu cho local/test
+
+**Bắt buộc seed bằng event fixture** (giả lập `product.created`/`sku.created`/`category.created` qua consumer), **không** viết trực tiếp vào index bằng tay — để test luôn đi qua đúng pipeline CDC như production.
+
+| Seed (qua event) | Giá trị |
+|---|---|
+| Product | 1 `PUBLISHED` đủ field facet (category, brand, attribute, price); 1 `HIDDEN`; 1 `DELETED` (test bị loại khỏi kết quả). |
+| Category | Cây category khớp fixture của `product-catalog` (để `category_path` test đúng). |
+| Rating | 1 event `rating.aggregate.updated` cập nhật `rating_avg`/`rating_count` — test sort `rating_desc`. |
+| `reindex_jobs` | 1 job `SWAPPED` (thành công); 1 job `FAILED` (test hiển thị lỗi qua `GET /admin/search/reindex/{jobId}`). |
+
+### 6.3 Kiểm tra bắt buộc trước khi alias swap production
+
+1. Document count index mới phải khớp (hoặc giải thích được chênh lệch với) index cũ — không swap nếu thiếu >0.1% document mà không rõ lý do.
+2. Query smoke test phải bao gồm **facet** (`docs/api/search.md` §3.1) — không chỉ full-text, vì facet dùng field khác (`category_ids`, `attributes` flattened) dễ bị bỏ sót khi đổi mapping.
+3. `source_version` của mọi document mới phải `>=` document cũ tương ứng — không được lùi version khi replay.
 
 ## 7. Giả định & câu hỏi mở
 

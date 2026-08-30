@@ -52,14 +52,41 @@ Webhook log giữ carrier/external ID/payload hash/signature result/status/times
 
 ## 5. Enum và rules
 
-`ShipmentStatus`: `CREATED/PICKED_UP/IN_TRANSIT/DELIVERED/FAILED/CANCELLED/PENDING_RECONCILIATION`; `Carrier`: `GHN/MOCK`; tracking code unique; delivered không do client set.
+`ShipmentStatus`: `CREATED/PICKED_UP/IN_TRANSIT/DELIVERED/FAILED/CANCELLED/PENDING_RECONCILIATION`; `Carrier`: `GHN/SPX/J&T/MOCK` (seller chọn tay 1 trong 3 carrier thật); tracking code unique; delivered không do client set.
 
 ## 6. Migration và seed
 
-1. Tạo shipment/item/event/webhook/idempotency tables.
-2. Unique/index preflight; seed GHN/MOCK state timeline, duplicate webhook và old status.
-3. Reconcile one shop-order→one shipment, tracking uniqueness và event ordering.
-4. Không seed GHN secret/address thật; cleanup webhook log theo retention policy.
+### 6.1 Thứ tự migration
+
+| Thứ tự | Nội dung | Phụ thuộc |
+|---:|---|---|
+| 001 | Tạo database `shipmentdb`, charset/collation, migration metadata | — |
+| 002 | Tạo `shipments` (unique `(order_id,shop_id)`, unique `(carrier,tracking_code)`) | — |
+| 003 | Tạo `shipment_items`, FK → `shipments` | `shipments` |
+| 004 | Tạo `shipment_events` (unique `(carrier,external_event_id)`) | `shipments` |
+| 005 | Tạo `carrier_webhook_logs` (unique `(carrier,external_event_id)`) | — |
+| 006 | Tạo `idempotency_keys` | — |
+| 007 | Thêm index `(buyer_user_id,created_at)`, `(shop_id,status,created_at)` trên `shipments`; `(shipment_id,occurred_at)` trên `shipment_events` | Tất cả bảng trên |
+| 008 | Seed fixture cho local/test (§6.2) | Tất cả bảng trên |
+
+Mỗi migration có `up`/`down` cho local/test. Không hard-delete `shipment_events`/`carrier_webhook_logs` — cleanup theo retention policy (job riêng, không phải migration).
+
+### 6.2 Seed tối thiểu cho local/test
+
+| Seed | Giá trị |
+|---|---|
+| `shipments` | 1 `CREATED` (carrier `MOCK`); 1 `PICKED_UP`; 1 `IN_TRANSIT`; 1 `DELIVERED` full timeline; 1 `PENDING_RECONCILIATION` (carrier timeout fixture). |
+| `shipment_events` | Timeline đủ cho mỗi shipment fixture ở trên, đúng thứ tự `CREATED→PICKED_UP→IN_TRANSIT→DELIVERED`; thêm 1 event `external_event_id` trùng (test webhook idempotent) và 1 event status **cũ hơn** state hiện tại (test không lùi state). |
+| `carrier_webhook_logs` | 1 log ACK thành công; 1 log chữ ký sai (`SHIPMENT_WEBHOOK_INVALID` fixture). |
+| `idempotency_keys` | 1 key đã dùng cho `POST /internal/shipments`, còn hạn 24h. |
+
+Không seed GHN/SPX/J&T credential thật hoặc địa chỉ buyer/seller thật — dùng snapshot giả lập.
+
+### 6.3 Kiểm tra bắt buộc trước khi chạy migration production
+
+1. Reconcile one-shop-order-one-shipment: verify không có `(order_id,shop_id)` trùng trước khi tạo unique index.
+2. Verify `tracking_code` không trùng giữa các carrier trước khi tạo unique `(carrier,tracking_code)`.
+3. Verify thứ tự `shipment_events` theo `occurred_at` không có gap bất thường trước go-live.
 
 ## 7. Giả định & câu hỏi mở
 

@@ -8,7 +8,10 @@
 
 | Mục | Nội dung |
 |---|---|
-| Môi trường | Local CI và staging; chạy tối thiểu 2 Gateway instances để kiểm distributed rate limit. |
+| Môi trường | Local CI và staging; chạy tối thiểu 2 **node Kong** để kiểm distributed rate limit và hành vi healthcheck per-node. |
+| Kong | Kong Gateway 3.x OSS, `database = off`; image có sẵn 5 custom plugin `taca-*` và `KONG_PLUGINS=bundled,taca-request-guard,taca-jwt,taca-rbac,taca-ws-guard,taca-error-envelope`. |
+| Config | `kong.yaml` sinh bằng decK; CI chạy `deck validate` và `deck gateway diff` trước mọi `sync`. Có fixture config sai (thiếu plugin trên route admin, `retries` khác 0 trên Service write, Route catch-all) để kiểm pipeline **fail đúng**. |
+| Custom plugin | Test đơn vị bằng `busted` cho từng plugin; chạy được độc lập không cần Kong đầy đủ. |
 | Upstream mock | Mock `auth-user`, `product-catalog`, `search`, `order-commerce`, `inventory`, `payment-wallet`, `shipment`, `rating-comment`, `notification`, `message`. |
 | Redis | Redis test riêng; có fixture allow, exhausted, timeout, unavailable; không dùng production key. |
 | JWKS | RSA test key `kid=key-01`, key rotation `key-02`, invalid/expired/no-key fixture. |
@@ -49,7 +52,7 @@
 | TC-GW-09 | Rate limit public | IP fixture | Gửi >120 request/phút | Request thứ vượt limit nhận 429, Retry-After; các IP khác không bị ảnh hưởng. | Cao |
 | TC-GW-10 | Rate limit auth | User fixture | Gửi >300 request/phút | User bucket bị 429; bucket public/IP vẫn đúng. | Cao |
 | TC-GW-11 | Upstream timeout | Mock read timeout | Mở route GET/checkout | Error message thân thiện, trace ID; không hiển thị internal host. | Cao |
-| TC-GW-12 | Circuit breaker | Mock upstream fail 5 lần | Gọi lặp route | Circuit OPEN trả 503 nhanh; sau 30s probe phục hồi đúng. | Cao |
+| TC-GW-12 | Circuit breaker (Upstream healthcheck) | Mock upstream fail liên tiếp 5 lần | Gọi lặp route | Target bị eject, request trả 503 nhanh; active healthcheck đưa target trở lại sau `interval`. Lưu ý: Kong đếm **lỗi liên tiếp**, không theo cửa sổ 30s — kịch bản thất bại xen kẽ có thể không chạm ngưỡng (LLD §5.2). | Cao |
 | TC-GW-13 | JWKS rotation | Có key-02 | Gửi token kid mới | Gateway refresh một lần, token hợp lệ; không tạo refresh storm. | Cao |
 | TC-GW-14 | Spoofed headers | Client gửi X-User-ID/role | Gọi protected route | Header client bị strip; upstream nhận actor từ JWT thật. | Cao |
 | TC-GW-15 | Request ID | Gửi ID hợp lệ/sai/quá dài | Gọi bất kỳ route | ID hợp lệ được propagate; sai được tạo ID mới hoặc 400 theo policy; log/response cùng trace. | TB |
@@ -108,6 +111,31 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-GW-32 | `GET /api/v1/admin/catalog/products` | Catalog admin JWT | Upstream | Route đúng `product-catalog`. |
 | IT-GW-33 | `GET /api/v1/admin/dashboard` | Bất kỳ admin JWT | 404 | `GATEWAY_ROUTE_NOT_FOUND`; Gateway không có endpoint dashboard (tầng đọc do `mfe-admin`/BFF). |
 
+### 3.2.1 Rủi ro riêng của Kong (bắt buộc, không có ở bản NestJS)
+
+Các case dưới đây khóa những chỗ Kong có **hành vi mặc định khác** với thiết kế. Thiếu chúng thì lỗi chỉ lộ ra ở production.
+
+| Mã | Tình huống | HTTP | Kết quả mong đợi |
+|---|---|---:|---|
+| IT-KONG-01 | Bất kỳ lỗi nào do Kong tự sinh (route không match, 413, 429) | — | Body **luôn** là `{error:{code,message,details,trace_id}}`; không bao giờ lọt body mặc định `{"message": ...}` của Kong. |
+| IT-KONG-02 | Client gửi `X-User-ID` giả trên route authenticated | Upstream | Upstream nhận `X-User-ID` từ JWT, không phải giá trị client gửi; **và** bucket rate limit tính theo user thật (chứng minh `taca-request-guard` chạy trước `taca-jwt`). |
+| IT-KONG-03 | Hai user khác nhau, một user gửi `X-User-ID` của user kia | 200/429 | Không chiếm được và không né được bucket của user kia. |
+| IT-KONG-04 | `POST` tới route có upstream reset connection | 502/503/504 | Kong **không** retry; upstream chỉ nhận đúng 1 request (đếm ở mock). Khóa `Service.retries = 0` trên `*-write`. |
+| IT-KONG-05 | `GET` tới route có upstream reset connection lần đầu | 200 | Retry đúng 1 lần trên `*-read`; không retry lần thứ hai. |
+| IT-KONG-06 | Config có Service `*-write` với `retries` khác 0 | — | `deck validate`/lint CI **fail**; không sync được. |
+| IT-KONG-07 | Config có Route `/admin/**` thiếu plugin `taca-rbac` | — | Lint CI **fail**; không sync được. |
+| IT-KONG-08 | Config có Route catch-all `/api/v1` | — | Lint CI **fail**; Route catch-all vô hiệu hóa gate theo nhánh. |
+| IT-KONG-09 | Redis down + `rate-limiting` | 503 | `GATEWAY_REDIS_UNAVAILABLE`. Khóa `fault_tolerant=false` — mặc định `true` của Kong sẽ cho request đi qua và làm case này fail. |
+| IT-KONG-10 | Mọi target của một Upstream bị eject | 503 | `GATEWAY_UPSTREAM_UNAVAILABLE`; không lộ thông báo ring-balancer của Kong. |
+| IT-KONG-11 | Upstream phục hồi sau khi bị eject | 200 | Active healthcheck đưa target trở lại trong khoảng `interval` đã cấu hình. |
+| IT-KONG-12 | Gọi Admin API (`:8001`) từ mạng client | Không reachable | Admin API không expose qua ingress ở mọi môi trường. |
+| IT-KONG-13 | Thứ tự plugin trong `access` | — | Assert thứ tự thực thi thật: `taca-request-guard` → `request-size-limiting` → `taca-jwt` → `taca-rbac` → `rate-limiting`. Test phải fail nếu ai đó đổi `PRIORITY`. |
+| IT-KONG-14 | Origin ngoài allowlist | 403 | `GATEWAY_CORS_DENIED` — plugin `cors` của Kong không tự trả 403, case này khóa `taca-request-guard`. |
+| IT-KONG-15 | `cors.config.origins` và `taca-request-guard.allowed_origins` lệch nhau | — | Lint CI **fail** (hai danh sách phải sinh từ một nguồn). |
+| IT-KONG-16 | Route `/ws/messages` sau khi upgrade | — | `taca-error-envelope` không ghi gì vào connection đã upgrade; frame không bị hỏng. |
+| IT-KONG-17 | Node Kong bị kill khi còn socket WS mở | — | Counter `ws:v1:conn:*` tự hết hạn theo TTL; user không bị khóa kết nối vĩnh viễn. |
+| IT-KONG-18 | `lua_shared_dict taca_jwks` đầy | 503 | `GATEWAY_JWKS_UNAVAILABLE`; **không** bỏ qua verify. |
+
 ### 3.3 JWT/JWKS
 
 | Mã | Tình huống | HTTP | Kết quả |
@@ -138,28 +166,45 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-RL-09 | Upstream 500 raw stack | 502/503 | Map sanitized Gateway error. |
 | IT-RL-10 | Upstream read timeout | 504 | `GATEWAY_UPSTREAM_TIMEOUT`. |
 | IT-RL-11 | Circuit opens after 5 failures | 503 | Không gọi upstream khi OPEN. |
-| IT-RL-12 | HALF_OPEN probe success/fail | 200/503 | State CLOSED/OPEN đúng. |
+| IT-RL-12 | Active healthcheck probe success/fail | 200/503 | Target trở lại `HEALTHY`/giữ `UNHEALTHY` đúng (tương đương HALF_OPEN → CLOSED/OPEN). |
+| IT-RL-13 | Bucket authenticated với `limit_by=header` | 429 | Limit áp theo `X-User-ID` do `taca-jwt` đặt; hai user độc lập nhau; user không tự đổi được bucket bằng header gửi lên. Khóa giả định LLD §8 #17. |
 
-## 4. Gợi ý unit test
+## 4. Unit test và lint cấu hình
 
-| Module/hàm | Case cần phủ |
+Sau khi chuyển sang Kong, phần "unit test" chia làm hai loại: **test Lua cho custom plugin** (`busted`) và **lint cho declarative config** — vì phần lớn hành vi giờ nằm ở cấu hình chứ không ở code.
+
+### 4.1 Unit test custom plugin (`busted`)
+
+| Plugin / hàm | Case cần phủ |
 |---|---|
-| `RouteMatcher` | Exact path, prefix, method mismatch, unknown route, route precedence. |
-| `RoutePolicy` | PUBLIC/AUTHENTICATED/ROLE_GATED/INTERNAL_ONLY; exact override family. |
-| `JwtValidator` | RS256, issuer/audience, exp/iat/nbf/clock skew, missing claims, wrong kid. |
-| `JwksCache` | Hit, TTL refresh, stale max, refresh lock, key rotation, fetch failure. |
-| `ActorContext` | Claims → headers; strip spoofed `X-User-*`/`X-Auth-*`; empty shop scope. |
-| `RateLimitKeyBuilder` | IP hash, user key, route group, no raw PII, bucket/window format. |
-| `RateLimitAdapter` | Atomic increment, TTL, exhausted, Redis timeout/unavailable. |
-| `CorsPolicy` | Allowed/denied origin, preflight method/header, credentials wildcard rejection. |
-| `RequestIdMiddleware` | Valid input, invalid charset, >64 chars, generated UUIDv7, propagation. |
-| `BodyLimitGuard` | 1MiB exact/over, header 16KiB, content type. |
-| `RetryPolicy` | GET/HEAD only, POST never, status allowlist, max one retry/backoff. |
-| `CircuitBreaker` | CLOSED→OPEN threshold, OPEN reject, HALF_OPEN probe, recovery. |
-| `ErrorMapper` | Gateway errors, upstream 4xx allowlist, 5xx sanitization, trace ID. |
-| `HealthService` | Liveness independent, readiness dependency state, no secret output. |
-| `LogRedactor` | Authorization/password/OTP/KYC/bank/IP/user fields masked or omitted; `?access_token=` query và `Sec-WebSocket-Protocol` bearer bị redact. |
-| `WsProxy` | Handshake JWT validate, subprotocol/query token parse, connection cap, idle timeout, tunnel không parse frame, close khi user revoked, circuit OPEN reject. |
+| `taca-request-guard` | Origin allowed/denied; preflight method/header; validate `X-Request-ID` (hợp lệ, sai charset, >64 ký tự) → giữ hoặc sinh mới; xóa `X-User-*`/`X-Auth-*`/`X-Forwarded-*` không tin cậy; không đọc body. |
+| `taca-jwt` — verify | RS256 only, từ chối `alg=none`/HS256/key từ client; `iss`/`aud` sai; `exp`/`iat`/`nbf` với clock skew; thiếu claim bắt buộc; `kid` không tồn tại. |
+| `taca-jwt` — JWKS cache | Cache hit; TTL refresh; stale trong/quá `max_stale`; refresh **một lần** dưới lock khi nhiều request cùng gặp `kid` mới; key rotation overlap; fetch failure → fail-closed; shared dict đầy → fail-closed. |
+| `taca-jwt` — actor context | Claims → `X-User-ID`/`X-User-Roles`/`X-User-Permissions`/`X-User-Shop-Scope`/`X-Auth-Method`; shop scope rỗng; marker `revoked_user:{sub}` → từ chối. |
+| `taca-jwt` — token source | Đọc token từ `Authorization`, từ `Sec-WebSocket-Protocol` (`bearer, <token>`), từ query `access_token`; thứ tự ưu tiên; token ở nhiều nguồn cùng lúc. |
+| `taca-rbac` | Đủ/thiếu role; đủ/thiếu permission; route không khai báo yêu cầu; không suy luận ownership từ `shop_id` trong path/body; không tự quyết định 2FA. |
+| `taca-ws-guard` | `INCR` ở `access`, `DECR` ở `log`; vượt cap → `429`; TTL an toàn khi `log` không chạy; Redis lỗi → fail-closed. |
+| `taca-error-envelope` | `get_source()` = `exit`/`error` → envelope chuẩn; `service` + 4xx allowlist → giữ business code, thêm `trace_id` nếu thiếu; `service` + 5xx → sanitize; đủ 9 dòng ánh xạ lỗi native ở LLD §2.1.6; bỏ qua connection đã upgrade. |
+| Redaction (dùng chung) | `Authorization`, password, OTP, KYC, bank, `?access_token=`, `Sec-WebSocket-Protocol` bearer bị che trong mọi log/metric/trace. |
+
+### 4.2 Lint declarative config
+
+Chạy trong CI, fail pipeline nếu vi phạm — đây là nơi thay thế phần lớn `RouteMatcher`/`RoutePolicy`/`RetryPolicy` của bản NestJS.
+
+| Quy tắc | Vì sao |
+|---|---|
+| Mọi Kong Service `*-write` có `retries = 0` | Mặc định của Kong là `5`; sai là retry mutation. |
+| Mọi Kong Service `*-read` có `retries` ≤ 1 | Giữ đúng policy "tối đa 1 lần". |
+| Mọi Route `/api/v1/admin/**` có plugin `taca-rbac` | Thiếu là mất coarse gate admin. |
+| Mọi Route protected có plugin `taca-jwt` | Thiếu là route protected thành public. |
+| Không có Route catch-all (`/api/v1`, `/`) | Catch-all vô hiệu hóa gate theo nhánh. |
+| Không có Route nào khớp `/internal/**` | `/internal/**` không được expose. |
+| Không có Route `/ws/**` ngoài `/ws/messages` | Path WS duy nhất được upgrade. |
+| `rate-limiting` có `policy=redis` và `fault_tolerant=false` | Mặc định `fault_tolerant=true` vi phạm policy fail-closed. |
+| `cors.origins` và `taca-request-guard.allowed_origins` khớp nhau | Hai danh sách lệch tạo lỗ hổng hoặc chặn nhầm. |
+| `strip_path = false` trên mọi Route business | Giữ path tới upstream không đổi. |
+| Route WS không gắn plugin đọc/ghi body | Làm hỏng frame sau upgrade. |
+| Không có giá trị secret hard-code trong `kong.yaml` | Secret đến từ env/Vault. |
 
 ## 5. Security, resilience và performance test
 
@@ -180,6 +225,8 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | SEC-GW-11 | WS handshake không auth | `/ws/messages` không token/token sai → 401, không mở tunnel; không có đường bypass qua `/ws/**` path khác. |
 | SEC-GW-12 | WS token trong query log | `?access_token=` và subprotocol bearer bị redact trong access log/metric/trace. |
 | SEC-GW-13 | WS sau revoke | User bị suspend/revoke → socket đang mở bị đóng theo Redis `revoked_user_id`; handshake mới bị từ chối. |
+| SEC-GW-14 | Kong Admin API expose | `:8001` không reachable từ mạng client ở mọi môi trường; không có Route nào proxy tới nó. |
+| SEC-GW-15 | Rò rỉ thông tin runtime của Kong | Response lỗi không chứa `{"message":...}` mặc định của Kong, tên Service/Upstream nội bộ, hay thông báo ring-balancer. |
 
 ### 5.2 Resilience/performance
 
@@ -203,9 +250,11 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | Route coverage | Mọi route family trong API spec có test route đúng service và unknown route. |
 | Auth coverage | Có case thiếu/sai/hết hạn/JWKS rotation/token algorithm/role gate. |
 | Error coverage | Mọi Gateway error code có ít nhất một integration case. |
-| Security gate | SEC-GW-01 đến SEC-GW-10 pass; không leak secret/PII. |
-| Rate-limit gate | Public/auth/authenticated buckets đúng khi chạy nhiều instances. |
-| Retry gate | Không retry write; GET retry tối đa 1; circuit state đúng. |
+| Security gate | SEC-GW-01 đến SEC-GW-15 pass; không leak secret/PII; Admin API không expose. |
+| Rate-limit gate | Public/auth/authenticated buckets đúng khi chạy nhiều node Kong; IT-RL-13 pass. |
+| Retry gate | Không retry write; GET retry tối đa 1; trạng thái target Upstream đúng. |
+| Kong gate | IT-KONG-01 đến IT-KONG-18 pass. Đặc biệt IT-KONG-01 (không lọt error format của Kong), IT-KONG-02/03 (thứ tự plugin), IT-KONG-04 (không retry mutation), IT-KONG-09 (fail-closed khi Redis lỗi) — bốn case này khóa những mặc định của Kong đi ngược thiết kế. |
+| Config gate | Toàn bộ quy tắc lint §4.2 chạy trong CI và **fail đúng** với fixture config sai; `deck gateway diff` trên staging không có drift. |
 | WebSocket gate | `/ws/messages` handshake auth/connection-cap/idle-timeout/redaction/circuit pass; không tự reconnect/không buffer frame. |
 | Health gate | Liveness/readiness/metrics không lộ dữ liệu nhạy cảm và phản ánh dependency. |
 | UI gate | Các Micro-Frontends (`mfe-buyer`, `mfe-seller`, `mfe-admin`) error/loading/offline state nhận đúng envelope/tracing. |
@@ -221,4 +270,7 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | 3 | JWKS endpoint/issuer/audience hiện dùng mock contract từ auth-user. | Cần contract test với auth-user thật trước production. | Auth-user owner |
 | 4 | Refresh token dùng Bearer JSON flow; cookie/CSRF chưa thuộc test hiện tại. | Nếu chuyển cookie, bổ sung browser security suite. | Frontend/Security |
 | 5 | Message v1 dùng REST + WebSocket `/ws/messages`; test suite phủ handshake auth, connection cap, idle timeout, reconnect và redaction token. SSE không test vì không dùng trong v1. | Nếu Message Service đổi handshake/subprotocol, cập nhật IT-GW-23..29. | Product/frontend/Message owner |
-| 6 | Timeout/circuit thresholds là baseline LLD; performance target/SLO chưa chốt. | Không dùng baseline này làm SLA chính thức nếu chưa có capacity test. | Architecture/DevOps |
+| 6 | Timeout/healthcheck thresholds là baseline LLD; performance target/SLO chưa chốt. | Không dùng baseline này làm SLA chính thức nếu chưa có capacity test. | Architecture/DevOps |
+| 7 | Gateway là Kong 3.x OSS + 5 custom Lua plugin; test suite giả định image đã build sẵn plugin và CI chạy được decK. | Nếu team chuyển sang Kong Enterprise, IT-KONG-01/14 (error envelope, CORS 403) và một phần §4.1 sẽ được plugin `exit-transformer`/`openid-connect` thay thế — phải viết lại test tương ứng. | Tech lead + DevOps |
+| 8 | `PRIORITY` của custom plugin phải khớp phiên bản Kong đang chạy; IT-KONG-13 là test khóa hành vi này. | Nâng phiên bản Kong có thể đổi priority của plugin built-in và âm thầm đảo thứ tự — phải chạy lại IT-KONG-13 trong mọi lần nâng cấp. | Gateway owner |
+| 9 | Tên metric Prometheus của Kong phụ thuộc phiên bản; test dashboard/alert phải đối chiếu với `/metrics` thật. | Alert viết theo tên metric cũ (`gateway_*`) sẽ im lặng không bao giờ kêu. | DevOps |

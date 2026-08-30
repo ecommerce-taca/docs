@@ -27,6 +27,7 @@
 | 5 | `GET /seller/wallet` | Seller | Xem available/pending balance. |
 | 6 | `GET /seller/wallet/ledger` | Seller | Xem ledger summary. |
 | 7 | `GET /seller/revenue` | Seller | Báo cáo doanh thu theo khoảng thời gian (HLD #38). |
+| 7a | `GET /seller/revenue/export` | Seller | Xuất báo cáo doanh thu ra file (.xlsx/.csv). |
 | 8 | `POST /seller/payouts` | Seller + step-up | Yêu cầu rút tiền. |
 | 9 | `GET /seller/payouts` | Seller | Xem payout history. |
 | 10 | `GET /admin/payments/reconciliation` | `FINANCE_OPS` | Reconcile provider/payment/ledger. |
@@ -38,6 +39,7 @@
 | 16 | `GET /admin/settlements/{batchId}` | `FINANCE_OPS` | Chi tiết batch + breakdown theo shop. |
 | 17 | `POST /admin/settlements/{batchId}/retry` | `FINANCE_OPS` + 2FA | Retry batch `FAILED` (idempotent). |
 | 18 | `GET /admin/finance/summary` | `FINANCE_OPS` | Tổng hợp tài chính sàn read-only (GMV, commission income, tax, refund, payout volume). |
+| 18a | `GET /admin/finance/summary/export` | `FINANCE_OPS` | Xuất báo cáo tài chính sàn ra file (.xlsx/.csv). |
 | 19 | `GET /health/live` | Ops | Liveness. |
 | 20 | `GET /health/ready` | Ops | Readiness. |
 
@@ -212,6 +214,23 @@ Ledger là **append-only** — không có endpoint sửa/xoá. Chỉ trả ledge
 
 Ràng buộc: chỉ tổng hợp từ dữ liệu đã ghi (không tạo ledger mới); `from..to` tối đa 366 ngày/request; số liệu là snapshot allocation/ledger đã captured, không phản ánh payout. Đây là **báo cáo**, không phải nghiệp vụ tiền mới.
 
+`GET /seller/revenue/export?from=&to=&format=xlsx|csv` — phục vụ Penpot `CTA / Tải báo cáo` ở Seller Finance. Cùng bộ query với `GET /seller/revenue` (không có `granularity`, export luôn theo `DAY`). Response `200`:
+
+```json
+{
+  "data": {
+    "export_url": "https://storage.example/signed-download/revenue-shop-01912f31-202608.xlsx",
+    "format": "xlsx",
+    "row_count": 31,
+    "generated_at": "2026-08-31T04:00:00Z",
+    "expires_at": "2026-08-31T04:30:00Z"
+  },
+  "meta": { "request_id": "01912fc3-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Cùng convention "signed URL, không stream qua Gateway" với `product-catalog`/`order-commerce` export. Cột export: `period, gross, commission, tax, net, refunded, order_count`. `from..to` tối đa 366 ngày, giống `GET /seller/revenue`.
+
 ### 3.6 `POST /seller/payouts`
 
 Header `Idempotency-Key` + step-up 2FA. Body:
@@ -239,11 +258,42 @@ Response `202`. Điều kiện (kiểm theo đúng thứ tự này): KYC project
 
 ### 3.7 Reconciliation/health
 
-Admin reconciliation filter provider/status/date, trả mismatch counts không raw secret. `/health/live` process-only; `/health/ready` MySQL/Kafka/config/VNPAY secret availability.
+`GET /admin/payments/reconciliation` — query `provider?`, `status?`, `from?`, `to?`, `page`, `size`:
+
+```json
+{
+  "data": [
+    {
+      "payment_id": "payment-01912fa1",
+      "provider": "VNPAY",
+      "local_status": "SUCCESS",
+      "provider_status": "success",
+      "amount": 1094000,
+      "match": true,
+      "checked_at": "2026-08-30T09:10:00Z"
+    },
+    {
+      "payment_id": "payment-01912fa2",
+      "provider": "VNPAY",
+      "local_status": "PENDING",
+      "provider_status": "success",
+      "amount": 500000,
+      "match": false,
+      "mismatch_reason": "LOCAL_STALE",
+      "checked_at": "2026-08-30T09:10:00Z"
+    }
+  ],
+  "meta": { "request_id": "01912fa3-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 2, "mismatch_count": 1 }
+}
+```
+
+`match:false` không tự sửa state — chỉ báo cáo cho ops điều tra. Không trả raw provider secret/signature. `/health/live` process-only; `/health/ready` MySQL/Kafka/config/VNPAY secret availability.
 
 ### 3.8 Admin finance back-office (`FINANCE_OPS`)
 
 Phục vụ các màn Penpot Admin *Fees/Taxes*, *Finance*, *Seller settlement*, *Settlement batches*. Không có microservice admin riêng (xem `System_Overview.md` §6.3); Gateway coarse-gate role admin, service này enforce `FINANCE_OPS` + step-up 2FA cho mutation. Mọi mutation ghi `audit_logs` (actor/reason).
+
+`GET /admin/finance/summary/export?from=&to=&format=xlsx|csv` — phục vụ Penpot `CTA / Xuất báo cáo` ở Admin Fees/Taxes. Cùng dữ liệu nguồn với `GET /admin/finance/summary`, xuất theo ngày. Response `200` cùng hình dạng với `GET /seller/revenue/export` ở trên (`export_url`/`format`/`row_count`/`generated_at`/`expires_at`). Cột export: `period, gmv, commission_income, tax_collected, refund_amount, payout_volume, shop_count`. Chỉ `FINANCE_OPS`; không có tham số `shop_id` — đây là tổng hợp toàn sàn.
 
 **Fee/Tax config — `GET/PUT /admin/fees`, `GET/PUT /admin/taxes`**
 

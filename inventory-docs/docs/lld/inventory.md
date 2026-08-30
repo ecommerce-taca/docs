@@ -116,7 +116,7 @@ Ràng buộc:
 
 | Operation | Atomic change | Trigger |
 |---|---|---|
-| `COMMIT` | `qty_reserved -= q`; reservation `COMMITTED`; movement commit | Payment success/order confirmed. |
+| `COMMIT` | `qty_reserved -= q`; reservation `COMMITTED`; movement commit | Order-Commerce gọi khi đơn được chốt: với VNPAY là lúc nhận `payment.succeeded`, với **COD là ngay trong luồng checkout** (không chờ tiền). Inventory không tự suy ra thời điểm này. |
 | `RELEASE` | `qty_reserved -= q`, `qty_available += q`; status `RELEASED`; movement release | Order cancel/payment fail. |
 | `EXPIRE` | Tương tự RELEASE; status `EXPIRED` | TTL job sau `expires_at`. |
 | `ADJUSTMENT` | Available delta theo policy; movement adjustment | Seller/admin stock correction, reason bắt buộc. |

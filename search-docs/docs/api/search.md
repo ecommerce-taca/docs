@@ -36,7 +36,7 @@ Search không có endpoint CRUD product, stock reserve/deduct hoặc arbitrary E
 
 ### 3.1 `GET /products/search`
 
-Query: `q?`, `category_id?`, `shop_id?`, `brand?`, `attribute[key]?`, `min_price?`, `max_price?`, `sort` (`relevance`, `newest`, `price_asc`, `price_desc`, `rating_desc`), `page`, `size`.
+Query: `q?`, `category_id?`, `shop_id?`, `brand?`, `attribute[key]?`, `min_price?`, `max_price?`, `sort` (`relevance`, `newest`, `price_asc`, `price_desc`, `rating_desc`), `page`, `size`, `include_facets?` (bool, mặc định `true`).
 
 Response `200`:
 
@@ -52,15 +52,61 @@ Response `200`:
     "rating_avg": 4.5,
     "stock_display": "IN_STOCK"
   }],
+  "facets": {
+    "category": [
+      { "category_id": "cat-01912f21", "name": "Điện thoại", "count": 128 },
+      { "category_id": "cat-01912f22", "name": "Laptop", "count": 64 }
+    ],
+    "brand": [
+      { "value": "Apple", "count": 42 },
+      { "value": "Samsung", "count": 30 }
+    ],
+    "price": [
+      { "min": 0, "max": 5000000, "count": 80 },
+      { "min": 5000000, "max": 20000000, "count": 45 },
+      { "min": 20000000, "max": null, "count": 6 }
+    ],
+    "attributes": {
+      "capacity_liter": [
+        { "value": "256GB", "count": 30 },
+        { "value": "512GB", "count": 18 }
+      ],
+      "color": [
+        { "value": "Titan đen", "count": 22 },
+        { "value": "Titan tự nhiên", "count": 15 }
+      ]
+    }
+  },
   "meta": {"page": 1, "size": 20, "total": 1, "total_pages": 1, "request_id": "01912f90", "index_as_of": "2026-08-30T09:00:00Z"}
 }
 ```
 
 Ràng buộc: chỉ `visibility_status=PUBLISHED`; empty result `200 data=[]`; `q` optional để browse category; Search không hứa stock realtime hay giá checkout cuối.
 
+`facets` phục vụ `Search / Filter sidebar` trên Penpot (đếm số bên cạnh mỗi lựa chọn category/brand/giá/thuộc tính). Quy tắc:
+
+- `count` trong mỗi facet là số kết quả **nếu áp thêm điều kiện đó lên trên các filter khác đang chọn** (kiểu "count after AND, before this facet" — chuẩn multi-select facet của Elasticsearch, dùng `post_filter` cho facet đang tính để nó không tự loại chính nó). Không tính `count` chỉ trên toàn tập chưa lọc — như vậy chọn thêm filter sẽ không bao giờ làm số ở facet khác giảm về 0 một cách khó hiểu.
+- `attributes` chỉ trả các key có `is_variant_dimension=true` từ Product Catalog (`capacity_liter`, `color`...), **động theo category đang lọc** — category khác nhau có bộ attribute facet khác nhau, không có danh sách cố định.
+- `price` chia bucket cố định 3 khoảng theo baseline trên; bucket cuối `max: null` nghĩa là không giới hạn trên.
+- `include_facets=false` bỏ qua tính `facets` (giảm tải cho autocomplete-as-you-type, chỉ cần `data`), mặc định `true` cho trang search chính.
+- Facet **không** tính lại khi chỉ đổi `page`/`sort` — client cache facet từ lần gọi đầu, chỉ tính lại facet khi filter/query đổi. Đây là tối ưu ở tầng client, Search server luôn trả facet khi `include_facets=true` bất kể `page`.
+
 ### 3.2 `GET /search/suggest`
 
-Query: `prefix` bắt buộc max 100, `limit` default 10/max 10, optional `category_id`. Response `200` `{data:[{text,type}],meta}`. Không lưu search history v1; prefix không được log raw.
+Query: `prefix` bắt buộc max 100, `limit` default 10/max 10, optional `category_id`. Response `200`:
+
+```json
+{
+  "data": [
+    { "text": "iphone 16 pro max", "type": "QUERY" },
+    { "text": "iPhone 16 Pro Max 256GB", "type": "PRODUCT", "product_id": "product-01912f31" },
+    { "text": "iPhone", "type": "BRAND" }
+  ],
+  "meta": { "request_id": "01912f92-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`type` ∈ `QUERY` (gợi ý từ khoá phổ biến) `| PRODUCT` (gợi ý thẳng vào 1 sản phẩm, kèm `product_id` để deep-link) `| BRAND`. Không lưu search history v1; prefix không được log raw.
 
 ### 3.3 `GET /search/health`
 
@@ -74,7 +120,25 @@ Nếu index alias/cluster không sẵn sàng: `503 SEARCH_INDEX_NOT_READY`/`SEAR
 
 ### 3.4 `GET /admin/search/status`
 
-Query optional `index`, `consumer_group`. Trả alias, mapping version, document count, last event time, consumer lag, DLQ count và reindex state. Không trả raw event/query.
+Query optional `index`, `consumer_group`. Response `200`:
+
+```json
+{
+  "data": {
+    "alias": "products-read",
+    "active_index": "products-v1-20260815",
+    "mapping_version": 1,
+    "document_count": 48213,
+    "last_event_at": "2026-08-30T08:59:58Z",
+    "consumer_lag": { "products.events.v1": 0, "sku.events.v1": 2 },
+    "dlq_count": 0,
+    "reindex_state": "IDLE"
+  },
+  "meta": { "request_id": "01912fb7-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`reindex_state` một trong `IDLE`/`REQUESTED`/`RUNNING`/`FAILED` — khớp state của job trả từ §3.6. Không trả raw event/query.
 
 ### 3.5 `POST /admin/search/reindex`
 
@@ -88,7 +152,28 @@ Response `202` `{data:{job_id,state:"REQUESTED",target_index:"products-v1-202608
 
 ### 3.6 `GET /admin/search/reindex/{jobId}`
 
-Trả job state, processed/failed counts, checkpoint, timestamps và `error_code` đã redacted. Job không tồn tại: `404 SEARCH_REINDEX_NOT_FOUND`.
+Response `200`:
+
+```json
+{
+  "data": {
+    "job_id": "job-01912fb8",
+    "state": "RUNNING",
+    "target_index": "products-v1-20260830",
+    "mapping_version": 1,
+    "processed_count": 32000,
+    "failed_count": 4,
+    "total_estimate": 48213,
+    "checkpoint": "product-01912f9a",
+    "started_at": "2026-08-30T09:00:00Z",
+    "updated_at": "2026-08-30T09:05:00Z",
+    "error_code": null
+  },
+  "meta": { "request_id": "01912fb9-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`state` ∈ `REQUESTED`/`RUNNING`/`SUCCEEDED`/`FAILED`. `error_code` chỉ có giá trị khi `state=FAILED`, dùng allowlist đã redact (không raw exception). Job không tồn tại: `404 SEARCH_REINDEX_NOT_FOUND`.
 
 ## 4. Mã lỗi chung
 

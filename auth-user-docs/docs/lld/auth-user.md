@@ -365,6 +365,8 @@ Contract rules:
 
 Object storage chưa có contract trong HLD; dùng adapter nội bộ để có thể thay S3/MinIO mà không đổi domain logic.
 
+> **Phạm vi: chỉ nội bộ `auth-user`, chỉ cho KYC document.** Đây **không** phải endpoint dùng chung cho các service khác và **không** được đăng ký trong bảng contract nội bộ (`System_Overview.md` §9) — nó không xuất hiện trong `docs/api/auth-user.md` vì không phơi ra ngoài service. Product Catalog, Message và Rating-Comment mỗi service tự sở hữu cặp `upload-url`/`complete` của riêng mình (xem `System_Overview.md` §9.1); không service nào gọi vào đây.
+
 `POST /internal/v1/storage/presign`
 
 ```json

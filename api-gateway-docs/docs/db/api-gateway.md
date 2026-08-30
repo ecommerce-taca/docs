@@ -2,12 +2,14 @@
 
 > Nguồn: `docs/lld/api-gateway.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
 > Trạng thái: N/A — API Gateway không sở hữu domain database
+> Runtime: **Kong Gateway 3.x OSS chạy DB-less** (`database = off`). Kong cũng **không** dùng PostgreSQL của riêng nó — cấu hình đến từ file declarative, nên kết luận "Gateway không có database" vẫn đúng nguyên vẹn sau khi migrate.
 
 ## 1. Quy ước chung
 
 | Mục | Quy định |
 |---|---|
 | Domain database | Không có. Gateway là stateless edge service. |
+| Kong datastore | Không có. `database = off` — Kong không tạo/dùng PostgreSQL. Mọi Service/Route/Plugin/Upstream nằm trong `kong.yaml` được decK sync. Hệ quả: không có migration của Kong, không có `kong migrations up`, và không thể tạo entity runtime qua Admin API. |
 | Domain tables/collections | Không tạo `users`, `products`, `orders`, `payments` hoặc business table nào. |
 | Configuration | Route, JWT issuer/audience, CORS, timeout và service URL lấy từ environment/config repository; không lưu trong database. |
 | Ephemeral state | Redis chỉ lưu rate-limit counter + TTL; không lưu domain state, session, refresh token hoặc user profile. |
@@ -35,32 +37,49 @@ API Gateway
 
 ## 3. Chi tiết dữ liệu được dùng tạm thời
 
-### 3.1 Redis rate-limit key — không phải domain table
+### 3.1 Redis key — không phải domain table
 
-| Thành phần | Kiểu/format | TTL | Nội dung |
-|---|---|---:|---|
-| Key | `rl:v1:{bucket}:{identity_hash}:{route_group}:{window}` | Theo fixed window | Identity hash + route bucket. |
-| Value | Integer counter | 60 giây baseline | Số request trong window. |
-| Identity | SHA-256/IP hoặc `user_id` | Không persist ngoài TTL | Không ghi raw identity vào log. |
-| Operation | Atomic increment + expire | — | Chống race giữa nhiều Gateway instance. |
+Sau khi chuyển sang Kong, các key trong Redis chia làm **hai nhóm có chủ sở hữu khác nhau**.
 
-Không dùng Redis key để xác nhận role, ownership, balance, order state hoặc inventory.
+#### 3.1.1 Key do plugin `rate-limiting` của Kong quản lý
 
-WebSocket `/ws/messages` dùng thêm hai loại key ephemeral, cùng bản chất counter/marker, không phải domain data:
+| Thành phần | Quy định |
+|---|---|
+| Format key | **Do Kong định nghĩa, không do chúng ta chọn.** Bản NestJS dùng `rl:v1:{bucket}:{identity_hash}:{route_group}:{window}` — format này **không còn hiệu lực**. |
+| Value | Counter fixed-window do plugin quản lý. |
+| Identity | `limit_by=ip` cho bucket public/auth-endpoint; `limit_by=header` + `header_name=X-User-ID` cho bucket authenticated. |
+| Operation | Atomic increment + expire do plugin thực hiện. |
+| Cấu hình bắt buộc | `policy=redis`, `fault_tolerant=false`, `redis.timeout=500`. |
+
+> **Ràng buộc cho dev:** không viết code, test, script vận hành hay dashboard nào phụ thuộc vào format key rate limit. Nếu cần quan sát, dùng metric (`kong_http_requests_total{code="429"}`) chứ không scan Redis. Nếu cần một namespace riêng để tách môi trường, dùng `redis.database` khác nhau, không tự đặt prefix.
+
+#### 3.1.2 Key do custom plugin `taca-*` quản lý
+
+Đây là các key **chúng ta tự đặt tên và tự chịu trách nhiệm**, giữ nguyên quy ước cũ:
 
 | Thành phần | Format | TTL | Nội dung |
 |---|---|---:|---|
-| Connection counter | `ws:v1:conn:{user_id_hash}` | Xóa khi socket đóng hoặc TTL ngắn refresh theo heartbeat | Số socket đang mở/user để enforce `WS_MAX_CONNECTIONS_PER_USER`. |
-| Revoked user marker | `revoked_user:{user_id}` (dùng chung với HTTP) | 15 phút | Do Auth User đẩy vào khi suspend/revoke; Gateway đóng socket đang mở và từ chối handshake mới. |
+| WS connection counter | `ws:v1:conn:{user_id_hash}` | `INCR` ở phase `access`, `DECR` ở phase `log` (chạy khi connection đóng); kèm TTL an toàn để tự dọn nếu node chết | Số socket đang mở/user để enforce `WS_MAX_CONNECTIONS_PER_USER`. |
+| Revoked user marker | `revoked_user:{user_id}` (dùng chung với HTTP) | 15 phút | Do Auth User đẩy vào khi suspend/revoke; `taca-jwt` từ chối handshake/request mới, `taca-ws-guard` đóng socket đang mở. |
+
+TTL an toàn của connection counter là bắt buộc: nếu một node Kong bị kill, phase `log` không chạy và counter sẽ rò rỉ, dần dần khóa hết khả năng kết nối của người dùng đó.
+
+Không dùng Redis key để xác nhận role, ownership, balance, order state hoặc inventory.
 
 ### 3.2 In-memory JWKS cache — không phải persistence
+
+Lưu trong `lua_shared_dict taca_jwks` khai báo ở `kong.conf`, do plugin `taca-jwt` quản lý.
 
 | Field | Kiểu | TTL/điều kiện |
 |---|---|---|
 | `kid` | string | Theo key rotation. |
-| `public_key` | RSA public key object | Cache 10 phút; stale tối đa 30 phút. |
-| `issuer`/`audience` | string | Đọc từ config, không nhận từ client. |
+| `public_key` | RSA public key (PEM/JWK serialize được vào shared dict) | Cache 10 phút; stale tối đa 30 phút. |
+| `issuer`/`audience` | string | Đọc từ config plugin, không nhận từ client. |
 | `loaded_at` | ISO timestamp | Dùng health/readiness. |
+
+- `lua_shared_dict` chia sẻ giữa các nginx worker **trong cùng một node**, không giữa các node Kong. Mỗi node tự fetch JWKS — giống mô hình "mỗi instance tự cache" của bản NestJS, nên không có thay đổi về bản chất.
+- Shared dict lưu được string/number, không lưu được Lua object phức tạp: plugin phải serialize key và parse lại, hoặc cache object đã parse trong `lua_resty_lrucache` cấp worker với shared dict làm lớp thứ hai.
+- Dict đầy → plugin **fail-closed** (`503 GATEWAY_JWKS_UNAVAILABLE`), tuyệt đối không bỏ qua verify. Giám sát bằng `kong_memory_lua_shared_dict_bytes`.
 
 Private key không tồn tại trong Gateway runtime.
 
@@ -104,12 +123,13 @@ Các state này chỉ sống trong process/metrics và không phải record có 
 
 | Hạng mục | Trạng thái |
 |---|---|
-| SQL/NoSQL migration | Không áp dụng. |
+| SQL/NoSQL migration | Không áp dụng. Kong chạy `database = off` nên cũng không có `kong migrations`. |
 | Database seed | Không áp dụng. |
-| Route/config seed | Quản lý bằng versioned config/Git/env, review như code. |
+| Route/config seed | `kong.yaml` quản lý bằng decK trong Git, review như code. CI chạy `deck validate` → `deck gateway diff` → `deck gateway sync`. |
 | Redis bootstrap | Không cần seed; key được tạo theo request và tự hết TTL. |
 | JWKS bootstrap | Fetch từ auth-user khi startup/readiness; không seed key thủ công. |
-| Rollback | Rollback image/config version; không rollback database. |
+| Rollback | Revert commit config rồi `deck gateway sync` lại, hoặc rollback image nếu lỗi nằm ở custom plugin. Không rollback database. |
+| Drift detection | `deck gateway diff` chạy định kỳ trên môi trường thật; khác biệt so với Git là sự cố cấu hình phải điều tra, không được sync đè im lặng. |
 
 ## 7. Giả định & câu hỏi mở
 
@@ -117,5 +137,7 @@ Các state này chỉ sống trong process/metrics và không phải record có 
 |---|---|---|---|
 | 1 | Gateway không có domain database; README/API project ghi Database là N/A. | Nếu sau này lưu dynamic route/audit trong DB, phải tạo schema và migration riêng. | Architecture owner |
 | 2 | Redis là infrastructure state cho distributed rate limit, không phải source of truth. | Nếu Redis mất, cần giữ fail-closed hoặc có policy fallback được phê duyệt. | DevOps/Security |
-| 3 | Route/config được quản lý qua environment/Git; exact config delivery tool chưa chốt. | Ảnh hưởng rollout/rollback và secret rotation. | DevOps |
-| 4 | JWKS cache chỉ trong memory; mỗi instance tự refresh cùng endpoint auth-user. | Restart instance cần fetch lại key; cần auth-user availability/readiness. | Auth-user owner |
+| 3 | Route/config quản lý bằng decK + Git; cách nạp secret (Redis password, JWKS URL) qua env hay Kong Vault chưa chốt. | Ảnh hưởng rollout/rollback và secret rotation. | DevOps |
+| 4 | JWKS cache chỉ trong `lua_shared_dict`; mỗi **node Kong** tự refresh cùng endpoint auth-user. | Restart node cần fetch lại key; cần auth-user availability/readiness. Scale nhiều node làm tăng tần suất gọi JWKS theo bội số node. | Auth-user owner |
+| 5 | Format key rate limit thuộc plugin `rate-limiting` của Kong, không phải contract của team. | Mọi công cụ vận hành phụ thuộc format key cũ sẽ hỏng; phải quan sát bằng metric thay vì đọc Redis. | DevOps |
+| 6 | Redis dùng chung cho plugin `rate-limiting` và cho custom plugin `taca-ws-guard`/revoke marker; có tách database/instance hay không chưa chốt. | Dùng chung một database làm khó phân tách quota, eviction và sự cố. | DevOps/Security |

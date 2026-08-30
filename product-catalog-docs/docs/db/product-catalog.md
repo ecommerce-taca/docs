@@ -156,9 +156,14 @@ Giới hạn product: tối đa 50 definitions. Category definition khi áp dụ
 | `depth` | int | Có | Root depth 1; tối đa 5. |
 | `status` | enum | Có | `ACTIVE`, `INACTIVE`, `ARCHIVED`. |
 | `sort_order` | int | Có | Không âm. |
+| `tax_rate_bps` | int/null | Y* | **Thuế suất VAT của danh mục**, đơn vị *basis point* (1% = 100 bps). VD 10% = `1000`, 5% = `500`, 0% = `0`. Khoảng hợp lệ 0–10000. `null` = thừa kế từ `parent_id`. *`Y*`: nullable cho category con, **bắt buộc non-null cho category root** (`parent_id IS NULL`) — validate ở application layer vì MySQL không check CHECK constraint điều kiện chéo cột dễ dàng. |
 | `version` | long | Có | Atomic update. |
 
 Category inactive/archived không nhận assignment mới. Không hard-delete category đã có product reference.
+
+**Vì sao `tax_rate_bps` là số nguyên bps chứ không phải decimal:** toàn hệ thống cấm float ở mọi tầng (`System_Overview.md` §10). Lưu `0.1` dạng double rồi nhân với tiền là con đường chắc chắn dẫn tới lệch đồng. Với bps, phép tính thuế là số nguyên trọn vẹn: `tax = line_net × rate_bps / (10000 + rate_bps)`.
+
+Thuế suất **thừa kế theo cây danh mục**: sản phẩm lấy `tax_rate_bps` của `primary_category_id`; nếu category đó có giá trị `null` thì leo lên `parent_id` cho tới khi gặp giá trị. Root bắt buộc có giá trị để không bao giờ rỗng. Order-Commerce **snapshot** thuế suất tại thời điểm checkout — đổi thuế suất sau này không hồi tố đơn cũ.
 
 ### 3.5 `product_categories`
 

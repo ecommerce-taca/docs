@@ -2,6 +2,7 @@
 
 > Nguồn: `docs/lld/api-gateway.md` · `docs/db/api-gateway.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
 > Base path: `/api/v1` · Gateway không sở hữu business endpoint; các route business được proxy tới domain service
+> Runtime: **Kong Gateway 3.x OSS** (DB-less + decK). Toàn bộ contract đối ngoại trong tài liệu này **không đổi** khi chuyển từ bản NestJS sang Kong — ngoại lệ duy nhất là tên metric ở §3.3.
 
 ## 1. Quy ước chung
 
@@ -57,15 +58,16 @@
 | 7 | `ANY /api/v1/seller/products/**` | `product-catalog` | Seller/admin role-gated | 5s | Không retry mutation |
 | 8 | `ANY /api/v1/admin/catalog/**` | `product-catalog` | Admin permission-gated | 5s | Không retry mutation |
 | 9 | `ANY /api/v1/search/**`, `/api/v1/products/search`, `/api/v1/admin/search/**` | `search` | GET public; admin role-gated | 5s | GET tối đa 1 lần |
-| 10 | `ANY /api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**` | `order-commerce` | Authenticated | 5s; checkout 10s | Không retry write |
+| 10 | `ANY /api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**` (trừ `GET /api/v1/vouchers`) | `order-commerce` | Authenticated | 5s; checkout 10s | Không retry write |
+| 10a | `GET /api/v1/vouchers` | `order-commerce` | Public (auth tuỳ chọn) | 5s | GET tối đa 1 lần |
 | 11 | `ANY /api/v1/seller/orders/**`, `/api/v1/seller/vouchers/**` | `order-commerce` | Seller role-gated | 5s | Không retry write |
 | 12 | `ANY /api/v1/admin/vouchers/**` | `order-commerce` | Admin permission-gated | 5s | Không retry write |
 | 13 | `ANY /api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | `inventory` | Seller/admin role-gated (`/internal/**` không expose) | 5s | GET tối đa 1 lần |
-| 14 | `ANY /api/v1/payments/**` (webhook không JWT), `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `GET /api/v1/seller/revenue`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated/seller/admin; `/payments/webhook` public+signature | 10s | Không retry write |
-| 15 | `GET /api/v1/orders/{id}/shipment`, `GET /api/v1/seller/orders/{id}/shipment`, `POST /api/v1/webhooks/shipping/{carrier}` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
+| 14 | `ANY /api/v1/payments/**` (webhook không JWT), `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `GET /api/v1/seller/revenue`, `GET /api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated/seller/admin; `/payments/webhook` public+signature | 10s | Không retry write |
+| 15 | `GET /api/v1/orders/{id}/shipment`, `GET /api/v1/seller/orders/{id}/shipment`, `GET /api/v1/seller/orders/{id}/shipment/carriers`, `POST /api/v1/webhooks/shipping/{carrier}` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
 | 16 | `GET/POST /api/v1/products/{id}/reviews`, `ANY /api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; write authenticated | 5s | GET tối đa 1 lần |
 | 17 | `ANY /api/v1/notifications/**` | `notification` | Authenticated | 5s | GET tối đa 1 lần |
-| 18 | `ANY /api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**`, `/api/v1/support/**` | `message` | Authenticated/admin theo endpoint | 5s | GET tối đa 1 lần |
+| 18 | `ANY /api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**` | `message` | Authenticated/admin theo endpoint | 5s | GET tối đa 1 lần |
 | 19 | `GET /ws/messages` (`Upgrade: websocket`) | `message` | Authenticated (JWT ở handshake) | handshake 5s; idle 1800s | Không retry; không buffer frame |
 
 Route match ưu tiên exact path policy → method/path policy → family policy. Không được mặc định mọi `GET` là public.
@@ -74,7 +76,7 @@ Route match ưu tiên exact path policy → method/path policy → family policy
 
 | Route/action | Không JWT | JWT buyer | JWT seller/staff | JWT admin |
 |---|---:|---:|---:|---:|
-| Public catalog/search/detail GET, `GET /shops/{id}`, `GET /shops/{id}/followers/count` | Có | Có | Có | Có |
+| Public catalog/search/detail GET, `GET /shops/{id}`, `GET /shops/{id}/followers/count`, `GET /vouchers` | Có | Có | Có | Có |
 | Auth signup/signin/refresh/email verify/password reset | Có | Có | Có | Có |
 | Profile/address/cart/checkout/order/**favorites**/**following** của user | Không | Có | Có | Có |
 | Follow/unfollow shop (`/shops/{id}/follow`) | Không | Có | Có | Có |
@@ -102,12 +104,13 @@ Gateway chỉ thực hiện coarse gate trong bảng; service đích kiểm tra 
 | 10 | `ANY` | `/api/v1/seller/products/**` | Proxy seller product CRUD/publish | Seller/admin | Upstream pass-through/mapped error |
 | 11 | `ANY` | `/api/v1/search/**` | Proxy search | Public GET | Upstream pass-through/mapped error |
 | 12 | `ANY` | `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**` | Proxy commerce | Authenticated | Upstream pass-through/mapped error |
+| 12a | `GET` | `/api/v1/vouchers` | List voucher khả dụng (PDP/Shop voucher strip cho khách chưa đăng nhập) | Public; có JWT thì service tính thêm `eligible` | Upstream pass-through/mapped error |
 | 13 | `ANY` | `/api/v1/inventory/**` | Proxy inventory | Seller/admin | Upstream pass-through/mapped error |
 | 14 | `ANY` | `/api/v1/payments/**`, `/api/v1/wallet/**`, `/api/v1/payouts/**`, `/api/v1/refunds/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | Proxy payment/wallet + admin finance | Authenticated/admin (`FINANCE_OPS` cho `/admin/**`) | Upstream pass-through/mapped error |
 | 15 | `ANY` | `/api/v1/shipments/**` | Proxy shipment | Buyer/seller/admin | Upstream pass-through/mapped error |
-| 16 | `ANY` | `/api/v1/reviews/**`, `/api/v1/comments/**` | Proxy rating/comment | Public GET/auth write | Upstream pass-through/mapped error |
+| 16 | `ANY` | `/api/v1/products/{id}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | Proxy rating/comment | Public GET/auth write | Upstream pass-through/mapped error |
 | 17 | `ANY` | `/api/v1/notifications/**` | Proxy notification center | Authenticated | Upstream pass-through/mapped error |
-| 18 | `ANY` | `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**`, `/api/v1/support/**` | Proxy messaging/support | Authenticated/admin | Upstream pass-through/mapped error |
+| 18 | `ANY` | `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**` | Proxy messaging (gồm conversation `type=SUPPORT`) | Authenticated/admin | Upstream pass-through/mapped error |
 | 19 | `GET` | `/ws/messages` | WebSocket upgrade cho realtime chat | Authenticated (JWT ở handshake) | `101 Switching Protocols` hoặc `401/429/503` |
 
 ## 3. Chi tiết endpoint và contract
@@ -130,6 +133,7 @@ Ràng buộc:
 
 - Không kiểm tra Redis/JWKS/upstream; process còn nhận request thì liveness vẫn `UP`.
 - Không trả environment variable, hostname hoặc internal IP.
+- Nguồn thật là `/status` của Kong, được expose lại dưới path này qua một Route nội bộ. Admin API (`:8001`) **không** được expose ra ingress công khai ở bất kỳ môi trường nào.
 
 Lỗi: `503 GATEWAY_CONFIG_INVALID` nếu process chưa bind/health module không sẵn sàng.
 
@@ -157,27 +161,36 @@ Response mock:
 Ràng buộc:
 
 - `config`, `jwks`, `redis` phải `UP` để instance nhận protected traffic.
-- `upstreams=DEGRADED` có thể vẫn ready nếu route-specific failure policy cho phép; circuit metrics phải báo rõ service lỗi.
+- `upstreams=DEGRADED` có thể vẫn ready nếu route-specific failure policy cho phép; `kong_upstream_target_health` phải báo rõ service lỗi.
 - Response `503` không chứa secret/internal address.
+- Giá trị từng check lấy từ: `config` = declarative config đã load thành công; `jwks` = trạng thái `lua_shared_dict` của `taca-jwt`; `redis` = ping Redis dùng cho rate limit; `upstreams` = tổng hợp trạng thái target trong Upstream healthcheck. Vì healthcheck của Kong là **per-node**, hai node có thể trả `upstreams` khác nhau tại cùng một thời điểm — đây là hành vi đúng, không phải lỗi.
 
 ### 3.3 `GET /metrics` — Prometheus/OpenMetrics
 
 Quyền: Internal observability only · Content-Type: `text/plain; version=0.0.4` · Response: `200`
 
-Metric tối thiểu:
+Metrics do plugin `prometheus` của Kong sinh; **tên metric khác với bản NestJS** và dashboard/alert phải được viết lại theo bảng này.
 
-| Metric | Label allowlist | Ý nghĩa |
+| Nhu cầu quan sát | Metric Kong | Ghi chú |
 |---|---|---|
-| `gateway_http_requests_total` | `method`, `route`, `status`, `outcome` | Request count. |
-| `gateway_http_request_duration_seconds` | `method`, `route`, `status` | Latency histogram. |
-| `gateway_rate_limit_total` | `bucket`, `route`, `outcome` | Allow/block rate-limit. |
-| `gateway_upstream_requests_total` | `service`, `route`, `status` | Upstream count. |
-| `gateway_upstream_timeout_total` | `service`, `route` | Connect/read timeout. |
-| `gateway_circuit_state` | `service`, `route_group` | `0/1/2` cho CLOSED/OPEN/HALF_OPEN. |
-| `gateway_jwks_refresh_total` | `outcome`, `kid` không log raw | JWKS refresh. |
-| `gateway_outbox_none` | Không áp dụng | Gateway không sở hữu outbox; không tạo metric business event. |
+| Request count theo route/status | `kong_http_requests_total` (label `service`, `route`, `code`) | Thay cho `gateway_http_requests_total`. |
+| Latency tổng / upstream / phần Kong | `kong_request_latency_ms`, `kong_upstream_latency_ms`, `kong_kong_latency_ms` (histogram) | Tách được thời gian do Gateway gây ra và thời gian do service gây ra — chi tiết hơn bản cũ. |
+| Băng thông | `kong_bandwidth_bytes` | — |
+| Trạng thái "circuit" | `kong_upstream_target_health` (label `upstream`, `target`, `state`) | Thay cho `gateway_circuit_state`; `state` gồm `healthy`/`unhealthy`/`dns_error`. |
+| Rate limit bị chặn | `kong_http_requests_total{code="429"}` | Không có metric riêng theo bucket; xem hạn chế bên dưới. |
+| Bộ nhớ shared dict (JWKS cache) | `kong_memory_lua_shared_dict_bytes` | Cảnh báo sớm khi dict JWKS sắp đầy. |
 
-Không đưa `user_id`, email, phone, raw IP, token hoặc URL có PII vào label.
+Metric **không có tương đương native**, phải do custom plugin tự ghi vào `lua_shared_dict taca_metrics` và expose trên cùng route `/metrics`:
+
+| Metric | Label allowlist | Nguồn |
+|---|---|---|
+| `taca_jwks_refresh_total` | `outcome` (`success`/`failure`/`stale`) | `taca-jwt` |
+| `taca_rate_limit_total` | `bucket`, `outcome` | wrapper quanh `rate-limiting` |
+| `taca_ws_connections` | — (gauge tổng, không theo user) | `taca-ws-guard` |
+
+- Tên metric chính xác phụ thuộc phiên bản Kong (một số bản dùng hậu tố `_seconds` thay `_ms`). Phải **chốt theo bản đang chạy** khi dựng dashboard, không copy từ tài liệu phiên bản khác.
+- Không đưa `user_id`, email, phone, raw IP, token, `kid` thô hoặc URL có PII vào label.
+- Kong sinh label `route`/`service` theo **tên object trong decK**, nên quy ước đặt tên ở LLD §2.3 (`rt-<upstream>-<nhóm>-<read|write>`) trực tiếp quyết định chất lượng dashboard — đặt tên tùy tiện sẽ làm metric không đọc được.
 
 ### 3.4 `OPTIONS /api/v1/**` — CORS preflight
 
@@ -416,7 +429,8 @@ Sau khi upgrade:
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
 | 1 | Gateway proxy business schema và không duplicate API schema của service đích. | API spec từng service phải hoàn tất trước khi frontend code full integration. | Backend leads |
-| 2 | Exact Node.js LTS/NestJS version và HTTP adapter chưa chốt. | Ảnh hưởng streaming/proxy behavior, security patch và Docker image. | Tech lead |
+| 2 | Runtime là Kong Gateway 3.x OSS (DB-less + decK); patch version, base image và cách đóng gói custom plugin chưa chốt. | Ảnh hưởng priority của plugin built-in, tên metric Prometheus, security patch và Docker image. | Tech lead |
+| 10 | Contract đối ngoại giữ nguyên khi migrate sang Kong: route family (§1.3), access matrix (§1.4), error envelope, bảng mã lỗi (§4), rate-limit headers (§3.9), WebSocket handshake (§3.12). Chỉ tên metric ở §3.3 thay đổi. | Nếu một mục nào đó lệch sau khi triển khai thật, frontend phải sửa theo — phải phát hiện bằng contract test trước khi release. | Backend leads + Frontend |
 | 3 | `CORS_ALLOWED_ORIGINS` thật của các ứng dụng Micro-Frontends (`mfe-shell`, `mfe-buyer`, `mfe-seller`, `mfe-admin`) chưa cung cấp. | Frontend có thể bị block hoặc mở origin ngoài ý muốn. | Frontend/DevOps |
 | 4 | Refresh token đang dùng JSON Bearer flow; nếu chuyển HttpOnly cookie phải bổ sung CSRF/CORS contract. | Ảnh hưởng browser auth và Gateway credentials policy. | Frontend/Security |
 | 5 | Internal REST có bắt buộc TLS/mTLS hay chỉ network policy chưa chốt. | Nếu chỉ tin forwarded identity header, có rủi ro bypass khi service bị gọi trực tiếp. | Security/DevOps |

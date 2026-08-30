@@ -104,11 +104,43 @@ DB check không âm, application state machine/amount-match/signature/KYC gate; 
 
 ## 6. Migration và seed
 
-1. Tạo payment/allocation/provider event/wallet/ledger/payout/refund/outbox/idempotency/audit.
-2. Tạo unique/index sau duplicate preflight.
-3. Seed VNPAY pending/success/failed, COD pending/success, wallet ledger balanced, payout/refund states.
-4. Reconcile every payment allocation and ledger posting; không seed secret thật.
-5. Tạo `fee_configs`/`tax_configs` (+ cột `fee_config_id`/`tax_config_id` trên `payment_allocations`) và `settlement_batches`/`settlement_batch_items`; seed 1 version PLATFORM fee + 1 version tax do Finance cung cấp, 1 batch `COMPLETED` mẫu.
+### 6.1 Thứ tự migration
+
+| Thứ tự | Nội dung | Phụ thuộc |
+|---:|---|---|
+| 001 | Tạo database `paymentdb`, charset/collation, migration metadata | — |
+| 002 | Tạo `payments` (unique `order_id`/intent policy) | — |
+| 003 | Tạo `payment_events` (unique `(provider,provider_event_id)`) | `payments` |
+| 004 | Tạo `wallets` (unique `shop_id`) | — |
+| 005 | Tạo `payment_allocations`, FK → `payments`, `wallets` | `payments`, `wallets` |
+| 006 | Tạo `ledger_entries` (unique `(posting_id,entry_type,wallet_id)`), FK → `wallets` | `wallets` |
+| 007 | Tạo `payouts`, `refunds` | `wallets`, `payments` |
+| 008 | Tạo `outbox_events`, `idempotency_keys`, `audit_logs` | — |
+| 009 | Tạo `fee_configs`, `tax_configs` (effective-dated, append-only, không unique để cho nhiều version) | — |
+| 010 | Thêm cột `fee_config_id`, `tax_config_id` trên `payment_allocations`, FK → `fee_configs`/`tax_configs` | `payment_allocations`, `fee_configs`, `tax_configs` |
+| 011 | Tạo `settlement_batches` (unique `(period_start,period_end)`), `settlement_batch_items` (unique `(batch_id,shop_id)`) | `wallets` |
+| 012 | Thêm index `(buyer_user_id,created_at)`, `(status,expires_at)` trên `payments`; `(shop_id,created_at)` trên `payment_allocations` | Tất cả bảng trên |
+| 013 | Seed fixture cho local/test (§6.2) | Tất cả bảng trên |
+
+### 6.2 Seed tối thiểu cho local/test
+
+| Seed | Giá trị |
+|---|---|
+| `payments` | 1 VNPAY `PENDING`; 1 VNPAY `SUCCESS`; 1 VNPAY `FAILED`; 1 COD `PENDING_COD`; 1 COD `SUCCESS` (đã capture sau delivered). |
+| `payment_events` | Webhook event khớp mỗi payment `SUCCESS`/`FAILED` ở trên — test idempotent replay. |
+| `wallets` + `ledger_entries` | 1 wallet có `available_balance`/`pending_balance` khớp **chính xác** tổng `ledger_entries` (double-entry cân bằng — đây là bất biến bắt buộc, seed sai sẽ làm mọi test reconciliation fail). |
+| `payouts` | 1 `REQUESTED`; 1 `SUCCESS`; 1 `FAILED`. |
+| `refunds` | 1 `SUCCESS` không vượt `payments.amount` đã capture. |
+| `fee_configs`/`tax_configs` | 1 version `PLATFORM` fee + 1 version tax do Finance cung cấp (placeholder nếu chưa có số thật — xem `System_Overview.md` §11 blocker #5), `effective_from` trong quá khứ để allocation seed dùng được ngay. |
+| `settlement_batches` | 1 batch `COMPLETED` với `settlement_batch_items` khớp tổng `payment_allocations` của batch đó. |
+
+Không seed VNPAY secret/signature thật hoặc bank account thật — dùng sandbox/mock credential.
+
+### 6.3 Kiểm tra bắt buộc trước khi chạy migration production
+
+1. **Double-entry cân bằng**: mọi `posting_id` phải có tổng debit = tổng credit trước khi enable ledger cho traffic thật — migration phải fail nếu phát hiện lệch.
+2. Reconcile `wallets.available_balance + pending_balance` khớp `Σ ledger_entries` cho từng `wallet_id`.
+3. Verify `payment_allocations.fee_config_id`/`tax_config_id` trỏ đúng version **có hiệu lực tại `payments.created_at`**, không phải version mới nhất.
 
 ## 7. Giả định & câu hỏi mở
 

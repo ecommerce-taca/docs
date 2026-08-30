@@ -387,6 +387,8 @@ Ràng buộc tuyệt đối:
 | `ATTRIBUTE_STRING_MAX_LENGTH` | 500 | Unicode characters | Với specification dài dùng description field. |
 | `ATTRIBUTE_ENUM_MAX_VALUES` | 200 | value/definition | ENUM value unique trong definition. |
 | `PRIMARY_CATEGORY_LIMIT` | 1 | category/product | Bắt buộc khi publish. |
+| `PRODUCT_EXPORT_MAX_ROWS` | 10000 | row/request | `GET /seller/products/export` — vượt trả `400 PRODUCT_EXPORT_TOO_LARGE`. |
+| `PRODUCT_EXPORT_URL_TTL` | 30 phút | — | Signed download URL hết hạn, gọi lại endpoint để có URL mới. |
 | `SECONDARY_CATEGORY_LIMIT` | 2 | category/product | Tối đa 2 category phụ. |
 | `CATEGORY_MAX_DEPTH` | 5 | level | Root là depth 1. |
 | `CATEGORY_NAME_MAX_LENGTH` | 120 | Unicode characters | Unique theo cùng parent. |

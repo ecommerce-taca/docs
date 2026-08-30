@@ -135,11 +135,16 @@ REST/WebSocket → authenticate → participant authorization
 |---|---|
 | `ConversationType` | `BUYER_SELLER`, `SUPPORT`, `ORDER_CONTEXT`. |
 | `ConversationStatus` | `ACTIVE`, `ARCHIVED`, `CLOSED`, `BLOCKED`. |
-| `MessageStatus` | `ACCEPTED`, `EDITED`, `DELETED`, `BLOCKED`. |
+| `MessageStatus` | `ACCEPTED`, `EDITED`, `DELETED`, `BLOCKED`. Trạng thái **nội dung** (moderation); phơi ra API dưới tên `moderation_status`. |
+| `MessageDeliveryStatus` | `SENT`, `DELIVERED`, `READ`. Trạng thái **giao nhận**, server tính per-viewer từ `read_states`, không lưu trên document message. Client-side `QUEUED`/`SENDING`/`FAILED` không thuộc enum này. |
 | `AttachmentStatus` | `UPLOADING`, `SCANNING`, `READY`, `REJECTED`, `DELETED`. |
 | `ParticipantRole` | `BUYER`, `SELLER`, `SUPPORT_AGENT`, `ADMIN`. |
 
 V1 không có pre-moderation; `BLOCKED` chỉ reserved cho security/report/admin policy tương lai.
+
+Hai enum trên là **hai trục khác nhau** và không được gộp vào một field: một message có thể vừa `EDITED` (nội dung) vừa `READ` (giao nhận). API trả hai field riêng `moderation_status` + `delivery_status`.
+
+`delivery_status` không được persist theo message (sẽ là O(số message × số participant) lần ghi); nó được **suy ra lúc đọc** bằng cách so `message.sequence` với `delivered_sequence`/`last_read_sequence` trong `read_states` của phía đối diện — chi phí O(1) mỗi conversation.
 
 ## 6. Event phát ra / lắng nghe
 

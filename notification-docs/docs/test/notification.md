@@ -8,7 +8,7 @@
 |---|---|
 | Runtime | NestJS + Jest/Supertest, MySQL/Kafka containers. |
 | Providers | SMTP/Mock Email adapter, provider timeout/retry/error. |
-| Events | Auth verification/reset, order paid/invoice issued, shipment delivered, payment/payout. |
+| Events | Auth verification/reset, order confirmed (VNPAY + COD)/order paid/invoice issued, shipment delivered, payment/payout. |
 | Data | Queued/processing/sent/failed/skipped, unread/read, duplicate dedupe key, template versions. |
 | Actors | User own notifications, other user, admin delivery read. |
 | Telemetry | JSON log, W3C trace, X-Request-ID, PII/secret redaction scan. |

@@ -112,7 +112,8 @@ Unknown/out-of-order status được lưu diagnostic nhưng không làm state l�
 | Tên | Giá trị baseline | Ghi chú |
 |---|---:|---|
 | `PAGE_SIZE_DEFAULT` | 20 | Max 100. |
-| `CARRIER_REQUEST_TIMEOUT` | 5s | GHN/MOCK call. |
+| `CARRIER_REQUEST_TIMEOUT` | 5s | GHN/SPX/J&T/MOCK call. |
+| `CARRIER_QUOTE_TTL` | 30 phút | `GET /seller/orders/{orderId}/shipment/carriers` — hết hạn không chặn tạo shipment. |
 | `CARRIER_RETRY_MAX` | 1 | Chỉ retry safe quote; create dùng idempotency/reconcile. |
 | `WEBHOOK_MAX_SKEW` | 15 phút | Carrier timestamp. |
 | `TRACKING_CODE_MAX_LENGTH` | 64 | Normalize/unique. |
@@ -126,7 +127,7 @@ Unknown/out-of-order status được lưu diagnostic nhưng không làm state l�
 
 | Enum | Giá trị |
 |---|---|
-| `Carrier` | `GHN`, `MOCK`. |
+| `Carrier` | `GHN`, `SPX`, `J&T`, `MOCK`. Seller chọn tay 1 trong 3 carrier thật khi chuẩn bị hàng (`GET /seller/orders/{orderId}/shipment/carriers`); `MOCK` chỉ dùng test/staging, không hiển thị cho seller. |
 | `ShipmentStatus` | `CREATED`, `PICKED_UP`, `IN_TRANSIT`, `DELIVERED`, `FAILED`, `CANCELLED`, `PENDING_RECONCILIATION`. |
 | `CarrierEventStatus` | `RECEIVED`, `APPLIED`, `IGNORED_OLD`, `REJECTED`. |
 | `QuoteStatus` | `VALID`, `EXPIRED`, `FAILED`. |

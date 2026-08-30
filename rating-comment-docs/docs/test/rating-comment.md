@@ -30,6 +30,7 @@
 |---|---|---|
 | R-API-01 | `GET /products/{id}/reviews` public/filter/pagination | `200`, only published, aggregate correct. |
 | R-API-02 | Create delivered eligible review | `201 PUBLISHED`, verified true, aggregate/outbox. |
+| R-API-02a | Create review 6 tháng sau `DELIVERED` | `201` — không có hạn tạo review, chỉ cần đơn `DELIVERED`. |
 | R-API-03 | Create not delivered/wrong item/wrong buyer | `409 REVIEW_NOT_ELIGIBLE`, no write. |
 | R-API-04 | Duplicate same order/product/buyer | `409 REVIEW_ALREADY_EXISTS`. |
 | R-API-05 | Rating/comment boundary/invalid media | `400 REVIEW_INVALID_INPUT/MEDIA_INVALID`. |
@@ -67,6 +68,6 @@
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
 | 1 | Review verified delivered, no pre-moderation. | Nếu đổi policy phải thêm test queue/SLA. | Product owner |
-| 2 | Edit window 30 ngày/delete policy baseline. | Ảnh hưởng time-based cases. | Product owner |
+| 2 | ~~Edit window/delete policy baseline~~ → **Đã chốt**: edit 30 ngày, tạo review không giới hạn. | — | Đã đóng |
 | 3 | Delivered event/fallback Order contract chưa chốt. | Ảnh hưởng eligibility integration. | Order owner |
 | 4 | Media scan provider chưa chốt. | Ảnh hưởng SCANNING/READY tests. | Security/DevOps |

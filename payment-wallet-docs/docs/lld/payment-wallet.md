@@ -110,8 +110,15 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 ### 3.3 COD
 
 - Create payment với method `COD` tạo `PENDING_COD`; không gọi VNPAY.
-- Khi Shipment/Order xác nhận delivered/collected theo contract, Payment transition `PENDING_COD → SUCCESS` và post ledger.
+- **`PENDING_COD` không chặn fulfillment.** Order-Commerce cho đơn COD vào `CONFIRMED` ngay tại checkout và không chờ event nào từ Payment-Wallet để giao hàng (xem `order-commerce-docs/docs/lld/order-commerce.md` §3.4). Payment-Wallet **không** phát `payment.succeeded` tại thời điểm đặt đơn COD, và Order-Commerce **không** chờ event đó.
+- Capture: khi nhận `shipment.delivered` (hoặc collection event tương đương từ carrier adapter), Payment transition `PENDING_COD → SUCCESS`, post ledger và phát `payment.succeeded`. Đây là **sau** khi order đã `DELIVERED`, nên event này chỉ phục vụ đối soát/settlement, không mở luồng giao hàng.
+- `shipment.failed` hoặc order cancelled trước khi giao: `PENDING_COD → FAILED`/`CANCELLED` tuỳ policy, không post ledger, không tạo allocation.
 - COD failure/cancel không tạo seller payout; exact cash collection event cần Shipment/Finance contract.
+
+> Thứ tự thời gian của hai phương thức khác nhau, ledger phải chịu được cả hai:
+> **VNPAY** — capture → allocation → order `CONFIRMED` → giao hàng.
+> **COD** — order `CONFIRMED` → giao hàng → capture → allocation.
+> Hệ quả: với COD, `wallet.allocated` và cửa sổ giữ tiền của seller bắt đầu tính từ lúc giao thành công, không phải lúc đặt đơn.
 
 ### 3.4 Wallet/allocation/payout/refund
 
@@ -131,6 +138,8 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 | `VND_MIN/MAX` | 1/999999999999 | Integer. |
 | `COMMISSION_RATE_MIN/MAX` | 0/100% | Exact platform rate config phải versioned. |
 | `PAYOUT_MIN_AMOUNT` | 1000 VND | Baseline, cần finance confirm. |
+| `REVENUE_EXPORT_MAX_RANGE` | 366 ngày | Cùng giới hạn với `GET /seller/revenue`. |
+| `EXPORT_URL_TTL` | 30 phút | `GET /seller/revenue/export`, `GET /admin/finance/summary/export`. |
 | `PAYOUT_RETENTION` | 365 ngày | Bank snapshot masked/encrypted. |
 | `OUTBOX_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
 | `IDEMPOTENCY_RETENTION` | 24h | Payment/payout/refund command. |
@@ -141,7 +150,7 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 | Enum | Giá trị |
 |---|---|
 | `PaymentMethod` | `VNPAY`, `COD`. |
-| `PaymentStatus` | `PENDING`, `SUCCESS`, `FAILED`, `EXPIRED`, `REFUNDED`, `PARTIALLY_REFUNDED`. |
+| `PaymentStatus` | `PENDING`, `PENDING_COD`, `SUCCESS`, `FAILED`, `EXPIRED`, `REFUNDED`, `PARTIALLY_REFUNDED`. `PENDING` dùng cho phương thức trả trước đang chờ provider; `PENDING_COD` dùng cho COD chờ thu tiền khi giao. |
 | `WalletStatus` | `ACTIVE`, `FROZEN`, `CLOSED`. |
 | `LedgerEntryType` | `DEBIT`, `CREDIT`. |
 | `PayoutStatus` | `REQUESTED`, `PROCESSING`, `SUCCESS`, `FAILED`, `CANCELLED`. |

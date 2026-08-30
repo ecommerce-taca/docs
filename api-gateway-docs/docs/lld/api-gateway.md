@@ -1,7 +1,9 @@
 # LLD — API Gateway Service
 
 > Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
-> Tech stack đã chốt: Node.js + NestJS · REST/HTTP · Redis cho distributed rate limit · JWT RS256/JWKS · internal REST qua domain/IP nội bộ
+> Tech stack đã chốt: **Kong Gateway 3.x OSS** (DB-less declarative, quản lý bằng decK trong Git) · plugin built-in + 5 custom Lua plugin (`taca-*`) · REST/HTTP · Redis cho distributed rate limit · JWT RS256/JWKS · internal REST qua domain/IP nội bộ
+>
+> **Lưu ý migration:** v1 trước đây thiết kế Gateway tự viết bằng Node.js + NestJS. Toàn bộ **contract đối ngoại giữ nguyên** (route family, error envelope, mã lỗi, header context, rate-limit baseline, WebSocket handshake) — chỉ thay đổi cơ chế thực thi. Xem §2.1 để biết yêu cầu nào do plugin built-in đáp ứng và yêu cầu nào bắt buộc phải viết custom plugin.
 
 ## 1. Phạm vi
 
@@ -24,16 +26,23 @@
 Client
   │ HTTPS
   ▼
-API Gateway
-  ├─ CORS / request limit / request-id
-  ├─ JWT RS256 validation từ JWKS cache
-  ├─ route-level role gate + Redis rate limit
-  └─ REST proxy qua internal domain/IP
+Kong Gateway (DB-less, kong.yml sinh bởi decK)
+  ├─ taca-request-guard   → CORS origin allowlist, request-id, strip header giả mạo
+  ├─ request-size-limiting → body/header limit
+  ├─ taca-jwt             → JWKS cache + RS256 verify + actor headers
+  ├─ taca-rbac            → coarse role/permission theo Route
+  ├─ rate-limiting (redis)→ bucket auth/public/authenticated
+  ├─ taca-error-envelope  → chuẩn hóa mọi lỗi về {error:{code,message,details,trace_id}}
+  └─ Kong proxy core      → Service/Upstream + timeout + retries + healthcheck
        ├─ auth-user
        ├─ product-catalog / search
        ├─ order-commerce / inventory
        ├─ payment-wallet / shipment
        └─ rating-comment / notification / message
+
+Ngoài request path:
+  decK (Git) ──validate/diff/sync──► Kong config
+  prometheus plugin ──► /metrics · http-log plugin ──► log sink · opentelemetry plugin ──► trace
 ```
 
 - Client không được biết hoặc truy cập trực tiếp các internal URL.
@@ -55,55 +64,158 @@ API Gateway
 
 ## 2. Cấu trúc bên trong
 
-### 2.1 Module trong NestJS
+### 2.1 Cấu trúc triển khai Kong
+
+Kong chạy **DB-less** (`database = off`): toàn bộ Service/Route/Plugin/Upstream nằm trong một declarative config được sinh và kiểm tra bằng decK, version trong Git. Điều này giữ đúng nguyên tắc đã chốt ở §8 #2 — *route là static, không đọc từ database*.
 
 ```text
-src/
-├── app.module.ts
-├── config/                 # environment schema, fail-fast validation
-├── routing/                # static route registry, upstream resolver
-├── auth/                   # JWKS cache, JWT validator, route policy
-├── rate-limit/             # Redis counter, key builder, 429 response
-├── proxy/                  # internal REST client, timeout/retry/circuit
-├── security/               # CORS, body/header limit, trusted headers
-├── request-context/        # request-id, actor context, trace propagation
-├── ws-proxy/               # WebSocket handshake auth + TCP upgrade proxy tới Message Service
-├── errors/                 # gateway/upstream error mapper
-├── health/                 # liveness/readiness/dependency checks
-└── observability/          # structured log, metric, trace, redaction
+api-gateway/
+├── kong/
+│   ├── kong.conf                    # database=off, nginx tuning, lua_shared_dict
+│   ├── deck/
+│   │   ├── kong.yaml                # declarative config gốc (Service/Route/Upstream/Plugin)
+│   │   ├── env/{dev,staging,prod}.yaml   # biến môi trường cho decK (upstream host, origin, TTL)
+│   │   └── Makefile                 # deck validate / deck gateway diff / deck gateway sync
+│   └── plugins/                     # custom Lua plugin, mỗi plugin một thư mục
+│       ├── taca-request-guard/{handler.lua,schema.lua}
+│       ├── taca-jwt/{handler.lua,schema.lua,jwks.lua}
+│       ├── taca-rbac/{handler.lua,schema.lua}
+│       ├── taca-ws-guard/{handler.lua,schema.lua}
+│       └── taca-error-envelope/{handler.lua,schema.lua}
+├── spec/                            # busted unit test cho từng plugin
+└── Dockerfile                       # kong:3.x + COPY plugins + KONG_PLUGINS=bundled,taca-*
 ```
 
-| Module | Trách nhiệm | Ràng buộc |
+#### 2.1.1 Yêu cầu v1 → cơ chế Kong
+
+Bảng này là **hợp đồng migration**: mỗi dòng là một yêu cầu đã chốt ở bản NestJS và cách Kong đáp ứng nó.
+
+| Yêu cầu v1 | Cơ chế trong Kong | Loại |
 |---|---|---|
-| `ConfigModule` | Đọc và validate environment khi process khởi động. | Thiếu `JWT_ISSUER`, `JWKS_URL`, Redis URL hoặc service URL bắt buộc thì readiness fail; không dùng giá trị production mặc định. |
-| `RoutingModule` | Match method + path prefix với upstream; chọn policy timeout/retry. | Route static; không đọc route từ database; route không match trả 404 trước khi gọi service. |
-| `JwtModule` | Cache JWKS, validate signature/issuer/audience/exp/nbf, tạo actor context. | Chỉ chấp nhận thuật toán `RS256`; không fallback sang `none`, HS256 hoặc key client gửi lên. |
-| `RateLimitModule` | Tạo key theo IP/user/route và cập nhật Redis counter có TTL. | Lỗi Redis trên route protected/public phải fail-closed theo policy đã cấu hình, không tự chuyển sang counter local trong production. |
-| `ProxyModule` | Forward request tới internal REST service, giới hạn timeout, retry request an toàn, circuit breaker. | Không retry POST/PATCH/PUT/DELETE mặc định; không tự thay đổi body hoặc business response. |
-| `SecurityModule` | CORS allowlist, header/body limit, strip spoofed headers, trusted proxy. | Không dùng `Access-Control-Allow-Origin: *` cùng credentials; không log raw token/password/PII. |
-| `ErrorModule` | Map lỗi gateway/upstream thành envelope `{error:{code,message,details,trace_id}}`. | Giữ HTTP semantics; không expose stack trace, internal host, SQL hoặc secrets. |
-| `HealthModule` | Liveness, readiness và kiểm tra dependency tối thiểu. | Liveness không phụ thuộc Redis/upstream; readiness kiểm tra config, JWKS và Redis theo deployment policy. |
-| `WsProxyModule` | Nhận HTTP `Upgrade: websocket` trên `/ws/messages`; validate JWT từ query/`Sec-WebSocket-Protocol`/header, kiểm connection cap và rate limit; mở tunnel TCP tới Message Service giữ nguyên trace context. | Chỉ path allowlist được upgrade; không parse/không sửa frame; không tự reconnect; đóng socket khi JWT hết hạn theo policy hoặc quá `WS_IDLE_TIMEOUT`. |
-| `ObservabilityModule` | Log JSON, metrics latency/status/rate-limit/circuit/ws-connection, trace propagation. | Mọi log request/handshake phải có `traceId`/`requestId`; chỉ log allowlist field; không log message frame. |
+| CORS response header, preflight | Plugin `cors` (`origins` allowlist, `credentials=false`, `max_age=600`) | Built-in |
+| Từ chối origin ngoài allowlist bằng `403` | `taca-request-guard` — plugin `cors` **không** trả 403, xem §2.1.3 | **Custom** |
+| Body ≤ 1 MiB | Plugin `request-size-limiting` (`allowed_payload_size=1`, `size_unit=megabytes`) | Built-in |
+| Header limit 16 KiB | `kong.conf` → `nginx_http_large_client_header_buffers` | Kong core |
+| `X-Request-ID` giữ/sinh mới | Plugin `correlation-id` (`header_name=X-Request-ID`, `generator=uuid`, `echo_downstream=true`) | Built-in |
+| Validate charset/length của `X-Request-ID` client gửi | `taca-request-guard` | **Custom** |
+| Strip `X-User-*`, `X-Auth-*` client gửi | `taca-request-guard` (phải chạy **trước** `taca-jwt`, xem §2.1.3) | **Custom** |
+| JWKS fetch/cache/rotation + verify RS256 | `taca-jwt` — Kong OSS không có plugin JWKS | **Custom** |
+| Kiểm `iss`/`aud`/`exp`/`iat`/`nbf`/`kid` | `taca-jwt` | **Custom** |
+| Sinh `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope`, `X-Auth-Method` | `taca-jwt` (`kong.service.request.set_header`) | **Custom** |
+| Coarse role/permission gate theo route | `taca-rbac` (config per-Route) | **Custom** |
+| Rate limit phân tán qua Redis | Plugin `rate-limiting` (`policy=redis`, `limit_by=consumer\|ip`, `fault_tolerant=false` để fail-closed) | Built-in |
+| Timeout connect/read/write | `Service.connect_timeout` / `read_timeout` / `write_timeout` | Kong core |
+| Retry chỉ cho GET/HEAD | Tách Kong Service read/write theo `Route.methods`, xem §2.1.4 | Kong core |
+| Circuit breaker | `Upstream.healthchecks` passive + active, xem §5.2 | Kong core |
+| Load balancing/connection pool tới upstream | `Upstream` + `targets` + keepalive của Kong | Kong core |
+| Error envelope thống nhất | `taca-error-envelope` | **Custom** |
+| WebSocket proxy `/ws/messages` | Kong proxy WS natively; timeout = `read_timeout` của Service `svc-message-ws` | Kong core |
+| WS connection cap/user | `taca-ws-guard` (Redis `INCR` ở `access`, `DECR` ở `log`) | **Custom** |
+| `/metrics` Prometheus | Plugin `prometheus` | Built-in |
+| Structured JSON log + redaction | Plugin `http-log`/`file-log` + `custom_fields_by_lua` | Built-in |
+| W3C trace propagation | Plugin `opentelemetry` (`header_type=w3c`) | Built-in |
+| Liveness/readiness | Kong `/status` + Route nội bộ, xem §2.1.5 | Kong core |
 
-### 2.2 Request pipeline
+**Kết luận migration:** phần lớn hạ tầng proxy (HTTP core, rate limit, CORS header, size limit, timeout, healthcheck, metrics, log, trace, WS tunnel) chuyển sang plugin đã được kiểm chứng của Kong. Phần **bắt buộc còn phải tự viết là 5 plugin Lua** ở bảng trên — chủ yếu vì Kong OSS không có JWKS và không có RBAC theo claim. Đây là đánh đổi cần biết trước: Kong **không** xóa hết custom code, nhưng thu hẹp nó từ "toàn bộ gateway" xuống "5 plugin có phạm vi hẹp, test được độc lập".
+
+#### 2.1.2 Custom plugin
+
+| Plugin | Phase | Trách nhiệm | Ràng buộc |
+|---|---|---|---|
+| `taca-request-guard` | `access` (ưu tiên cao nhất) | Kiểm `Origin` theo allowlist → `403 GATEWAY_CORS_DENIED`; validate `X-Request-ID` (`[A-Za-z0-9._:-]`, ≤64) → sai thì sinh mới; xóa mọi `X-User-*`, `X-Auth-*`, `X-Forwarded-*` không đến từ trusted proxy. | Phải chạy trước `taca-jwt`, nếu không sẽ xóa nhầm header do `taca-jwt` vừa set. Không đọc body. |
+| `taca-jwt` | `access` | Lấy Bearer từ header / `Sec-WebSocket-Protocol` / query `access_token`; verify RS256 bằng JWKS cache trong `lua_shared_dict`; kiểm claim §2.4; kiểm marker `revoked_user:{sub}` trong Redis; set actor header. | Chỉ chấp nhận `alg=RS256`; không fallback `none`/HS256/key từ client. Refresh JWKS **một lần có lock** (`resty.lock`) khi gặp `kid` lạ. JWKS quá `JWT_JWKS_MAX_STALE` → `503`, không bypass. |
+| `taca-rbac` | `access` (sau `taca-jwt`) | So `roles`/`permissions` trong actor context với `required_roles`/`required_any_permission` khai báo trên từng Route → `403 GATEWAY_PERMISSION_DENIED`. | Chỉ coarse gate. Không đọc body, không suy luận ownership từ `shop_id` trong path/body. Không tự quyết định 2FA. |
+| `taca-ws-guard` | `access` + `log` | Chỉ gắn trên Route `/ws/messages`. `access`: `INCR ws:v1:conn:{user_hash}`, vượt `WS_MAX_CONNECTIONS_PER_USER` → `429`. `log`: `DECR` khi connection đóng. | Không parse/không sửa WebSocket frame. Không tự reconnect. Redis lỗi → fail-closed theo policy handshake. |
+| `taca-error-envelope` | `header_filter` + `body_filter` | Dựa vào `kong.response.get_source()`: `exit`/`error` (lỗi do Kong/plugin sinh) → thay body bằng envelope chuẩn; `service` + 4xx → giữ nguyên business code đã allowlist, bổ sung `trace_id` nếu thiếu; `service` + 5xx → thay bằng `GATEWAY_UPSTREAM_UNAVAILABLE`/`GATEWAY_UPSTREAM_BAD_RESPONSE`. | Không bao giờ pass-through body 5xx của upstream. Không trả stack trace, internal host, SQL, secret. Bảng ánh xạ lỗi native của Kong ở §2.1.6. |
+
+Mọi plugin đọc cấu hình từ `schema.lua` (khai báo trong decK), **không** hard-code giá trị môi trường; thiếu field bắt buộc thì `deck validate` fail trước khi sync.
+
+#### 2.1.3 Thứ tự plugin
+
+Kong thực thi plugin trong cùng phase theo `PRIORITY` giảm dần. Thứ tự **bắt buộc** trong `access`:
 
 ```text
-1. Nhận HTTPS request
-2. Tạo/kiểm tra request-id và trace context
-3. CORS + method/path/body/header limit
-4. Match static route
-5. Rate limit theo route và actor key
-6. Nếu protected: validate JWT từ JWKS cache
-7. Nếu role-gated: kiểm tra role/permission tối thiểu của route
-8. Strip header giả mạo, gắn actor context và forward headers
-9. Proxy tới internal service với timeout/circuit/retry
-10. Map upstream response/error, ghi telemetry và trả client
+taca-request-guard  →  request-size-limiting  →  taca-jwt  →  taca-rbac
+                                                      ↓
+                                              rate-limiting (redis)
+                                                      ↓
+                                              taca-ws-guard (chỉ /ws/messages)
 ```
+
+- `taca-request-guard` phải cao hơn tất cả: nếu chạy sau `taca-jwt` nó sẽ xóa chính header actor vừa được sinh ra.
+- `taca-jwt` phải chạy trước `rate-limiting` vì bucket authenticated dùng `limit_by=consumer` — cần danh tính đã xác thực. Bucket public/auth-endpoint dùng `limit_by=ip` nên không phụ thuộc thứ tự.
+- `taca-rbac` phải chạy sau `taca-jwt` vì đọc `kong.ctx.shared.taca_actor` do plugin đó đặt.
+- `taca-error-envelope` nằm ở `header_filter`/`body_filter` nên độc lập chuỗi trên; nó phải có priority **thấp nhất** trong hai phase đó để chạy sau cùng và bao được lỗi của mọi plugin khác.
+
+> Giá trị `PRIORITY` cụ thể phải được chốt và **khóa bằng test** (§4 test plan) đối chiếu với priority của plugin built-in trong đúng phiên bản Kong đang dùng — không suy đoán từ tài liệu phiên bản khác. Anchor tham chiếu: `jwt` = 1005, `rate-limiting` = 901, `request-size-limiting` = 951, `correlation-id` = 1.
+
+#### 2.1.4 Tách Service để kiểm soát retry
+
+`retries` là thuộc tính của **Kong Service**, không phải Route — không thể cấu hình "chỉ retry GET" trên một Service duy nhất. Vì yêu cầu §3.5 cấm retry mutation, mỗi upstream được khai báo thành hai Kong Service trỏ về **cùng một Upstream**:
+
+| Kong Service | Route gắn vào | `retries` | Dùng cho |
+|---|---|---:|---|
+| `svc-<name>-read` | `Route.methods = [GET, HEAD]` | `1` | Route idempotent |
+| `svc-<name>-write` | `Route.methods = [POST, PUT, PATCH, DELETE]` | `0` | Mọi mutation |
+
+- `Service.retries = 0` là **mặc định bắt buộc** cho mọi Service mới; giá trị mặc định `5` của Kong bị coi là sai cấu hình và phải bị chặn ở `deck validate`/review.
+- Upstream có `retries=1` vẫn không được retry khi upstream đã trả response (chỉ retry lỗi connect/reset) — cấu hình qua `nginx_proxy_proxy_next_upstream = error timeout`.
+- Service `svc-message-ws` luôn `retries = 0`: handshake WebSocket không được retry.
+
+#### 2.1.5 Health endpoint
+
+| Endpoint client/ops gọi | Nguồn thật | Ghi chú |
+|---|---|---|
+| `GET /health/live` | Kong `/status` trên admin/status listener, expose qua Route nội bộ | Chỉ phản ánh process Kong; không kiểm Redis/JWKS/upstream. |
+| `GET /health/ready` | Route nội bộ + `taca-request-guard` chế độ `readiness` tổng hợp: config loaded, JWKS cache state, Redis ping, trạng thái healthcheck của Upstream | Trả `503` khi `config`/`jwks`/`redis` không `UP`. |
+| Admin API (`:8001`) | **Không expose** ra ingress công khai trong mọi môi trường | DB-less nên Admin API chỉ read-only, nhưng vẫn lộ toàn bộ topology nếu mở. |
+
+#### 2.1.6 Ánh xạ lỗi native của Kong sang mã lỗi hệ thống
+
+`taca-error-envelope` phải chuyển mọi lỗi Kong tự sinh (mặc định là `{"message":"..."}`) sang envelope chuẩn:
+
+| Lỗi native Kong | HTTP | Mã lỗi trả về |
+|---|---:|---|
+| `no Route matched with those values` | 404 | `GATEWAY_ROUTE_NOT_FOUND` |
+| `rate-limiting` vượt bucket | 429 | `GATEWAY_RATE_LIMITED` |
+| `request-size-limiting` vượt payload | 413 | `GATEWAY_REQUEST_TOO_LARGE` |
+| `failure to get a peer from the ring-balancer` (mọi target unhealthy) | 503 | `GATEWAY_UPSTREAM_UNAVAILABLE` |
+| Upstream connect/read timeout | 504 | `GATEWAY_UPSTREAM_TIMEOUT` |
+| Upstream connection refused | 503 | `GATEWAY_UPSTREAM_UNAVAILABLE` |
+| Upstream trả body không phải JSON hợp lệ | 502 | `GATEWAY_UPSTREAM_BAD_RESPONSE` |
+| `rate-limiting` không kết nối được Redis (`fault_tolerant=false`) | 500 → map lại | `503 GATEWAY_REDIS_UNAVAILABLE` |
+| Lỗi Lua chưa bắt trong bất kỳ plugin nào | 500 | `GATEWAY_INTERNAL_ERROR` |
+
+Không có trường hợp nào được để lọt body mặc định `{"message": ...}` của Kong ra client — đó là contract break với frontend.
+
+### 2.2 Request pipeline theo phase của Kong
+
+```text
+[router]        Match Route (host/path/method) → nếu không match: 404 GATEWAY_ROUTE_NOT_FOUND
+   ▼
+[access]  1. correlation-id            → giữ/sinh X-Request-ID
+          2. taca-request-guard        → Origin allowlist, validate request-id, strip header giả mạo
+          3. request-size-limiting     → body > 1 MiB → 413
+          4. taca-jwt                  → RS256 + JWKS cache; set X-User-*; revoke check
+          5. taca-rbac                 → coarse role/permission của Route
+          6. rate-limiting (redis)     → bucket theo ip/consumer
+          7. taca-ws-guard             → chỉ /ws/messages: connection cap
+   ▼
+[proxy]   Kong core → Upstream (healthcheck) → Service (timeout, retries)
+   ▼
+[header_filter / body_filter]
+          taca-error-envelope          → chuẩn hóa error, sanitize 5xx
+   ▼
+[log]     http-log + prometheus + opentelemetry + taca-ws-guard (DECR connection)
+```
+
+So với bản NestJS, thứ tự nghiệp vụ giữ nguyên; khác biệt là bước 3 (`request-size-limiting`) chạy **sau** `taca-request-guard` thay vì trước, để request bị từ chối vì CORS không tốn chi phí đọc body.
 
 ### 2.3 Route registry v1
 
 > Đây là route family để định tuyến, không thay thế API spec. Endpoint chi tiết, schema và ownership sẽ nằm ở tài liệu API của từng service.
+
+Ánh xạ sang object của Kong: mỗi dòng dưới đây trở thành **một hoặc nhiều Kong Route** (`paths` + `methods`) trỏ tới `svc-<upstream>-read` hoặc `svc-<upstream>-write` (§2.1.4); cột `Timeout` là `read_timeout` của Service; cột `Retry` là `retries` của Service. Đặt tên theo quy ước `rt-<upstream>-<nhóm>-<read|write>`, ví dụ `rt-payment-admin-write`.
 
 | Route family | Upstream | Exposure mặc định | Timeout | Retry |
 |---|---|---|---:|---|
@@ -115,11 +227,11 @@ src/
 | `/api/v1/search/**` | `search` | GET public | 5s | GET tối đa 1 lần |
 | `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**`, `/api/v1/seller/vouchers/**`, `/api/v1/seller/orders/**`, `/api/v1/admin/vouchers/**` | `order-commerce` | Authenticated; seller/admin route theo endpoint | 5s; checkout 10s | Chỉ GET; mutation dùng idempotency ở service |
 | `/api/v1/inventory/**`, `/api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | `inventory` | Seller/admin role-gated; `/internal/**` không expose public | 5s | GET tối đa 1 lần |
-| `/api/v1/payments/**`, `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `/api/v1/seller/revenue`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated hoặc admin/seller role; `/payments/webhook` không JWT | 10s | Không retry mutation |
-| `/api/v1/orders/{id}/shipment`, `/api/v1/seller/orders/{id}/shipment`, `/api/v1/webhooks/shipping/**` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
+| `/api/v1/payments/**`, `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `/api/v1/seller/revenue`, `/api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated hoặc admin/seller role; `/payments/webhook` không JWT | 10s | Không retry mutation |
+| `/api/v1/orders/{id}/shipment`, `/api/v1/seller/orders/{id}/shipment`, `/api/v1/seller/orders/{id}/shipment/carriers`, `/api/v1/webhooks/shipping/**` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
 | `/api/v1/products/{id}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; create/update/reply authenticated | 5s | GET tối đa 1 lần |
 | `/api/v1/notifications/**` | `notification` | Authenticated | 5s | GET tối đa 1 lần |
-| `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**`, `/api/v1/support/**` | `message` | Authenticated; support/admin route role-gated | 5s | GET tối đa 1 lần |
+| `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**` | `message` | Authenticated; conversation `type=SUPPORT` gate bằng participant/support scope | 5s | GET tối đa 1 lần |
 | `/ws/messages` (HTTP `Upgrade: websocket`) | `message` | Authenticated (JWT ở handshake) | handshake `WS_HANDSHAKE_TIMEOUT`; sau đó idle theo `WS_IDLE_TIMEOUT` | Không retry; không buffer frame |
 
 Quy tắc route:
@@ -130,6 +242,9 @@ Quy tắc route:
 - `POST /checkout`, `POST /payments`, `POST /orders` và action tương tự không được tự retry ở Gateway; idempotency key và duplicate protection thuộc service sở hữu nghiệp vụ.
 - `/ws/messages` là path WebSocket duy nhất được phép `Upgrade` trong v1; mọi path `/ws/**` khác trả `404`. Handshake bắt buộc JWT hợp lệ; token hết hạn giữa phiên xử lý theo `WS_IDLE_TIMEOUT`/policy, Gateway không tự refresh.
 - `/api/v1/admin/**`: Gateway chỉ **coarse-gate** theo role admin (có bất kỳ admin role nào); permission chi tiết (`VOUCHER_MANAGE`, `CATALOG_ADMIN`, `FINANCE_OPS`, `RISK_MANAGER`…) và step-up 2FA do **service sở hữu dữ liệu** enforce. V1 không có microservice admin riêng: mỗi nhánh `/admin/**` route thẳng tới service chủ tương ứng (xem §8 #9, `System_Overview.md` §6.3). Admin Dashboard là tầng đọc tổng hợp (`mfe-admin` compose read-API hoặc BFF mỏng), Gateway không có endpoint dashboard riêng.
+- **Không dùng catch-all Route.** Mỗi route family phải khai báo `paths` tường minh. Kong khớp Route theo độ dài prefix và `regex_priority`; một Route `/api/v1` duy nhất sẽ nuốt hết mọi request và vô hiệu hóa `taca-rbac` theo từng nhánh. Route không khai báo → `404`, đúng như policy hiện tại.
+- **Không bật `strip_path` trừ khi có lý do rõ ràng.** Upstream service nhận nguyên `/api/v1/...`; đặt `strip_path = false` cho toàn bộ Route business để path tới service không đổi so với bản NestJS.
+- **Route `/internal/**` không được khai báo trong Kong.** Không có Route nghĩa là Kong trả `404` — đây là lớp chặn thứ nhất; network policy vẫn là lớp chặn bắt buộc thứ hai.
 
 ### 2.4 JWT và actor context
 
@@ -148,12 +263,18 @@ Gateway nhận `Authorization: Bearer <access-token>` và validate các claim sa
 | `shop_id` hoặc shop scope | Tùy | Forward để service tối ưu filter; không dùng một mình để kết luận ownership. |
 | `email_verified` | Tùy | Route seller onboarding/publish có thể gate sơ bộ; auth-user/service là nơi quyết định cuối. |
 
-JWKS cache:
+JWKS cache (do `taca-jwt` quản lý, lưu trong `lua_shared_dict taca_jwks 10m` khai báo ở `kong.conf`):
 
-1. Khởi động: lấy JWKS qua REST và validate issuer/audience config.
-2. Request bình thường: validate local bằng `kid` trong cache.
-3. Gặp `kid` mới: refresh JWKS một lần có lock, sau đó thử validate lại.
-4. JWKS endpoint lỗi: không dùng key cũ quá `JWKS_MAX_STALE`; protected route trả lỗi service unavailable, không bypass xác thực.
+1. Khởi động/lần dùng đầu: lấy JWKS qua REST và validate issuer/audience config.
+2. Request bình thường: validate local bằng `kid` trong shared dict, không gọi auth-user.
+3. Gặp `kid` mới: refresh JWKS **một lần có `resty.lock`** rồi thử validate lại — các request khác cùng worker chờ trên lock, không tạo refresh storm.
+4. JWKS endpoint lỗi: không dùng key cũ quá `JWT_JWKS_MAX_STALE`; protected route trả `503 GATEWAY_JWKS_UNAVAILABLE`, không bypass xác thực.
+
+Ràng buộc riêng của Kong:
+
+- `lua_shared_dict` được chia sẻ giữa các nginx worker **trong cùng một node**, không chia sẻ giữa các node. Mỗi node Kong tự fetch JWKS — giống hệt mô hình "mỗi instance tự cache" của bản NestJS, nên `docs/db/api-gateway.md` §3.2 không đổi bản chất.
+- Không dùng `kong.cache` cho JWKS trong DB-less mode: `kong.cache` gắn với vòng đời entity của config, không phù hợp cho dữ liệu có TTL độc lập lấy từ dịch vụ ngoài.
+- Kích thước shared dict phải đủ cho số `kid` trong cửa sổ rotation overlap; hết bộ nhớ dict → plugin phải fail-closed (`503`), tuyệt đối không rơi về "bỏ qua verify".
 
 ### 2.5 Header context giữa Gateway và service
 
@@ -168,6 +289,13 @@ JWKS cache:
 | `X-Auth-Method` | Gateway | Giá trị v1 `jwt`; không cho client tự set. |
 | `X-Forwarded-For` | Trusted proxy chain | Chỉ lấy client IP từ proxy đã khai báo; không tin chuỗi header tùy ý. |
 | `Authorization` | Client access token | Forward nội bộ nếu service cần validate JWT lại; không ghi vào log. |
+
+Trong Kong, việc set/strip các header trên chia cho đúng hai plugin:
+
+- `taca-request-guard` **xóa** `X-User-*`, `X-Auth-*` và `X-Forwarded-*` không đến từ trusted proxy chain.
+- `taca-jwt` **set lại** `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope`, `X-Auth-Method` bằng `kong.service.request.set_header()` — API này chỉ tác động lên request gửi tới upstream, không đổi request gốc, nên không có rủi ro phản hồi ngược về client.
+- `X-Request-ID` do plugin `correlation-id` sinh; `taca-request-guard` chỉ validate giá trị client gửi và loại bỏ nếu sai charset/length.
+- `X-Forwarded-For` chỉ tin khi `trusted_ips` trong `kong.conf` khai báo đúng dải proxy/ingress; để trống `trusted_ips` nghĩa là Kong không tin header và dùng IP kết nối trực tiếp — đây là cấu hình an toàn mặc định cho rate limit theo IP.
 
 ### 2.6 Upstream URL và network contract
 
@@ -185,7 +313,9 @@ JWKS cache:
 | `MESSAGE_BASE_URL` | `http://message.internal:8080` | Có |
 
 - Các giá trị trên là tên biến và mock host, không phải địa chỉ production.
-- Route registry fail-fast nếu URL sai scheme, thiếu host/port hoặc trỏ ra public network khi deployment policy cấm.
+- Trong Kong, mỗi biến trở thành một **Upstream** (`name: up-auth-user`) có `targets`, và các Service `svc-auth-user-read`/`svc-auth-user-write` trỏ `host` vào tên Upstream đó. Không đặt hostname trực tiếp lên Service — làm vậy mất healthcheck và load balancing.
+- decK thay biến môi trường khi render (`${AUTH_USER_BASE_URL}` trong `kong.yaml`, giá trị lấy từ `env/<môi trường>.yaml` hoặc `--set`); giá trị thật **không** commit vào Git.
+- `deck validate` + `deck gateway diff` chạy trong CI trước khi `sync`: config sai scheme, thiếu host/port, `retries` khác 0 trên Service write, hoặc Route thiếu `taca-rbac` trên nhánh `/admin/**` đều phải fail pipeline. Đây là bản thay thế cho "fail-fast khi startup" của bản NestJS.
 - Internal REST response phải có `X-Request-ID` hoặc `traceId` để Gateway map log; chi tiết mock contract ở mục 6.
 
 ## 3. Luồng xử lý
@@ -240,11 +370,13 @@ Ràng buộc:
 ### 3.4 Rate limit
 
 ```text
-1. Xác định route policy
-2. Key ưu tiên: user_id nếu JWT hợp lệ; nếu chưa xác thực dùng client IP đã chuẩn hóa
-3. Redis atomic increment + TTL theo fixed window v1
-4. Nếu vượt limit → 429 + Retry-After + error envelope
-5. Ghi metric route/status/limit bucket, không ghi token
+1. Route đã match → lấy instance plugin rate-limiting gắn trên Route/Service đó
+2. Key: limit_by=ip cho bucket public/auth-endpoint;
+        limit_by=header + header_name=X-User-ID cho bucket authenticated
+3. policy=redis → atomic increment + expire trên Redis dùng chung mọi node Kong
+4. Vượt limit → 429 + Retry-After + RateLimit-* headers
+   → taca-error-envelope thay body thành GATEWAY_RATE_LIMITED
+5. prometheus plugin ghi counter theo route/status; không ghi token/identity
 ```
 
 Baseline đã chốt:
@@ -255,9 +387,12 @@ Baseline đã chốt:
 | Public API | 120 req/phút | IP | 20 request ngắn hạn |
 | Authenticated API | 300 req/phút | `user_id` + route group | 20 request ngắn hạn |
 
-- Thứ tự áp dụng: global IP guard → route bucket → user bucket nếu có JWT.
-- Redis key mẫu: `rl:v1:{bucket}:{identity}:{route_group}:{window}`; identity phải hash nếu đưa vào log.
-- V1 dùng fixed window đơn giản qua Redis atomic operation; sliding window là tối ưu sau nếu traffic thực tế yêu cầu.
+- Thứ tự áp dụng: global IP guard → route bucket → user bucket nếu có JWT. Trong Kong, mỗi bucket là **một instance plugin `rate-limiting` riêng** gắn ở scope khác nhau (global cho IP guard, per-Route cho bucket còn lại); Kong cho phép nhiều instance cùng plugin ở các scope khác nhau cùng chạy.
+- **Key Redis do plugin `rate-limiting` của Kong tự quản lý**, không còn dùng format `rl:v1:{bucket}:{identity}:{route_group}:{window}` như bản NestJS. Hệ quả: không được viết code/test/dashboard phụ thuộc vào format key này. Format cũ chỉ còn áp dụng cho key do custom plugin tự tạo (`ws:v1:conn:*`) — xem `docs/db/api-gateway.md` §3.1.
+- Bucket authenticated dùng `limit_by=header` với `header_name=X-User-ID`. Header này **do `taca-jwt` đặt sau khi verify**, và `taca-request-guard` đã xóa mọi bản do client gửi ở bước trước — đây là lý do bắt buộc của thứ tự plugin ở §2.1.3. Nếu đảo thứ tự, client tự đặt `X-User-ID` sẽ chiếm được bucket của người khác hoặc né bucket của chính mình.
+- `fault_tolerant = false` để Redis lỗi thì fail-closed (`503 GATEWAY_REDIS_UNAVAILABLE`). Mặc định của Kong là `true` (cho request đi qua khi Redis lỗi) — **giá trị mặc định này vi phạm policy §3.6 và phải bị chặn ở review/CI**.
+- `policy = redis`, không dùng `local` (mỗi node đếm riêng, tổng limit sai gấp N lần số node) và không dùng `cluster` (yêu cầu database, không khả dụng ở DB-less).
+- V1 dùng fixed window của plugin `rate-limiting`. Sliding window chính xác hơn nằm ở `rate-limiting-advanced` (Kong Enterprise) — nếu sau này cần, đó là một lý do nâng cấp license, xem §8 #14.
 
 ### 3.5 Timeout, retry và circuit breaker
 
@@ -269,9 +404,12 @@ Request → route policy
   └─ circuit OPEN → trả 503 ngay, không gọi upstream
 ```
 
-- Timeout mặc định: connect `2s`, read `5s`; checkout/payment/shipment có thể dùng read `10s`.
-- Retry chỉ cho GET/HEAD và request được route policy đánh dấu idempotent; không retry dựa trên status 4xx.
-- Circuit mở sau `5` lỗi upstream trong cửa sổ `30s`, giữ OPEN `30s`, sau đó cho phép một probe HALF_OPEN.
+- Timeout mặc định: `connect_timeout = 2000`, `read_timeout = 5000`, `write_timeout = 5000` (ms, trên Kong Service); checkout/payment/shipment dùng `read_timeout = 10000`.
+- Retry chỉ cho GET/HEAD, thực hiện bằng cách tách Service `*-read` (`retries=1`) và `*-write` (`retries=0`) theo §2.1.4. Kong **không** phân biệt method khi retry, nên đây là cơ chế bắt buộc chứ không phải tùy chọn.
+- `nginx_proxy_proxy_next_upstream = error timeout` — không thêm `http_500`/`non_idempotent`. Mặc định của nginx đã loại trừ request non-idempotent, nhưng phải khai báo tường minh để tránh phụ thuộc mặc định của phiên bản.
+- **Circuit breaker được thực thi bằng `Upstream.healthchecks` của Kong**, không phải state machine riêng: passive healthcheck đếm lỗi và eject target (tương đương `OPEN`), active healthcheck probe định kỳ và đưa target trở lại (tương đương `HALF_OPEN` → `CLOSED`). Chi tiết cấu hình và ánh xạ trạng thái ở §5.2.
+- Điểm khác biệt phải biết: healthcheck của Kong ở phạm vi **Upstream/target**, không phải theo `route_group` như thiết kế NestJS. Với topology hiện tại (mỗi service một Upstream), hiệu quả bảo vệ tương đương; nhưng khi mọi target của một Upstream bị eject, Kong trả lỗi ring-balancer → `taca-error-envelope` map sang `503 GATEWAY_UPSTREAM_UNAVAILABLE`.
+- Kong lưu trạng thái healthcheck **theo từng node worker**, không chia sẻ giữa các node Kong. Hệ quả: khi upstream lỗi, mỗi node tự phát hiện; thời gian phát hiện toàn cụm không đồng thời. Đây là hành vi chấp nhận được ở v1 nhưng phải phản ánh vào alert (đừng cảnh báo "mất đồng bộ circuit state").
 - Gateway không tự thêm idempotency key cho write request; client/service sở hữu nghiệp vụ phải làm việc đó.
 
 ### 3.6 Upstream lỗi hoặc không sẵn sàng
@@ -335,6 +473,19 @@ Ràng buộc:
 - Circuit breaker cho `message` upstream áp cho cả REST và WS handshake; khi OPEN, handshake trả `503` ngay.
 - Không log message frame; chỉ log sự kiện `ws.handshake`, `ws.open`, `ws.close` với `traceId`, `requestId`, `outcome`, `duration_ms` và connection count.
 
+Cách Kong hiện thực luồng trên:
+
+| Bước | Cơ chế Kong |
+|---|---|
+| Route `/ws/messages` | Kong Route thường (`protocols: [http, https]`, `paths: [/ws/messages]`, `methods: [GET]`) trỏ tới Service `svc-message-ws`. Kong tự nhận biết `Upgrade: websocket` và chuyển sang tunnel — không cần plugin đặc biệt. |
+| Auth ở handshake | Plugin `access` chạy **trước** khi upgrade, nên `taca-jwt` hoạt động bình thường: đọc token từ `Sec-WebSocket-Protocol` hoặc query `access_token`, sai/thiếu → `kong.response.exit(401)` và không có `101`. |
+| Connection cap | `taca-ws-guard`: `INCR` ở `access`, `DECR` ở `log`. Với WebSocket, phase `log` của Kong chạy khi **connection đóng**, không phải khi handshake xong — đúng ngữ nghĩa cần cho counter. |
+| Idle timeout | `svc-message-ws.read_timeout = 1800000` ms, khớp `WEBSOCKET_IDLE_TIMEOUT` của Message Service. |
+| Không retry | `svc-message-ws.retries = 0`. |
+| Không buffer | Đây là hành vi mặc định của Kong với connection đã upgrade; **không** gắn bất kỳ plugin nào đọc/ghi body (`request-transformer`, `response-transformer`, `http-log` với `body`) lên Route này. |
+
+Cảnh báo cấu hình: `taca-error-envelope` phải **bỏ qua** Route WebSocket sau khi đã upgrade — cố ghi body vào một connection đã chuyển sang chế độ tunnel sẽ làm hỏng frame. Plugin chỉ được tác động khi handshake thất bại (response HTTP thật, chưa upgrade).
+
 ## 4. Hằng số & cấu hình
 
 | Tên | Giá trị baseline | Đơn vị | Ghi chú |
@@ -375,6 +526,38 @@ Ràng buộc:
 | `LOG_BODY_ENABLED` | `false` | boolean | Không log body production. |
 | `TIMESTAMP_STORAGE` | `UTC` | timezone | Log/response ISO-8601. |
 
+### 4.1 Ánh xạ hằng số sang cấu hình Kong
+
+Tên hằng số ở §4 là **ngôn ngữ chung của thiết kế**; bảng dưới cho biết mỗi hằng số thực sự nằm ở đâu trong Kong. Giá trị baseline không đổi khi migrate.
+
+| Hằng số §4 | Vị trí thật trong Kong |
+|---|---|
+| `JWT_ALGORITHM`, `JWT_CLOCK_SKEW` | `taca-jwt.config.allowed_algs`, `taca-jwt.config.clock_skew` |
+| `JWT_JWKS_CACHE_TTL`, `JWT_JWKS_MAX_STALE` | `taca-jwt.config.jwks_ttl`, `jwks_max_stale` + `lua_shared_dict taca_jwks` trong `kong.conf` |
+| `AUTH_RATE_LIMIT` / `PUBLIC_RATE_LIMIT` / `AUTHENTICATED_RATE_LIMIT` | `rate-limiting.config.minute` trên từng instance plugin (scope Route/global) |
+| `RATE_LIMIT_BURST` | Không có tương đương trực tiếp ở `rate-limiting` fixed-window; xem §8 #15 |
+| `REDIS_COMMAND_TIMEOUT` | `rate-limiting.config.redis.timeout` (và cấu hình Redis của `taca-ws-guard`) |
+| `UPSTREAM_CONNECT_TIMEOUT` | `Service.connect_timeout` |
+| `UPSTREAM_READ_TIMEOUT_DEFAULT` / `_LONG` | `Service.read_timeout` (5000 / 10000 ms) |
+| `UPSTREAM_RETRY_MAX` | `Service.retries` (`1` trên `*-read`, `0` trên `*-write`) |
+| `UPSTREAM_RETRY_BACKOFF` | **Không cấu hình được** ở Kong OSS — nginx retry ngay, không backoff; xem §8 #15 |
+| `CIRCUIT_FAILURE_THRESHOLD` | `Upstream.healthchecks.passive.unhealthy.http_failures` / `timeouts` |
+| `CIRCUIT_WINDOW` | Không có cửa sổ thời gian ở passive healthcheck (đếm liên tiếp, không theo window); xem §5.2 và §8 #15 |
+| `CIRCUIT_OPEN_DURATION` | `Upstream.healthchecks.active.healthy.interval` (chu kỳ probe đưa target trở lại) |
+| `MAX_JSON_BODY_SIZE` | `request-size-limiting.config.allowed_payload_size` |
+| `MAX_HEADER_SIZE` | `kong.conf` → `nginx_http_large_client_header_buffers` |
+| `REQUEST_ID_MAX_LENGTH` | `taca-request-guard.config.request_id_max_length` |
+| `CORS_ALLOWED_ORIGINS` | `cors.config.origins` **và** `taca-request-guard.config.allowed_origins` — hai nơi phải khớp, xem §8 #16 |
+| `CORS_ALLOW_CREDENTIALS` | `cors.config.credentials` |
+| `WS_ALLOWED_PATH` | `paths` của Route `rt-message-ws`; không có Route nào khác khớp `/ws/**` |
+| `WS_HANDSHAKE_TIMEOUT` | `svc-message-ws.connect_timeout` |
+| `WS_IDLE_TIMEOUT` | `svc-message-ws.read_timeout` |
+| `WS_MAX_CONNECTIONS_PER_USER` | `taca-ws-guard.config.max_connections_per_user` |
+| `METRICS_PATH` | Route nội bộ trỏ tới plugin `prometheus` |
+| `HEALTH_LIVE_PATH` / `HEALTH_READY_PATH` | §2.1.5 |
+
+Ba hằng số **không có tương đương native** (`RATE_LIMIT_BURST`, `UPSTREAM_RETRY_BACKOFF`, `CIRCUIT_WINDOW`) là các sai lệch thật của việc chuyển sang Kong OSS — đã ghi thành mục cần quyết định ở §8 #15, không được lặng lẽ bỏ qua.
+
 ## 5. Enum & trạng thái
 
 ### 5.1 `RouteAccess`
@@ -387,19 +570,43 @@ Ràng buộc:
 | `WS_AUTHENTICATED` | WebSocket upgrade cần JWT hợp lệ ở handshake | Chỉ `/ws/messages`; sau upgrade Gateway chỉ relay frame, không kiểm từng message. |
 | `INTERNAL_ONLY` | Chỉ internal/ops network | Không expose qua client ingress. |
 
-### 5.2 `CircuitState`
+### 5.2 `CircuitState` → trạng thái target của Kong Upstream
 
-| Giá trị | Ý nghĩa | Chuyển sang |
+Kong không có object "circuit"; vai trò đó do **healthcheck trên Upstream** đảm nhiệm. Ba trạng thái logic của thiết kế ánh xạ như sau:
+
+| `CircuitState` (thiết kế) | Trạng thái Kong | Ý nghĩa |
 |---|---|---|
-| `CLOSED` | Cho request đi qua và đếm lỗi | `OPEN` khi đủ threshold |
-| `OPEN` | Chặn gọi upstream trong thời gian bảo vệ | `HALF_OPEN` sau `CIRCUIT_OPEN_DURATION` |
-| `HALF_OPEN` | Cho một probe kiểm tra phục hồi | `CLOSED` nếu thành công; `OPEN` nếu thất bại |
+| `CLOSED` | Target `HEALTHY` | Request đi qua; passive healthcheck đếm lỗi trên traffic thật. |
+| `OPEN` | Target `UNHEALTHY` (bị eject khỏi ring-balancer) | Kong không gửi request tới target. Nếu Upstream không còn target healthy nào → lỗi ring-balancer → `503 GATEWAY_UPSTREAM_UNAVAILABLE`. |
+| `HALF_OPEN` | Active healthcheck probe | Kong chủ động gọi `healthchecks.active.healthy.http_path` theo `interval`; đủ số lần thành công thì target trở lại `HEALTHY`. |
 
-```text
-CLOSED ──5 failures/30s──► OPEN ──30s──► HALF_OPEN
-  ▲                                  ├─success──► CLOSED
-  └──────────────────────────────────└─failure──► OPEN
+Cấu hình tương ứng với baseline `5 lỗi / 30s`:
+
+```yaml
+upstreams:
+  - name: up-order-commerce
+    healthchecks:
+      passive:                       # đếm trên traffic thật, không tốn request thừa
+        unhealthy:
+          http_failures: 5           # ~ CIRCUIT_FAILURE_THRESHOLD
+          timeouts: 5
+          tcp_failures: 5
+      active:                        # đóng vai trò HALF_OPEN probe
+        type: http
+        http_path: /health/live
+        healthy:
+          interval: 30               # ~ CIRCUIT_OPEN_DURATION
+          successes: 1
+        unhealthy:
+          interval: 10
+          http_failures: 3
 ```
+
+Ba khác biệt so với circuit breaker tự viết, **phải biết trước khi tin vào con số cũ**:
+
+1. Passive healthcheck của Kong đếm **lỗi liên tiếp**, không đếm theo cửa sổ trượt `30s`. Traffic xen kẽ thành công/thất bại có thể không bao giờ chạm ngưỡng. Nếu cần ngữ nghĩa cửa sổ, phải dựa vào active healthcheck với `interval` ngắn.
+2. Trạng thái healthcheck là **per-node**, không chia sẻ giữa các node Kong (§3.5).
+3. Active healthcheck gọi `/health/live` của service — nghĩa là **mọi service upstream bắt buộc phải có endpoint đó** và endpoint phải nhẹ, không phụ thuộc database. Điều này đã đúng với 10 service hiện tại (`/health/live` process-only), nhưng giờ trở thành ràng buộc cứng chứ không còn là khuyến nghị.
 
 ### 5.3 `JwksAvailability`
 
@@ -448,8 +655,10 @@ CLOSED ──5 failures/30s──► OPEN ──30s──► HALF_OPEN
 |---|---|---|---|
 | Auth-user JWKS | REST `GET /.well-known/jwks.json` | Auth-user | Mock contract bổ sung, cần API spec xác nhận. |
 | Internal service proxy | REST/HTTP | Từng domain service | Route family và error envelope là contract baseline. |
-| Distributed rate limit | Redis atomic counter + TTL | Gateway infrastructure | Config contract; không phải domain database. |
-| Metrics/traces/log sink | OpenTelemetry-compatible exporter | Platform/ops | Endpoint thật chưa có trong HLD; dùng mock adapter. |
+| Distributed rate limit | Redis atomic counter + TTL, key do plugin `rate-limiting` quản lý | Gateway infrastructure | Config contract; không phải domain database. |
+| Metrics/traces/log sink | OpenTelemetry-compatible exporter (plugin `opentelemetry` + `prometheus` + `http-log`) | Platform/ops | Endpoint thật chưa có trong HLD; dùng mock adapter. |
+| Kong declarative config | `kong.yaml` + decK (`validate` → `diff` → `sync`) trong CI | Gateway owner + DevOps | Config là artifact được review như code; rollback = revert commit rồi `sync` lại. |
+| Active healthcheck | REST `GET /health/live` của từng service | Từng domain service | **Ràng buộc mới**: mọi upstream phải có endpoint này, nhẹ và không phụ thuộc DB (§5.2). |
 
 ### 6.3 Mock contract — JWKS từ auth-user
 
@@ -580,8 +789,8 @@ Readiness body không được chứa secret, internal IP công khai ra client h
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
-| 1 | Framework là Node.js + NestJS; exact Node.js LTS major, NestJS version và HTTP adapter chưa chốt. | Ảnh hưởng Docker image, proxy adapter, dependency security và performance baseline. | Tech lead |
-| 2 | Gateway route qua REST tới internal domain/IP bằng environment tĩnh; không dùng Consul/Eureka và không có route database. | Ảnh hưởng deployment, failover và cách thay đổi route. | Tech lead/DevOps |
+| 1 | Gateway là **Kong Gateway 3.x OSS** chạy DB-less, config bằng decK. Patch version cụ thể, base image và cách build custom plugin vào image chưa chốt. | Ảnh hưởng Docker image, priority của plugin built-in, dependency security và performance baseline. | Tech lead |
+| 2 | Gateway route qua REST tới internal domain/IP bằng Upstream/target khai báo tĩnh trong decK; không dùng Consul/Eureka và không có route database. | Ảnh hưởng deployment, failover và cách thay đổi route. | Tech lead/DevOps |
 | 3 | Auth-user cung cấp JWKS `GET /.well-known/jwks.json`, issuer/audience và RS256 key rotation. | Không thể validate JWT hoặc xử lý key rotation đúng nếu endpoint/claim khác. | Auth-user owner |
 | 4 | Client gửi Bearer access token; refresh token transport (JSON response, HttpOnly cookie hay mobile secure storage) chưa chốt. | Ảnh hưởng CORS credentials, CSRF policy và frontend interceptor. | Frontend + Security |
 | 5 | Redis dùng chung cho rate limit; topology HA, password/TLS, eviction policy và failure policy chưa chốt. | Ảnh hưởng availability và việc fail-closed khi Redis lỗi. | DevOps |
@@ -593,3 +802,8 @@ Readiness body không được chứa secret, internal IP công khai ra client h
 | 10 | Observability backend/exporter và retention chưa được chỉ định; LLD chỉ chuẩn hóa adapter/field. | Ảnh hưởng dashboard, alert, trace sampling và chi phí lưu log. | Platform/DevOps |
 | 11 | V1 không cache business response và không tự phát business event. | Nếu cần CDN/cache hoặc audit event qua Kafka, cần thêm module và contract. | Architecture owner |
 | 12 | Error envelope `{error:{code,message,details,trace_id}}` là contract áp dụng thống nhất cho toàn bộ Gateway và upstream services. | Đảm bảo tính nhất quán trên toàn bộ hệ thống API. | Backend leads |
+| 14 | Chọn **Kong OSS + 5 custom Lua plugin** thay vì Kong Enterprise/Konnect. Enterprise sẽ thay `taca-jwt` bằng plugin `openid-connect` và `taca-error-envelope` bằng `exit-transformer`, tức bỏ được 2/5 plugin tự viết, đổi lại là chi phí license. | Nếu team không có năng lực Lua hoặc không muốn tự bảo trì plugin auth, đây là quyết định phải đảo sớm — càng muộn càng tốn. | Tech lead + Architecture owner |
+| 15 | Ba hằng số §4 **không có tương đương native** ở Kong OSS: `RATE_LIMIT_BURST` (fixed-window không có burst riêng), `UPSTREAM_RETRY_BACKOFF` (nginx retry ngay, không delay), `CIRCUIT_WINDOW` (passive healthcheck đếm lỗi liên tiếp, không theo cửa sổ thời gian). | Nếu vẫn coi baseline cũ là cam kết, hành vi thực tế sẽ khác tài liệu. Phải chọn: chấp nhận ngữ nghĩa của Kong, hoặc viết thêm plugin, hoặc nâng lên `rate-limiting-advanced`. | Architecture owner + DevOps |
+| 16 | `CORS_ALLOWED_ORIGINS` bị khai báo ở **hai nơi** (`cors.config.origins` cho response header và `taca-request-guard` cho việc trả `403`) vì plugin `cors` của Kong không từ chối origin lạ bằng `403` mà chỉ bỏ header. | Hai danh sách lệch nhau sẽ tạo lỗ hổng hoặc chặn nhầm frontend. Cần sinh cả hai từ một nguồn duy nhất trong decK và có test đối chiếu. | Frontend/DevOps + Security |
+| 17 | Bucket rate limit theo user dựa vào `limit_by=header` đọc `X-User-ID` do `taca-jwt` đặt. Hành vi này phụ thuộc thứ tự plugin và cách plugin `rate-limiting` đọc header trong đúng phiên bản Kong. | Nếu sai, hoặc rate limit theo user không hoạt động, hoặc client tự đặt header để chiếm/né bucket. **Bắt buộc có integration test khóa hành vi này** (IT-RL-04, IT-RL-13). | Gateway owner + Security |
+| 18 | Custom plugin không được truy cập `kong.db` hay Admin API lúc runtime; mọi cấu hình đến từ `schema.lua`. | Giữ Gateway stateless và DB-less; vi phạm sẽ phá vỡ khả năng scale ngang và rollback bằng config. | Gateway owner |

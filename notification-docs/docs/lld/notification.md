@@ -34,7 +34,7 @@ Notification ──Kafka/REST──► không mutate domain state
 | Nguồn | Requirement | Quyết định |
 |---|---|---|
 | HLD Notification | Notification DB, Email delivery | MySQL vì lựa chọn `1C`; email provider adapter. |
-| Order flow | Order success + invoice email | Consume `order.paid/order.created` và `invoice.issued` contract. |
+| Order flow | Order success + invoice email | Consume `order.confirmed` và `invoice.issued` contract. `order.confirmed` phát cho **cả** VNPAY lẫn COD tại lúc đơn chốt; `order.paid` (tiền về) là event riêng, với COD chỉ tới sau khi giao hàng. |
 | Shipment flow | Delivered → leave review prompt | Consume `shipment.delivered`, render review prompt. |
 | UI | Notification center/read state | In-app list, unread count, mark read. |
 | KYC/security | Verification/reset/security messages | Consume notification commands từ Auth User; không lưu secret raw. |
@@ -95,7 +95,7 @@ src/
 
 ### 3.3 Template/security
 
-- Template dùng versioned key (`order-success-v1`, `invoice-issued-v1`, `review-request-v1`).
+- Template dùng versioned key (`order-success-v1`, `payment-received-v1`, `invoice-issued-v1`, `review-request-v1`).
 - Data fields được allowlist theo template; HTML sanitize; link token phải opaque, TTL và không log.
 - Security-critical Auth command không bị tắt bởi preference nếu policy yêu cầu; promotional notification chưa thuộc v1.
 
@@ -132,7 +132,7 @@ Retryable provider failure không mark `SENT`; duplicate completed event trả i
 | Nguồn | Event/command | Template/channel |
 |---|---|---|
 | Auth User | `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED` | Email/critical channel; không lưu raw secret. |
-| Order-Commerce | `order.created/order.paid`, `invoice.issued`, `order.cancelled` | Order/invoice/cancel Email + In-app. |
+| Order-Commerce | `order.confirmed`, `order.paid`, `invoice.issued`, `order.cancelled` | Order/invoice/cancel Email + In-app. |
 | Shipment | `shipment.delivered`, `shipment.failed` | Review prompt/tracking update. |
 | Payment-Wallet | `payment.succeeded/failed`, `payout.succeeded/failed` | Payment/wallet notification. |
 
@@ -143,7 +143,9 @@ Notification nhận **hai loại input, không được nhầm lẫn**:
 1. **Domain event** trên topic của service chủ (`order.events.v1`, `invoice.events.v1`, `shipment.events.v1`, `payment.events.v1`, `wallet.events.v1`) — Notification **tự** ánh xạ event → template. Producer không cần biết template.
 2. **Command** trên `notification.commands.v1` — dùng khi producer cần chỉ định rõ template/kênh (verification, reset password, OTP, message, review request). Command type hợp lệ chỉ gồm: `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED`, `MESSAGE_RECEIVED`, `REVIEW_REQUESTED`.
 
-> **Không có command `ORDER_SUCCESS`.** Email đơn hàng đến từ domain event `order.paid` (không phải command), Notification map sang template `order-success-v1`.
+> **Không có command `ORDER_SUCCESS`.** Email xác nhận đơn hàng đến từ domain event `order.confirmed` (không phải command), Notification map sang template `order-success-v1`.
+>
+> **Phải dùng `order.confirmed`, không dùng `order.paid`.** Với VNPAY hai event trùng thời điểm nên chọn cái nào cũng ra kết quả giống nhau; với COD `order.paid` chỉ tới **sau khi hàng đã giao xong**, nên nếu gắn email xác nhận đơn vào `order.paid` thì buyer COD không bao giờ nhận được email + hoá đơn tại lúc đặt hàng — trái yêu cầu HLD "Notify to user email when order success with invoice".
 
 Envelope command:
 
@@ -165,7 +167,8 @@ Envelope command:
 
 | Event nguồn | Template | Kênh |
 |---|---|---|
-| `order.paid` | `order-success-v1` | EMAIL + IN_APP |
+| `order.confirmed` | `order-success-v1` | EMAIL + IN_APP |
+| `order.paid` | `payment-received-v1` | IN_APP |
 | `order.cancelled` | `order-cancelled-v1` | EMAIL + IN_APP |
 | `invoice.issued` | `invoice-issued-v1` | EMAIL |
 | `shipment.delivered` | `shipment-delivered-v1` | IN_APP |

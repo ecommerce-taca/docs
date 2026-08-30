@@ -539,7 +539,21 @@ Request:
 
 `email`, `role`, `status`, `user_id` không được gửi hoặc sẽ bị từ chối.
 
-Response trả profile mới và `phone_verification_required=true` nếu phone vừa đổi.
+```json
+{
+  "data": {
+    "user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
+    "full_name": "Nguyễn Văn A",
+    "phone": "+84901234567",
+    "date_of_birth": "1995-05-20",
+    "phone_verification_required": true,
+    "updated_at": "2026-08-30T09:00:00Z"
+  },
+  "meta": { "request_id": "01912fd0-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`phone_verification_required=true` khi phone vừa đổi — client phải điều hướng sang luồng verify OTP.
 
 Lỗi: `400 PROFILE_INVALID`, `409 AUTH_PHONE_EXISTS`, `401 AUTH_TOKEN_INVALID`.
 
@@ -586,6 +600,8 @@ Request:
 | `postal_code` | string | Không | Tối đa 12 | `"700000"` |
 | `is_default` | boolean | Không | Default `false`; address đầu tiên tự default | `true` |
 
+Response `201` cùng shape với item ở `GET /users/me/addresses` (§2.15) — `id` mới sinh, `created_at`/`updated_at` bằng thời điểm tạo.
+
 Lỗi: `400 PROFILE_INVALID`, `409 ADDRESS_LIMIT_REACHED`, `409 ADDRESS_DEFAULT_REQUIRED`.
 
 ### 2.17 `PUT /users/me/addresses/{addressId}` — sửa address
@@ -599,6 +615,8 @@ Ràng buộc:
 - Chỉ update address có `user_id = JWT.sub` và `deleted_at IS NULL`.
 - Đổi `is_default=true` clear default cũ trong cùng transaction.
 - Không tin `user_id` trong body.
+
+Response `200` cùng shape với `GET /users/me/addresses` item, `updated_at` mới.
 
 Lỗi: `400 PROFILE_INVALID`, `404 ADDRESS_NOT_FOUND`, `409 ADDRESS_DEFAULT_REQUIRED`.
 
@@ -695,6 +713,10 @@ Request:
 | `description` | string | Không | Tối đa 2.000. |
 | `logo_object_key` | string | Không | Chỉ object key đã presign/allowlist. |
 
+```json
+{ "data": { "shop_id": "01912f49-7a1b-7c12-9c55-8b1c34a6d921", "step": "PROFILE", "completed": true, "onboarding_status": "IN_PROGRESS" }, "meta": { "request_id": "01912fd1-7a1b-7c12-9c55-8b1c34a6d921" } }
+```
+
 Lỗi: `400 PROFILE_INVALID`, `403 RBAC_PERMISSION_DENIED`, `409 AUTH_TAX_CODE_EXISTS`, `409 SHOP_INVALID_STATE`.
 
 ### 2.22 `PUT /seller/onboarding/warehouse` — step Kho & vận chuyển
@@ -713,6 +735,10 @@ Request:
 | `cod_enabled` | boolean | Không | Default `true`. |
 
 `address` dùng các field `line1` 1–255, `line2` optional 255, `ward/district/province` 1–120, `postal_code` optional 12.
+
+```json
+{ "data": { "shop_id": "01912f49-7a1b-7c12-9c55-8b1c34a6d921", "step": "WAREHOUSE", "completed": true, "onboarding_status": "IN_PROGRESS" }, "meta": { "request_id": "01912fd2-7a1b-7c12-9c55-8b1c34a6d921" } }
+```
 
 Lỗi: `400 PROFILE_INVALID`, `403 RBAC_PERMISSION_DENIED`, `409 SHOP_INVALID_STATE`.
 
@@ -813,6 +839,10 @@ Request:
 | `account_number` | string | Có | 8–20 digits; encrypt trước khi lưu. |
 | `confirm_account_name` | boolean | Có | Phải `true`. |
 
+```json
+{ "data": { "bank_name": "Vietcombank", "account_number_masked": "********1234", "verified": false, "step": "BANK", "completed": true, "onboarding_status": "READY_TO_SUBMIT" }, "meta": { "request_id": "01912fd3-7a1b-7c12-9c55-8b1c34a6d921" } }
+```
+
 Response chỉ trả `bank_name`, masked account `********1234`, `verified=false/true`; không trả account number raw.
 
 Lỗi: `400 PROFILE_INVALID`, `409 BANK_ACCOUNT_INVALID`, `403 RBAC_PERMISSION_DENIED`.
@@ -821,7 +851,26 @@ Lỗi: `400 PROFILE_INVALID`, `409 BANK_ACCOUNT_INVALID`, `403 RBAC_PERMISSION_D
 
 Quyền: Seller owner/staff · Response: `200`
 
-Response gồm `id,name,slug,business_name,tax_code_masked,description,logo_url,status,kyc_status,warehouse_summary,bank_summary,created_at,updated_at`.
+```json
+{
+  "data": {
+    "id": "01912f49-7a1b-7c12-9c55-8b1c34a6d921",
+    "name": "Taca Home",
+    "slug": "taca-home",
+    "business_name": "Công ty TNHH Taca Home",
+    "tax_code_masked": "03***4567",
+    "description": "Đồ gia dụng chính hãng",
+    "logo_url": "https://cdn.example/signed",
+    "status": "ACTIVE",
+    "kyc_status": "APPROVED",
+    "warehouse_summary": { "warehouse_name": "Kho HCM", "district": "Quận 1", "province": "TP.HCM" },
+    "bank_summary": { "bank_name": "Vietcombank", "account_number_masked": "********1234", "verified": true },
+    "created_at": "2026-08-01T09:00:00Z",
+    "updated_at": "2026-08-30T09:00:00Z"
+  },
+  "meta": { "request_id": "01912fd4-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
 
 Lỗi: `404 SHOP_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`.
 
@@ -830,6 +879,10 @@ Lỗi: `404 SHOP_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`.
 Quyền: Seller owner · Response: `200`
 
 Request cho phép `name`, `description`, `logo_object_key`; `tax_code`, owner và status không đổi tại endpoint này. `slug` đổi phải qua validation unique riêng trong service.
+
+```json
+{ "data": { "id": "01912f49-7a1b-7c12-9c55-8b1c34a6d921", "name": "Taca Home Official", "description": "Đồ gia dụng chính hãng, bảo hành 12 tháng", "logo_url": "https://cdn.example/signed", "updated_at": "2026-08-30T09:05:00Z" }, "meta": { "request_id": "01912fd5-7a1b-7c12-9c55-8b1c34a6d921" } }
+```
 
 Lỗi: `400 PROFILE_INVALID`, `403 RBAC_PERMISSION_DENIED`, `409 SHOP_SLUG_EXISTS`, `409 SHOP_INVALID_STATE`.
 
@@ -1026,6 +1079,24 @@ Query:
 | `from`/`to` | ISO timestamp | Khoảng tối đa 31 ngày/request. |
 | `page`,`size`,`sort` | pagination | Default page 1/size 20/sort `occurred_at,desc`. |
 
+```json
+{
+  "data": [
+    {
+      "log_id": "01912fe0-7a1b-7c12-9c55-8b1c34a6d921",
+      "actor_user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
+      "actor_role": "SUPER_ADMIN",
+      "action": "USER_SUSPEND",
+      "target_type": "USER",
+      "target_id": "01912f20-7a1b-7c12-9c55-8b1c34a6d921",
+      "reason": "Vi phạm chính sách nền tảng.",
+      "occurred_at": "2026-08-30T09:00:00Z"
+    }
+  ],
+  "meta": { "request_id": "01912fe1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 340 }
+}
+```
+
 Không trả `metadata` có secret/PII raw; field nhạy cảm phải masked.
 
 Lỗi: `400 AUTH_INVALID_INPUT`, `403 RBAC_PERMISSION_DENIED`.
@@ -1159,6 +1230,10 @@ Quyền: Public · Response: `200`
 
 Quyền: Public · Response: `200`
 
+Path segment nhận **`shop_id` (UUID) hoặc `slug`** — đây là endpoint duy nhất trong family chấp nhận cả hai, để FE vào được từ URL SEO dạng `/shop/taca-home`. Phân biệt theo hình dạng: chuỗi khớp đúng dạng UUID 36 ký tự có gạch nối → tra theo `id`; ngược lại tra theo `slug` (charset lowercase/hyphen, 3–160). Vì `slug` không bao giờ hợp lệ dưới dạng UUID nên không có trường hợp nhập nhằng.
+
+Mọi endpoint khác trong family (`/shops/{shopId}/follow`, `/shops/{shopId}/followers/count`, `/shops/{shopId}/products` của `product-catalog`) chỉ nhận **UUID**. FE gọi endpoint này trước để lấy `id`, rồi dùng `id` cho các lời gọi tiếp theo.
+
 ```json
 {
   "data": {
@@ -1268,7 +1343,26 @@ Mock request/response được mô tả ở endpoint KYC presign. Adapter phải
 
 ### 4.3 Event downstream
 
-Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_changed`, `user.role_changed`, `shop.created`, `shop.kyc.*` dùng envelope có `event_id`, `schema_version`, `occurred_at`, `aggregate_type`, `aggregate_id`, `payload`. Consumer dedupe theo `event_id`.
+Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_changed`, `user.role_changed`, `shop.created`, `shop.kyc.*` dùng chung envelope:
+
+```json
+{
+  "event_id": "01912fe2-7a1b-7c12-9c55-8b1c34a6d921",
+  "schema_version": 1,
+  "aggregate_type": "USER",
+  "aggregate_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
+  "event_type": "user.status_changed",
+  "occurred_at": "2026-08-30T09:00:00Z",
+  "payload": {
+    "user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
+    "old_status": "ACTIVE",
+    "new_status": "SUSPENDED",
+    "reason": "Vi phạm chính sách nền tảng."
+  }
+}
+```
+
+Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — theo chuẩn chung `System_Overview.md` §8. Consumer dedupe theo `event_id`. Bảng field chi tiết từng event nằm ở `docs/lld/auth-user.md` §6.1.
 
 ## 5. Giả định & câu hỏi mở
 

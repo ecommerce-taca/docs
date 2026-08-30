@@ -32,7 +32,7 @@
 | 11 | `GET /health/live` | Ops | Liveness. |
 | 12 | `GET /health/ready` | Ops | Readiness. |
 
-WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event names: `conversation.join`, `message.send`, `message.created`, `message.ack`, `message.read`, `message.typing`, `conversation.sync`. Handshake: token qua `Sec-WebSocket-Protocol: bearer, <access-token>` (fallback query `?access_token=`); Gateway validate JWT rồi proxy upgrade, Message Service tự authorize từng event theo participant scope.
+WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event names: `conversation.join`, `message.send`, `message.created`, `message.ack`, `message.delivered`, `message.read`, `message.typing`, `conversation.sync`. Handshake: token qua `Sec-WebSocket-Protocol: bearer, <access-token>` (fallback query `?access_token=`); Gateway validate JWT rồi proxy upgrade, Message Service tự authorize từng event theo participant scope.
 
 ## 3. Chi tiết endpoint
 
@@ -81,7 +81,8 @@ WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event nam
       "sender_user_id": "usr-01912f10",
       "body": "Shop gửi hàng chưa ạ?",
       "attachments": [],
-      "status": "SENT",
+      "moderation_status": "ACCEPTED",
+      "delivery_status": "READ",
       "edited_at": null,
       "deleted": false,
       "created_at": "2026-08-31T03:00:00Z"
@@ -109,7 +110,8 @@ WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event nam
     "sender_user_id": "usr-01912f20",
     "body": "Shop đã gửi hàng rồi ạ.",
     "attachments": [],
-    "status": "SENT",
+    "moderation_status": "ACCEPTED",
+    "delivery_status": "SENT",
     "created_at": "2026-08-31T03:05:00Z"
   },
   "meta": { "request_id": "01912fc3-7a1b-7c12-9c55-8b1c34a6d921" }
@@ -118,16 +120,84 @@ WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event nam
 
 Gửi lại cùng `Idempotency-Key` trả **đúng message cũ**, không tạo `sequence` mới. Attachment chưa `READY` → `400 MESSAGE_ATTACHMENT_INVALID`.
 
+#### Hai trường trạng thái, không được gộp
+
+Message có **hai** trục trạng thái độc lập. Trước đây cả hai bị gộp vào một field `status` với giá trị `SENT` — giá trị này không nằm trong enum nào, gây lệch giữa API và schema DB.
+
+| Field | Enum | Nghĩa | Ai đổi |
+|---|---|---|---|
+| `moderation_status` | `ACCEPTED`, `EDITED`, `DELETED`, `BLOCKED` | Vòng đời nội dung message | Sender (edit/delete), admin/security policy |
+| `delivery_status` | `SENT`, `DELIVERED`, `READ` | Message đã tới đâu với **người nhận** | Server tính, client không set |
+
+`delivery_status` được server tính **theo từng người xem** (`viewer`), dựa trên read state của phía bên kia:
+
+| Giá trị | Điều kiện |
+|---|---|
+| `SENT` | Đã persist và có `sequence`; người nhận chưa ack |
+| `DELIVERED` | `read_states.delivered_sequence` của người nhận `>= message.sequence` (client ack qua WS `message.ack`, hoặc kéo history) |
+| `READ` | `read_states.last_read_sequence` của người nhận `>= message.sequence` |
+
+Ba trạng thái còn lại trên bản thiết kế Penpot (`06 · Taca States`) — `QUEUED`, `SENDING`, `FAILED` — là **client-side**, mô tả optimistic UI trước khi server trả `message_id`. Server không bao giờ trả ba giá trị này; client tự quản bằng `client_message_id`. Chuỗi đầy đủ phía FE:
+
+```text
+client:  QUEUED → SENDING →┬─ (201/ws ack) → server delivery_status: SENT → DELIVERED → READ
+                           └─ (lỗi/timeout) → FAILED  → retry cùng Idempotency-Key
+```
+
+Message do chính actor gửi mới có `delivery_status`; message nhận về từ người khác trả `null` (không có ý nghĩa).
+
 - `PATCH /messages/{id}` body `{version, body, attachment_ids[]}` — chỉ sender, trong cửa sổ sửa 15 phút; hết hạn → `409 MESSAGE_EDIT_EXPIRED`.
 - `DELETE /messages/{id}` body `{version}` — soft delete, giữ `sequence`, trả placeholder `deleted:true` và `body:null` cho mọi participant.
 
 ### 3.3 Read/realtime
 
-`PATCH /conversations/{id}/read` body `{last_read_sequence}`; cursor chỉ tăng, idempotent. WebSocket handshake tại `GET /ws/messages` qua Gateway: token ở `Sec-WebSocket-Protocol: bearer, <access-token>` (fallback `?access_token=`); Gateway validate JWT + kiểm connection cap + rate limit rồi proxy upgrade. Message Service authorize `conversation.join`/`message.send`/`message.read` theo participant scope, không tin danh sách participant từ client. Reconnect: client gọi `conversation.sync` (hoặc `GET /conversations/{id}/messages?after_sequence=`) qua REST — socket không giữ history. Token hết hạn giữa phiên: server đóng socket, client refresh rồi reconnect.
+`PATCH /conversations/{id}/read` body:
+
+```json
+{ "last_read_sequence": 43, "delivered_sequence": 43 }
+```
+
+Response `200`:
+
+```json
+{ "data": { "conversation_id": "cv-01912fc0", "last_read_sequence": 43, "delivered_sequence": 43, "unread_count": 0 }, "meta": { "request_id": "01912fca-7a1b-7c12-9c55-8b1c34a6d921" } }
+```
+
+Cả hai cursor chỉ tăng, idempotent. `delivered_sequence` báo "đã nhận tới đâu" (nuôi `delivery_status=DELIVERED`), `last_read_sequence` báo "đã đọc tới đâu" (nuôi `READ`); `last_read_sequence` luôn `<= delivered_sequence`, server tự nâng `delivered_sequence` nếu client chỉ gửi `last_read_sequence`. WebSocket handshake tại `GET /ws/messages` qua Gateway: token ở `Sec-WebSocket-Protocol: bearer, <access-token>` (fallback `?access_token=`); Gateway validate JWT + kiểm connection cap + rate limit rồi proxy upgrade. Message Service authorize `conversation.join`/`message.send`/`message.read` theo participant scope, không tin danh sách participant từ client. Reconnect: client gọi `conversation.sync` (hoặc `GET /conversations/{id}/messages?after_sequence=`) qua REST — socket không giữ history. Token hết hạn giữa phiên: server đóng socket, client refresh rồi reconnect.
 
 ### 3.4 Attachment
 
-`POST /conversations/{id}/attachments/upload-url` body `{content_type,size_bytes,sha256}`; server sinh private key, max 20 MiB/file. `POST /attachments/{id}/complete` HEAD/checksum/type/scan; `READY` mới message public, `SCANNING` chưa public.
+`POST /conversations/{id}/attachments/upload-url` body `{content_type,size_bytes,sha256}`; server sinh private key, max 20 MiB/file. Response `201`:
+
+```json
+{
+  "data": {
+    "attachment_id": "att-01912fc7",
+    "object_key": "conversations/cv-01912fc0/att-01912fc7.webp",
+    "upload_url": "https://storage.example/signed-upload",
+    "expires_at": "2026-08-30T09:10:00Z",
+    "status": "UPLOADING"
+  },
+  "meta": { "request_id": "01912fc8-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`POST /attachments/{id}/complete` body `{object_key,sha256}`; HEAD/checksum/type/scan. Response `200`:
+
+```json
+{
+  "data": {
+    "attachment_id": "att-01912fc7",
+    "status": "READY",
+    "content_type": "image/webp",
+    "size_bytes": 1048576,
+    "url": "https://cdn.taca.vn/m/att-01912fc7.webp"
+  },
+  "meta": { "request_id": "01912fc9-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`READY` mới dùng được cho `attachment_ids` ở `POST /conversations/{id}/messages` (§3.2); `SCANNING` chưa public, gửi kèm message sẽ bị `400 MESSAGE_ATTACHMENT_INVALID`. Sai checksum/type/size → `status: "REJECTED"`, không retry `complete` với cùng `attachment_id` — phải upload lại.
 
 ### 3.5 Health
 

@@ -66,10 +66,35 @@ Rating 1–5; only delivered verified order item; one review/order-product-buyer
 
 ## 6. Migration và seed
 
-1. Create review/media/reply/aggregate/audit collections and validators.
-2. Duplicate preflight before unique index.
-3. Seed delivered eligible, not-delivered, duplicate, all rating values, seller reply and aggregate distribution.
-4. Recompute aggregate consistency; no KYC/token/comment sensitive fixture in logs.
+### 6.1 Thứ tự migration
+
+| Thứ tự | Nội dung | Phụ thuộc |
+|---:|---|---|
+| 001 | Tạo collection `reviews` + validator (`rating` 1–5, `status` enum) | — |
+| 002 | Tạo collection `review_media` | `reviews` |
+| 003 | Tạo collection `seller_replies` | `reviews` |
+| 004 | Tạo collection `rating_aggregates` | — |
+| 005 | Tạo collection `review_audits` | — |
+| 006 | Duplicate preflight trên `reviews` theo `(order_id,product_id,buyer_user_id)` — migration fail nếu còn trùng | `reviews` |
+| 007 | Tạo unique index `(order_id,product_id,buyer_user_id)` trên `reviews`, unique `object_key` trên `review_media`, unique `review_id` trên `seller_replies`, unique `product_id` trên `rating_aggregates` | 006 |
+| 008 | Thêm index `(product_id,status,created_at)`, `(shop_id,status,created_at)` trên `reviews` | Tất cả bảng trên |
+| 009 | Seed fixture cho local/test (§6.2) | Tất cả bảng trên |
+
+### 6.2 Seed tối thiểu cho local/test
+
+| Seed | Giá trị |
+|---|---|
+| `reviews` | Đủ 5 giá trị `rating` (1–5); 1 review tạo **ngay sau** `DELIVERED` và 1 review tạo **rất lâu sau** (test "không giới hạn thời gian tạo" — §3.2 API); 1 `DELETED`; 1 duplicate-attempt fixture (test `REVIEW_ALREADY_EXISTS`); 1 review trong edit window 30 ngày, 1 đã hết edit window. |
+| `review_media` | 1 `READY`; 1 `SCANNING` (loại khỏi response public); 1 `REJECTED`. |
+| `seller_replies` | 1 reply hợp lệ; 1 review chưa có reply (test tạo mới không trùng `REVIEW_REPLY_ALREADY_EXISTS`). |
+| `rating_aggregates` | Khớp **chính xác** `count`/`distribution` với số `reviews` `PUBLISHED` fixture ở trên — đây là bất biến bắt buộc (`count = Σ distribution`), seed sai sẽ làm test aggregate fail ngay từ đầu. |
+
+Không seed KYC document, token thật hoặc comment chứa PII trong fixture/log.
+
+### 6.3 Kiểm tra bắt buộc trước khi chạy migration production
+
+1. Duplicate preflight `(order_id,product_id,buyer_user_id)` phải sạch trước khi tạo unique index — migration dừng nếu còn bản ghi trùng, không tự xoá.
+2. Recompute `rating_aggregates` từ `reviews` thật và so khớp — chênh lệch phải điều tra trước khi enable read traffic.
 
 ## 7. Giả định & câu hỏi mở
 
@@ -77,6 +102,6 @@ Rating 1–5; only delivered verified order item; one review/order-product-buyer
 |---|---|---|---|
 | 1 | MongoDB/NestJS baseline; exact versions chưa chốt. | Ảnh hưởng schema/transaction/index. | Tech lead |
 | 2 | Eligibility dựa delivered event + fallback Order contract chưa chốt. | Ảnh hưởng create review availability. | Order owner |
-| 3 | Edit window 30 ngày/delete policy là baseline cần xác nhận. | Ảnh hưởng update/API. | Product owner |
+| 3 | ~~Edit window baseline cần xác nhận~~ → **Đã chốt**: edit 30 ngày sau tạo; **tạo review không giới hạn thời gian** (chỉ cần `DELIVERED`) — xem `docs/api/rating-comment.md` §3.2/§3.3. | — | Đã đóng |
 | 4 | Không pre-moderation; hidden/report workflow tương lai. | Nếu compliance yêu cầu duyệt, cần state/queue. | Product/Security |
 | 5 | Media scan provider chưa chốt. | Ảnh hưởng SCANNING→READY. | Security/DevOps |

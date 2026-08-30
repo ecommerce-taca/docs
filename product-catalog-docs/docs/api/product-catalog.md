@@ -58,9 +58,10 @@ Product Catalog lấy `actor_user_id`, role và shop scope từ auth context do 
 | 2 | `GET /products/{productId}` | Public | Product detail + display stock projection. |
 | 3 | `GET /categories` | Public | Category tree. |
 | 4 | `GET /categories/{categoryId}` | Public | Category detail/children. |
-| 5 | `GET /shops/{shopSlug}/products` | Public | Product listing theo shop. |
+| 5 | `GET /shops/{shopId}/products` | Public | Product listing theo shop. |
 | 6 | `POST /seller/products` | Seller | Tạo SPU draft. |
 | 7 | `GET /seller/products` | Seller | Seller product list. |
+| 7a | `GET /seller/products/export` | Seller | Xuất danh sách sản phẩm ra file (.xlsx/.csv). |
 | 8 | `GET /seller/products/{productId}` | Seller | Seller editor detail. |
 | 9 | `PATCH /seller/products/{productId}` | Seller | Cập nhật product fields. |
 | 10 | `PUT /seller/products/{productId}/skus` | Seller | Replace/update SKU set. |
@@ -96,6 +97,8 @@ Response `200`:
   "data": [{
     "product_id": "product-01912f31",
     "shop": { "shop_id": "shop-01912f30", "name": "Taca Shop", "slug": "taca-shop", "logo_url": null },
+    "primary_category_id": "cat-01912f20",
+    "tax_rate_bps": 1000,
     "title": "Áo khoác cotton",
     "slug": "ao-khoac-cotton",
     "price": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
@@ -108,6 +111,8 @@ Response `200`:
 
 Ràng buộc: `min_price/max_price` là integer VND; public không được query draft/blocked/archived; stock display có thể `UNKNOWN`/`STALE` và không phải purchase guarantee. Với `product_ids`, product không tồn tại/không visible bị bỏ khỏi kết quả (không lỗi) — caller tự phát hiện ID nào biến mất.
 
+`tax_rate_bps` là **thuế suất VAT của sản phẩm**, đơn vị basis point (10% = `1000`). Product Catalog đã giải quyết xong việc thừa kế theo cây danh mục và trả ra giá trị cuối cùng — caller không phải leo cây. Order-Commerce snapshot giá trị này vào `order_items` tại lúc checkout để tách thuế ghi hoá đơn (`order-commerce-docs/docs/lld/order-commerce.md` §6.4). Giá trong `price` **đã bao gồm** VAT.
+
 #### `GET /products/{productId}`
 
 Response `200` trả `ProductDetail` gồm `product_id`, shop snapshot, title/description/brand, price summary, active categories, active SKUs, media READY và `stock_display` theo SKU:
@@ -118,6 +123,8 @@ Response `200` trả `ProductDetail` gồm `product_id`, shop snapshot, title/de
     "product_id": "product-01912f31",
     "status": "ACTIVE",
     "title": "Áo khoác cotton",
+    "primary_category_id": "cat-01912f20",
+    "tax_rate_bps": 1000,
     "price": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
     "attributes": [{ "key": "material", "label": "Chất liệu", "type": "ENUM", "values": ["cotton"] }],
     "skus": [{
@@ -136,13 +143,43 @@ Response `200` trả `ProductDetail` gồm `product_id`, shop snapshot, title/de
 
 #### `GET /categories` và `GET /categories/{categoryId}`
 
-- `GET /categories`: trả category `ACTIVE` theo tree, `depth ≤ 5`, kèm `children`.
-- `GET /categories/{categoryId}`: trả metadata category và children; category archived không public.
-- `404 PRODUCT_NOT_FOUND` cho category không tồn tại theo public visibility; category invalid trả `PRODUCT_CATEGORY_INVALID` ở assignment endpoint.
+`GET /categories`: trả category `ACTIVE` theo tree, `depth ≤ 5`, kèm `children`.
 
-#### `GET /shops/{shopSlug}/products`
+```json
+{
+  "data": [
+    {
+      "category_id": "cat-01912f20",
+      "name": "Điện tử",
+      "slug": "dien-tu",
+      "path": "/cat-01912f20",
+      "depth": 1,
+      "tax_rate_bps": 1000,
+      "children": [
+        { "category_id": "cat-01912f21", "name": "Điện thoại", "slug": "dien-thoai", "path": "/cat-01912f20/cat-01912f21", "depth": 2, "tax_rate_bps": null, "children": [] }
+      ]
+    }
+  ],
+  "meta": { "request_id": "req-01912f51" }
+}
+```
 
-Query giống `GET /products`, mặc định filter `ACTIVE` theo shop snapshot slug. Shop suspended có visibility policy do Auth User event; public không được dùng route này để bypass policy.
+`GET /categories/{categoryId}`: trả metadata category và children; category archived không public.
+
+```json
+{
+  "data": { "category_id": "cat-01912f21", "name": "Điện thoại", "slug": "dien-thoai", "path": "/cat-01912f20/cat-01912f21", "depth": 2, "tax_rate_bps": null, "children": [] },
+  "meta": { "request_id": "req-01912f52" }
+}
+```
+
+`tax_rate_bps: null` ở category con nghĩa là **thừa kế từ cha** — client hiển thị số thực tế phải leo `path` để resolve, hoặc dùng giá trị đã resolve sẵn ở `tax_rate_bps` của product (§3.1). `404 PRODUCT_NOT_FOUND` cho category không tồn tại theo public visibility; category invalid trả `PRODUCT_CATEGORY_INVALID` ở assignment endpoint.
+
+#### `GET /shops/{shopId}/products`
+
+Query giống `GET /products`, mặc định filter `ACTIVE`, lọc theo `shop_id` trong shop snapshot. Response **cùng hình dạng** với `GET /products` ở §3.1 (mảng product card + `meta`) — không lặp lại ví dụ ở đây. Shop suspended có visibility policy do Auth User event; public không được dùng route này để bypass policy.
+
+> **Khoá là `shop_id` (UUID), không phải slug.** Toàn bộ family `/api/v1/shops/{shopId}/**` dùng chung một loại khoá: `GET /shops/{shopId}` (hồ sơ, `auth-user`), `POST|DELETE /shops/{shopId}/follow`, `GET /shops/{shopId}/followers/count` và route này. Trước đây route này nhận slug trong khi các route anh em nhận UUID — màn Shop gọi hai route cùng prefix với hai kiểu khoá khác nhau sẽ `404`. FE có URL dạng slug thì resolve slug → `shop_id` bằng `GET /shops/{slug}` của `auth-user` (endpoint đó nhận cả hai dạng), rồi dùng `shop_id` cho mọi lời gọi sau.
 
 ### 3.2 Seller product
 
@@ -168,9 +205,75 @@ Ràng buộc: shop chưa KYC `APPROVED` vẫn tạo/sửa draft được; `shop_
 
 Query: `page`, `size`, `status`, `q` (title/slug basic), `sort`. Trả tất cả product của shop actor, gồm draft/inactive; không trả product shop khác.
 
+```json
+{
+  "data": [
+    {
+      "product_id": "product-01912f31",
+      "title": "Áo khoác cotton",
+      "slug": "ao-khoac-cotton",
+      "status": "DRAFT",
+      "primary_category_id": "cat-01912f20",
+      "price_summary": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
+      "sku_count": 3,
+      "cover_media": { "media_id": "media-01912f32", "url": "https://cdn.example/signed" },
+      "updated_at": "2026-08-30T09:00:00Z"
+    }
+  ],
+  "meta": { "request_id": "req-01912f53", "page": 1, "size": 20, "total": 84 }
+}
+```
+
+#### `GET /seller/products/export`
+
+Query giống `GET /seller/products` (`status?`, `q?`, `updated_from?`, `updated_to?`) cộng `format` (`xlsx` mặc định | `csv`). Response `200`:
+
+```json
+{
+  "data": {
+    "export_url": "https://storage.example/signed-download/products-shop-01912f30-20260830.xlsx",
+    "format": "xlsx",
+    "row_count": 84,
+    "generated_at": "2026-08-30T09:00:00Z",
+    "expires_at": "2026-08-30T09:30:00Z"
+  },
+  "meta": { "request_id": "01912fbb-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Đúng chuẩn hệ thống "file lớn dùng signed URL, không qua Gateway body" (`api-gateway-docs/docs/api/api-gateway.md` §1.1). File **không** stream qua endpoint này — client GET `export_url` riêng để tải. `export_url` hết hạn sau 30 phút (`expires_at`), gọi lại endpoint để có URL mới. Cột export theo thứ tự: `product_id, title, slug, status, primary_category, base_price, sale_price, sku_count, updated_at`. Chỉ export sản phẩm của shop trong token — không tham số `shop_id`. Vượt `PRODUCT_EXPORT_MAX_ROWS` (10.000) → `400 PRODUCT_EXPORT_TOO_LARGE`, seller phải lọc hẹp hơn bằng `updated_from`/`updated_to`.
+
 #### `GET /seller/products/{productId}`
 
 Trả editor detail gồm product fields, definitions, SKU set, category assignments, media metadata, current shop/KYC projection và `version`. Seller được xem product blocked/archived để hiển thị lý do/lịch sử theo policy.
+
+```json
+{
+  "data": {
+    "product_id": "product-01912f31",
+    "status": "DRAFT",
+    "version": 3,
+    "title": "Áo khoác cotton",
+    "slug": "ao-khoac-cotton",
+    "description": "Mô tả sản phẩm",
+    "brand": "Taca Brand",
+    "price_summary": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
+    "attribute_definitions": [
+      { "key": "material", "label": "Chất liệu", "type": "ENUM", "is_variant_dimension": true, "allowed_values": ["cotton", "linen"] }
+    ],
+    "skus": [
+      { "sku_id": "sku-01912f33", "seller_sku": "AC-COTTON-01", "attributes": { "material": "cotton" }, "price_override": null, "status": "ACTIVE" }
+    ],
+    "categories": { "primary_category_id": "cat-01912f20", "secondary_category_ids": [] },
+    "media": [{ "media_id": "media-01912f32", "url": "https://cdn.example/signed", "status": "READY", "is_cover": true }],
+    "shop_projection": { "shop_id": "shop-01912f30", "status": "ACTIVE", "kyc_status": "APPROVED" },
+    "block_reason": null
+  },
+  "meta": { "request_id": "req-01912f54" }
+}
+```
+
+`block_reason` chỉ có giá trị khi `status="BLOCKED"`; các state khác trả `null`.
 
 #### `PATCH /seller/products/{productId}`
 
@@ -233,7 +336,18 @@ Response `200`: assignments + version. Bắt buộc đúng 1 primary, tối đa 
 
 Request: `{ "version": 4 }`.
 
-Response `200`: public product summary, `status: "ACTIVE"`, `published_at`, new `version`, stock display metadata nếu có.
+```json
+{
+  "data": {
+    "product_id": "product-01912f31",
+    "status": "ACTIVE",
+    "published_at": "2026-08-30T09:05:00Z",
+    "version": 5,
+    "stock_display": { "status": "IN_STOCK", "as_of": "2026-08-30T09:04:50Z" }
+  },
+  "meta": { "request_id": "req-01912f55" }
+}
+```
 
 Preconditions: status `DRAFT`/`INACTIVE`; KYC `APPROVED`; shop không `SUSPENDED`; title/description, primary category ACTIVE, ≥1 SKU ACTIVE, prices hợp lệ, đúng 1 cover media READY. Stock `0` không chặn publish.
 
@@ -243,13 +357,21 @@ Errors: `PRODUCT_KYC_REQUIRED`, `PRODUCT_SHOP_SUSPENDED`, `PRODUCT_CATEGORY_REQU
 
 Request: `{ "version": 7, "reason": "Tạm dừng bán" }`.
 
-Response `200`: status `INACTIVE` + version. Chỉ từ `ACTIVE`; không xóa SKU/price/media; phát `product.unpublished`.
+```json
+{ "data": { "product_id": "product-01912f31", "status": "INACTIVE", "version": 8 }, "meta": { "request_id": "req-01912f56" } }
+```
+
+Chỉ từ `ACTIVE`; không xóa SKU/price/media; phát `product.unpublished`.
 
 #### `POST /seller/products/{productId}/archive`
 
 Request: `{ "version": 7, "reason": "Ngừng kinh doanh" }`.
 
-Response `200`: status `ARCHIVED` + version. Soft lifecycle; không archive nếu state/workflow policy không cho phép; phát `product.archived`.
+```json
+{ "data": { "product_id": "product-01912f31", "status": "ARCHIVED", "version": 8 }, "meta": { "request_id": "req-01912f57" } }
+```
+
+Soft lifecycle; không archive nếu state/workflow policy không cho phép; phát `product.archived`.
 
 #### `POST /seller/products/{productId}/media/upload-url`
 
@@ -287,19 +409,49 @@ Server sinh object key và kiểm quota/type/size. Image ≤20 MiB, video ≤200
 
 Request: `{ "media_id": "media-01912f32", "object_key": "...", "sha256": "aabbcc..." }`.
 
-Response `200`: media metadata với `status: "READY"` nếu object HEAD/checksum/content type hợp lệ; nếu scan async thì `SCANNING` và chưa thỏa publish. Sai metadata trả `PRODUCT_MEDIA_INVALID`.
+```json
+{ "data": { "media_id": "media-01912f32", "status": "READY", "url": "https://cdn.example/media-01912f32.webp" }, "meta": { "request_id": "req-01912f58" } }
+```
+
+`status` nếu scan async thì `SCANNING` và chưa thỏa publish. Sai metadata trả `PRODUCT_MEDIA_INVALID`.
 
 ### 3.3 Admin catalog
 
 #### `GET /admin/catalog/products` và `GET /admin/catalog/products/{productId}`
 
-Admin list hỗ trợ `page`, `size`, `status`, `shop_id`, `category_id`, `q`, `updated_from`, `updated_to`. Detail trả seller/admin fields, audit summary, KYC/shop projection và inventory display; không trả secret.
+Admin list hỗ trợ `page`, `size`, `status`, `shop_id`, `category_id`, `q`, `updated_from`, `updated_to`.
+
+```json
+{
+  "data": [
+    { "product_id": "product-01912f31", "title": "Áo khoác cotton", "shop_id": "shop-01912f30", "status": "ACTIVE", "category_id": "cat-01912f20", "updated_at": "2026-08-30T09:05:00Z" }
+  ],
+  "meta": { "request_id": "req-01912f59", "page": 1, "size": 20, "total": 4210 }
+}
+```
+
+Detail trả seller/admin fields, audit summary, KYC/shop projection và inventory display; không trả secret:
+
+```json
+{
+  "data": {
+    "product_id": "product-01912f31",
+    "status": "ACTIVE",
+    "shop_projection": { "shop_id": "shop-01912f30", "status": "ACTIVE", "kyc_status": "APPROVED" },
+    "audit_summary": [{ "action": "PUBLISHED", "actor": "seller-usr-01912f10", "occurred_at": "2026-08-30T09:05:00Z" }],
+    "inventory_display": { "status": "IN_STOCK", "as_of": "2026-08-30T08:59:59Z" }
+  },
+  "meta": { "request_id": "req-01912f60" }
+}
+```
 
 #### `POST /admin/catalog/products/{productId}/block`
 
 Request: `{ "version": 8, "reason": "Vi phạm chính sách" }`.
 
-Response `200`: `{ data: { product_id, status: "BLOCKED", blocked_at, version }, meta }`.
+```json
+{ "data": { "product_id": "product-01912f31", "status": "BLOCKED", "blocked_at": "2026-08-30T09:10:00Z", "version": 9 }, "meta": { "request_id": "req-01912f61" } }
+```
 
 Bắt buộc reason + admin permission + step-up 2FA context. Block là post-publication action, phát `product.blocked`, không xóa dữ liệu.
 
@@ -307,7 +459,11 @@ Bắt buộc reason + admin permission + step-up 2FA context. Block là post-pub
 
 Request: `{ "version": 9, "reason": "Đã xử lý" }`.
 
-Response `200`: status mặc định `INACTIVE`; seller phải publish lại. Admin quyền cao có thể restore `ACTIVE` chỉ khi publish policy đạt và phải có audit reason; baseline endpoint không nhận `ACTIVE` trực tiếp.
+```json
+{ "data": { "product_id": "product-01912f31", "status": "INACTIVE", "next_status": "INACTIVE", "version": 10 }, "meta": { "request_id": "req-01912f62" } }
+```
+
+Status mặc định `INACTIVE`; seller phải publish lại. Admin quyền cao có thể restore `ACTIVE` chỉ khi publish policy đạt và phải có audit reason; baseline endpoint không nhận `ACTIVE` trực tiếp.
 
 ### 3.4 Admin category
 
@@ -315,23 +471,46 @@ Response `200`: status mặc định `INACTIVE`; seller phải publish lại. Ad
 
 Query: `status`, `parent_id`, `page`, `size`; trả cả active/inactive/archived theo permission.
 
+```json
+{
+  "data": [
+    { "category_id": "cat-01912f20", "name": "Điện tử", "slug": "dien-tu", "parent_id": null, "path": "/cat-01912f20", "depth": 1, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 1 }
+  ],
+  "meta": { "request_id": "req-01912f63", "page": 1, "size": 20, "total": 42 }
+}
+```
+
 #### `POST /admin/catalog/categories`
 
-Request: `{ "parent_id": null, "name": "Điện tử", "slug": "dien-tu", "sort_order": 10 }`.
+Request: `{ "parent_id": null, "name": "Điện tử", "slug": "dien-tu", "sort_order": 10, "tax_rate_bps": 1000 }`.
 
-Response `201`: category với `path`, `depth`, `status: "ACTIVE"`, `version: 1`. Validate cycle/depth/slug/name.
+```json
+{ "data": { "category_id": "cat-01912f20", "name": "Điện tử", "slug": "dien-tu", "parent_id": null, "path": "/cat-01912f20", "depth": 1, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 1 }, "meta": { "request_id": "req-01912f64" } }
+```
+
+Validate cycle/depth/slug/name. `tax_rate_bps` là thuế suất VAT của danh mục, đơn vị basis point (10% = `1000`), khoảng hợp lệ 0–10000 — xem `docs/db/product-catalog.md` §3.x. **Bắt buộc khi tạo category root** (không cha), vì thuế suất phải thừa kế được xuống category con; category con để trống thì thừa kế từ cha. Thiếu `tax_rate_bps` ở category root → `400 PRODUCT_CATEGORY_INVALID`.
 
 #### `PATCH /admin/catalog/categories/{categoryId}`
 
-Request: `{ "version": 1, "parent_id": "category-...", "name": "Điện tử gia dụng", "status": "ACTIVE" }`.
+Request: `{ "version": 1, "parent_id": "category-...", "name": "Điện tử gia dụng", "status": "ACTIVE", "tax_rate_bps": 1000 }`.
 
-Response `200`: category mới + version. Move subtree phải cập nhật `path/depth` atomically; không vượt depth 5; collision trả `PRODUCT_SLUG_CONFLICT` hoặc `PRODUCT_CATEGORY_INVALID`.
+```json
+{ "data": { "category_id": "cat-01912f20", "name": "Điện tử gia dụng", "slug": "dien-tu-gia-dung", "parent_id": "category-01912f01", "path": "/category-01912f01/cat-01912f20", "depth": 2, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 2 }, "meta": { "request_id": "req-01912f65" } }
+```
+
+Move subtree phải cập nhật `path/depth` atomically; không vượt depth 5; collision trả `PRODUCT_SLUG_CONFLICT` hoặc `PRODUCT_CATEGORY_INVALID`.
+
+`tax_rate_bps` bỏ trống trong PATCH giữ nguyên giá trị cũ (không set về `null`). Đổi `tax_rate_bps` **không hồi tố** đơn đã checkout — Order-Commerce đã snapshot thuế suất vào `order_items` tại thời điểm đặt hàng (`order-commerce-docs/docs/lld/order-commerce.md` §6.4). Đổi thuế suất của category có category con **không** tự đổi giá trị con đã set riêng — chỉ ảnh hưởng con đang thừa kế (con để `tax_rate_bps=null`).
 
 #### `POST /admin/catalog/categories/{categoryId}/archive`
 
 Request: `{ "version": 2, "reason": "Taxonomy mới" }`.
 
-Response `200`: status `ARCHIVED` + version. Không hard-delete; không nhận assignment mới; phải có migration policy nếu category đang được dùng.
+```json
+{ "data": { "category_id": "cat-01912f20", "status": "ARCHIVED", "version": 3 }, "meta": { "request_id": "req-01912f66" } }
+```
+
+Không hard-delete; không nhận assignment mới; phải có migration policy nếu category đang được dùng.
 
 ## 4. Mã lỗi chung và mapping
 
@@ -346,6 +525,7 @@ Response `200`: status `ARCHIVED` + version. Không hard-delete; không nhận a
 | `PRODUCT_PRICE_INVALID` | 400 | Price không phải integer VND/range. |
 | `PRODUCT_MEDIA_REQUIRED` | 400 | Thiếu cover READY. |
 | `PRODUCT_MEDIA_INVALID` | 400 | Object metadata/checksum/type sai. |
+| `PRODUCT_EXPORT_TOO_LARGE` | 400 | Vượt `PRODUCT_EXPORT_MAX_ROWS` (10.000), cần lọc hẹp hơn. |
 | `PRODUCT_NOT_FOUND` | 404 | Không tồn tại/không visible trong scope. |
 | `PRODUCT_FORBIDDEN` | 403 | Sai owner/shop/permission. |
 | `PRODUCT_KYC_REQUIRED` | 403 | Shop chưa APPROVED. |

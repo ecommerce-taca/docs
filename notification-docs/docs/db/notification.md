@@ -23,7 +23,7 @@ erDiagram
     NOTIFICATIONS ||--o{ NOTIFICATION_AUDITS : audited
 ```
 
-## 3. Chi tiết collection
+## 3. Chi tiết bảng
 
 ### 3.1 `notifications`
 
@@ -55,9 +55,11 @@ erDiagram
 - `notification_audits`: actor/action/target/reason/metadata/occurred_at; no secret/body.
 - `processed_events`: event_id/dedupe_key/processed_at/status/error; unique event ID.
 
+> Toàn bộ bảng trên là **MySQL** (`notificationdb`), không phải MongoDB — chữ "collection" ở các bản trước là gõ nhầm thuật ngữ, giữ nguyên schema/field như trên nhưng đọc là **bảng**.
+
 ## 4. Index
 
-| Collection | Index |
+| Bảng | Index |
 |---|---|
 | `notifications` | unique `(recipient_user_id,dedupe_key,channel)`; `(recipient_user_id,created_at)`; `(recipient_user_id,read_status,created_at)`; `(status,scheduled_at)` |
 | `delivery_attempts` | `(notification_id,attempt_no)`; `(status,started_at)` |
@@ -72,10 +74,36 @@ Channel `EMAIL/IN_APP`; status `QUEUED/PROCESSING/SENT/FAILED/SKIPPED/EXPIRED`; 
 
 ## 6. Migration và seed
 
-1. Create notifications/attempts/preferences/templates/processed-events/audit collections.
-2. Create unique indexes after dedupe preflight.
-3. Seed order success, invoice issued, shipment delivered, auth verification templates v1 và in-app unread/read fixtures.
-4. Test dedupe/retry/retention; không seed OTP/password/payment secret.
+### 6.1 Thứ tự migration
+
+| Thứ tự | Nội dung | Phụ thuộc |
+|---:|---|---|
+| 001 | Tạo database `notificationdb`, charset/collation, migration metadata | — |
+| 002 | Tạo bảng `templates` (unique `(key,version,locale)`) | — |
+| 003 | Tạo bảng `notifications` | `templates` |
+| 004 | Tạo bảng `delivery_attempts`, FK → `notifications` | `notifications` |
+| 005 | Tạo bảng `notification_preferences` (unique `(user_id,channel,category)`) | — |
+| 006 | Tạo bảng `notification_audits` | — |
+| 007 | Tạo bảng `processed_events` (unique `event_id`, unique `dedupe_key`) | — |
+| 008 | Thêm index `(recipient_user_id,dedupe_key,channel)` unique, `(recipient_user_id,created_at)`, `(status,scheduled_at)` trên `notifications` | `notifications` |
+| 009 | Seed template v1 + fixture cho local/test (§6.2) | Tất cả bảng trên |
+
+### 6.2 Seed tối thiểu
+
+| Seed | Giá trị |
+|---|---|
+| `templates` | `order-success-v1`, `payment-received-v1`, `order-cancelled-v1`, `invoice-issued-v1`, `shipment-delivered-v1`, `shipment-failed-v1`, `payment-result-v1`, `payout-result-v1`, `auth-verification-v1`, `review-request-v1` — mỗi template locale `vi-VN`, `status=PUBLISHED`. |
+| `notification_preferences` | 1 user với `category=SECURITY,locked=true` (test không opt-out được); 1 user tắt `category=MARKETING`. |
+| `notifications` | 1 `SENT` in-app `read_status=UNREAD`; 1 `SENT` đã `READ`; 1 `FAILED` sau 3 lần retry; 1 `SKIPPED` (do preference disabled). |
+| `delivery_attempts` | Đủ attempt khớp fixture `FAILED` ở trên (3 attempt, `attempt_no` 1-3). |
+| `processed_events` | 1 event đã xử lý — test dedupe không gửi lặp. |
+
+Không seed OTP/password/payment secret hoặc recipient email/phone thật — dùng placeholder masked.
+
+### 6.3 Kiểm tra bắt buộc trước khi chạy migration production
+
+1. Verify `dedupe_key` không trùng trong cùng `(recipient_user_id,channel)` trước khi tạo unique index.
+2. Verify mọi `template_key` trong `notifications` đang dùng có tồn tại trong `templates` (không FK cứng nhưng phải reconcile bằng script trước go-live).
 
 ## 7. Giả định & câu hỏi mở
 
