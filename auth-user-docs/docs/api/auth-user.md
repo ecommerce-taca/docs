@@ -113,6 +113,15 @@ Ràng buộc:
 | 34 | `PATCH` | `/admin/users/{userId}/status` | Suspend/restore user | `USER_SUSPEND` + 2FA | Admin Users |
 | 35 | `GET` | `/admin/audit-logs` | Tra cứu audit | Role được cấp | Admin audit/support |
 | 36 | `GET` | `/.well-known/jwks.json` | Public JWKS key set cho Gateway và internal services | Public / Internal REST | API Gateway, internal clients |
+| 37 | `GET` | `/users/me/favorites` | Danh sách sản phẩm yêu thích (reference) | Authenticated | Favorite Products |
+| 38 | `POST` | `/users/me/favorites` | Thêm sản phẩm vào yêu thích | Authenticated | Product card/PDP |
+| 39 | `DELETE` | `/users/me/favorites/{productId}` | Bỏ yêu thích | Authenticated | Favorite Products/PDP |
+| 40 | `GET` | `/users/me/favorites/contains` | Batch kiểm tra trạng thái tim | Authenticated | Product list/PDP |
+| 41 | `POST` | `/shops/{shopId}/follow` | Theo dõi shop | Authenticated | Shop hero/PDP shop card |
+| 42 | `DELETE` | `/shops/{shopId}/follow` | Bỏ theo dõi shop | Authenticated | Shop hero |
+| 43 | `GET` | `/users/me/following` | Danh sách shop đang theo dõi | Authenticated | Account |
+| 44 | `GET` | `/shops/{shopId}/followers/count` | Số người theo dõi shop | Public | Shop hero |
+| 45 | `GET` | `/shops/{shopId}` | Hồ sơ shop công khai (HLD #10) | Public | `Taca Buyer / Shop` |
 
 ## 2. Chi tiết endpoint
 
@@ -1050,6 +1059,131 @@ Ràng buộc:
 
 Lỗi: `500 INTERNAL_ERROR` nếu keystore không sẵn sàng.
 
+### 2.37 `GET /users/me/favorites` — danh sách yêu thích
+
+Quyền: Authenticated · Query: `page`, `size`, `sort=created_at,desc` · Response: `200`
+
+```json
+{
+  "data": [
+    { "product_id": "01912f80-7a1b-7c12-9c55-8b1c34a6d921", "created_at": "2026-08-30T09:10:00Z" }
+  ],
+  "meta": { "page": 1, "size": 20, "total": 12, "total_pages": 1, "request_id": "01912f81-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Chỉ trả reference `product_id`; client/BFF hydrate thẻ sản phẩm (title, giá, ảnh, còn hàng) qua Product Catalog. auth-user không có nội dung sản phẩm nên không hỗ trợ tìm kiếm theo tên trong danh sách (`Field / Search favorites` do frontend lọc client-side hoặc BFF).
+
+Lỗi: `400 AUTH_INVALID_INPUT`, `401 AUTH_TOKEN_INVALID`.
+
+### 2.38 `POST /users/me/favorites` — thêm yêu thích
+
+Quyền: Authenticated · Response: `201` (hoặc `200` nếu đã có — idempotent)
+
+Request:
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---:|---|
+| `product_id` | UUID string | Có | Chỉ kiểm định dạng; không kiểm product tồn tại. |
+
+```json
+{ "product_id": "01912f80-7a1b-7c12-9c55-8b1c34a6d921" }
+```
+
+Response `201`: `{ "data": { "product_id": "...", "created_at": "2026-08-30T09:10:00Z" }, "meta": { "request_id": "..." } }`
+
+Lỗi: `400 AUTH_INVALID_INPUT`, `409 FAVORITE_LIMIT_REACHED` (đạt `MAX_FAVORITES_PER_USER=500`).
+
+### 2.39 `DELETE /users/me/favorites/{productId}` — bỏ yêu thích
+
+Quyền: Authenticated · Response: `204` (idempotent — không tồn tại vẫn `204`)
+
+### 2.40 `GET /users/me/favorites/contains` — batch trạng thái tim
+
+Quyền: Authenticated · Query: `product_ids` (danh sách phân tách bằng dấu phẩy, tối đa 100) · Response: `200`
+
+```json
+{
+  "data": {
+    "01912f80-7a1b-7c12-9c55-8b1c34a6d921": true,
+    "01912f80-7a1b-7c12-9c55-8b1c34a6d922": false
+  },
+  "meta": { "request_id": "01912f82-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Lỗi: `400 AUTH_INVALID_INPUT` nếu quá 100 ID hoặc ID sai định dạng.
+
+### 2.41 `POST /shops/{shopId}/follow` — theo dõi shop
+
+Quyền: Authenticated · Response: `201` (hoặc `200` idempotent nếu đã follow)
+
+```json
+{ "data": { "shop_id": "01912f49-7a1b-7c12-9c55-8b1c34a6d921", "followed_at": "2026-08-30T09:12:00Z" }, "meta": { "request_id": "..." } }
+```
+
+Ràng buộc: shop phải tồn tại và `status != DELETED` (kiểm bằng bảng `shops` local).
+
+Lỗi: `404 SHOP_NOT_FOUND`, `409 SHOP_FOLLOW_LIMIT_REACHED` (đạt `MAX_FOLLOWED_SHOPS_PER_USER=1000`).
+
+### 2.42 `DELETE /shops/{shopId}/follow` — bỏ theo dõi
+
+Quyền: Authenticated · Response: `204` (idempotent)
+
+### 2.43 `GET /users/me/following` — shop đang theo dõi
+
+Quyền: Authenticated · Query: `page`, `size`, `sort=created_at,desc` · Response: `200`
+
+```json
+{
+  "data": [
+    { "shop_id": "01912f49-...", "name": "Taca Home", "slug": "taca-home", "logo_url": "https://cdn.example/signed", "followed_at": "2026-08-30T09:12:00Z" }
+  ],
+  "meta": { "page": 1, "size": 20, "total": 3, "total_pages": 1, "request_id": "..." }
+}
+```
+
+`name/slug/logo_url` là snapshot từ bảng `shops`; có thể trễ so với cập nhật mới nhất của shop.
+
+### 2.44 `GET /shops/{shopId}/followers/count` — số người theo dõi
+
+Quyền: Public · Response: `200`
+
+```json
+{ "data": { "shop_id": "01912f49-...", "follower_count": 1284 }, "meta": { "request_id": "..." } }
+```
+
+`follower_count` eventual; không đảm bảo realtime tuyệt đối.
+
+### 2.45 `GET /shops/{shopId}` — hồ sơ shop công khai
+
+Quyền: Public · Response: `200`
+
+```json
+{
+  "data": {
+    "id": "01912f49-7a1b-7c12-9c55-8b1c34a6d921",
+    "name": "Taca Home",
+    "slug": "taca-home",
+    "logo_url": "https://cdn.example/signed",
+    "description": "Đồ gia dụng chính hãng",
+    "is_verified": true,
+    "status": "ACTIVE",
+    "follower_count": 1284,
+    "created_at": "2026-08-01T09:00:00Z"
+  },
+  "meta": { "request_id": "01912f83-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Ràng buộc:
+
+- `is_verified = (kyc_status == APPROVED)`; không trả `kyc_status`, `business_name`, `tax_code`, `bank_*`, `warehouse_snapshot`, `owner_user_id`.
+- `rating_avg`, `product_count`, `sales_count` **không** thuộc endpoint này — do Product Catalog phục vụ; Frontend Shop hero ghép hai nguồn.
+- Đáp ứng HLD mục 10.
+
+Lỗi: `404 SHOP_NOT_FOUND` (không tồn tại hoặc `status = DELETED`).
+
 ## 3. Bảng mã lỗi dùng chung
 
 | Code | HTTP | Ý nghĩa | Thông điệp hiển thị |
@@ -1085,6 +1219,8 @@ Lỗi: `500 INTERNAL_ERROR` nếu keystore không sẵn sàng.
 | `SHOP_NOT_FOUND` | 404 | Không tìm thấy shop | `Không tìm thấy gian hàng.` |
 | `SHOP_INVALID_STATE` | 409 | Action sai shop state | `Trạng thái gian hàng không cho phép thao tác.` |
 | `SHOP_SLUG_EXISTS` | 409 | Slug trùng | `Đường dẫn gian hàng đã tồn tại.` |
+| `FAVORITE_LIMIT_REACHED` | 409 | Đạt `MAX_FAVORITES_PER_USER` | `Bạn đã đạt giới hạn số sản phẩm yêu thích.` |
+| `SHOP_FOLLOW_LIMIT_REACHED` | 409 | Đạt `MAX_FOLLOWED_SHOPS_PER_USER` | `Bạn đã đạt giới hạn số shop theo dõi.` |
 | `RBAC_PERMISSION_DENIED` | 403 | Thiếu role/permission/scope | `Bạn không có quyền thực hiện thao tác này.` |
 | `RBAC_MFA_REQUIRED` | 428 | Thiếu step-up 2FA | `Vui lòng xác thực lại trước khi tiếp tục.` |
 | `RBAC_INVALID_ROLE` | 400 | Role/scope không hợp lệ | `Vai trò hoặc phạm vi không hợp lệ.` |
@@ -1138,11 +1274,13 @@ Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_c
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
-| 1 | V1 trả access/refresh token trong JSON body; chưa dùng HttpOnly cookie. | Ảnh hưởng CORS credentials, CSRF và frontend token storage. | Frontend + Security |
+| 1 | V1 trả access/refresh token trong JSON body; chưa dùng HttpOnly cookie. | Ảnh hưởng CORS credentials, CSRF và Micro-Frontends (MFE) token storage. | MFE + Security |
 | 2 | Email change chưa mở ở `PUT /users/me`; cần flow endpoint riêng sau v1. | Nếu Penpot yêu cầu đổi email, phải thêm new-email verification và session revoke. | Product owner |
 | 3 | Exact tax code validation/provider bank verification chưa có trong HLD; API dùng baseline 10–14 digits và bank catalog mock. | Có thể cần đổi regex/async verification. | Product/Finance |
 | 4 | `download_url` KYC là signed URL TTL 10 phút và chỉ admin `KYC_READ` được cấp. | Ảnh hưởng storage adapter và audit access. | Security/DevOps |
 | 5 | MFA recovery codes chỉ trả một lần khi enrollment; recovery/reset UI chưa có trong Penpot. | Cần support recovery flow nếu admin mất thiết bị. | Security/Product |
 | 6 | `GET /admin/audit-logs`, `/admin/users/{id}/status` và một số role read endpoint được bổ sung từ admin screens/HLD dù chưa có endpoint cụ thể trong HLD. | Nếu v1 không có admin API này, loại khỏi implementation scope/task. | Product owner |
 | 7 | Pagination dùng page/size; nếu dataset admin lớn, cần chuyển cursor pagination ở API version sau. | Ảnh hưởng query/index và UI table state. | Backend lead |
-| 8 | API error envelope thống nhất `{error:{code,message,details,trace_id}}`; Gateway có thể bọc thêm request metadata. | Nếu frontend đã có envelope khác, cần adapter ở Gateway. | Backend leads |
+| 8 | API error envelope thống nhất `{error:{code,message,details,trace_id}}`; Gateway có thể bọc thêm request metadata. | Nếu các module MFE đã có envelope khác, cần adapter ở Gateway. | Backend leads |
+| 9 | Favorites/Follow (`/users/me/favorites/**`, `/shops/{id}/follow`, `/users/me/following`) và public shop profile (`GET /shops/{id}`) được bổ sung từ Frontend Design, đặt tại `auth-user`. Favorites chỉ lưu `product_id`; frontend/BFF hydrate qua Product Catalog. | Nếu tách service `engagement` sau này, đổi base path và Gateway route. | Product owner |
+| 10 | `GET /shops/{id}` chỉ trả identity + `is_verified` + `follower_count`; `rating_avg`/`product_count` do Product Catalog phục vụ. | Frontend phải gọi 2 nguồn cho Shop hero; hoặc dựng BFF/endpoint tổng hợp. | Product owner + Frontend |

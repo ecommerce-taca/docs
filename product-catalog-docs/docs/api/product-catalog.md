@@ -87,7 +87,7 @@ Không có endpoint Product để reserve/deduct stock. Cart/Checkout phải g�
 
 #### `GET /products`
 
-Query: `page`, `size`, `category_id`, `shop_id`, `status` (chỉ internal/admin; public mặc định `ACTIVE`), `min_price`, `max_price`, `sort` (`newest`, `price_asc`, `price_desc`).
+Query: `page`, `size`, `category_id`, `shop_id`, `status` (chỉ internal/admin; public mặc định `ACTIVE`), `min_price`, `max_price`, `sort` (`newest`, `price_asc`, `price_desc`), `product_ids` (danh sách phân tách bằng dấu phẩy, tối đa 100 — dùng để hydrate thẻ sản phẩm cho Favorites/Cart; khi có `product_ids` thì bỏ qua các filter khác và trả đúng các product `ACTIVE` visible, giữ thứ tự client gửi nếu có thể).
 
 Response `200`:
 
@@ -106,7 +106,7 @@ Response `200`:
 }
 ```
 
-Ràng buộc: `min_price/max_price` là integer VND; public không được query draft/blocked/archived; stock display có thể `UNKNOWN`/`STALE` và không phải purchase guarantee.
+Ràng buộc: `min_price/max_price` là integer VND; public không được query draft/blocked/archived; stock display có thể `UNKNOWN`/`STALE` và không phải purchase guarantee. Với `product_ids`, product không tồn tại/không visible bị bỏ khỏi kết quả (không lỗi) — caller tự phát hiện ID nào biến mất.
 
 #### `GET /products/{productId}`
 
@@ -198,6 +198,7 @@ Request:
   "version": 3,
   "attribute_definitions": [
     { "key": "material", "label": "Chất liệu", "type": "ENUM", "is_variant_dimension": true, "allowed_values": ["cotton", "linen"] },
+    { "key": "color", "label": "Màu sắc", "type": "ENUM", "is_variant_dimension": true, "allowed_values": ["black", "white"], "display_as": "COLOR_SWATCH", "value_meta": { "black": { "swatch_hex": "#111111" }, "white": { "swatch_hex": "#FFFFFF" } } },
     { "key": "capacity_liter", "label": "Dung tích", "type": "NUMBER", "is_variant_dimension": false, "unit": "L" }
   ],
   "skus": [{
@@ -211,6 +212,8 @@ Request:
 ```
 
 Server tự canonicalize `variant_key`; duplicate hoặc sai type trả `PRODUCT_SKU_DUPLICATE`/`PRODUCT_ATTRIBUTE_INVALID`. Toàn request atomic, không partial write. `sku_id` đã được Inventory biết không hard-delete; chuyển lifecycle và phát event.
+
+`display_as` (`PLAIN`/`COLOR_SWATCH`/`IMAGE_THUMB`) và `value_meta` (`swatch_hex`, `swatch_media_id`) là **tùy chọn, chỉ hint render** cho Frontend Seller SKU builder ("Attribute type / Image | Color | Text"); không tham gia canonicalize `variant_key`, không bắt buộc khi publish. Bỏ trống = `PLAIN`.
 
 #### `PUT /seller/products/{productId}/categories`
 
@@ -375,3 +378,5 @@ Rate limit, trace ID, JWT invalid/expired và generic 401/403 có thể được
 | 6 | Media complete có thể trả `SCANNING` nếu virus scan async. | Ảnh hưởng publish readiness và frontend polling. | Security/DevOps |
 | 7 | Admin unblock baseline luôn về `INACTIVE`. | Nếu cần restore active một bước, phải thêm permission/endpoint explicit. | Product owner |
 | 8 | Shop/KYC event projection có đủ `shop_status`, `kyc_status`, `source_version`. | Ảnh hưởng publish gate và shop visibility. | Auth User owner |
+| 9 | `GET /products?product_ids=` (batch ≤100) dùng để hydrate thẻ sản phẩm cho Favorites (`auth-user`) và Cart (`order-commerce`); public shop **profile** `GET /shops/{id}` thuộc `auth-user`, Product Catalog chỉ giữ `GET /shops/{slug}/products`. | Nếu Shop hero cần một endpoint hợp nhất, cần BFF hoặc chuyển ownership. | Product + Auth User owner |
+| 10 | `display_as`/`value_meta` chỉ là hint render, không đổi `variant_key`; khớp chip "Attribute type Image/Color/Text" trong Penpot mà không thêm `AttributeType` mới. | Nếu cần ràng buộc swatch bắt buộc, thêm validate. | Product + Frontend |

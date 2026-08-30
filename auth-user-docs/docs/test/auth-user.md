@@ -10,7 +10,7 @@
 |---|---|
 | Môi trường | Local CI và staging; mọi test integration dùng MySQL 8.4/InnoDB fixture riêng. |
 | Service dependency | API Gateway test hoặc direct service test; Kafka test broker; mock Notification; mock S3/MinIO; fake clock. |
-| Database | Chạy toàn bộ migration từ `001` đến `012`; seed RBAC idempotent; test teardown không dùng production database. |
+| Database | Chạy toàn bộ migration từ `001` đến `013` (gồm `favorites`, `shop_follows`); seed RBAC idempotent; test teardown không dùng production database. |
 | Timezone | UTC; test dùng fake clock để kiểm tra TTL 5 phút/15 phút/30 phút/24 giờ/30 ngày. |
 | HTTP | JSON UTF-8; UUID canonical string; request ID cố định để assert trace. |
 | Security | Tạo RSA key pair test; private key chỉ ở test secret store; JWKS fixture có rotation `kid`. |
@@ -76,6 +76,8 @@
 | TC-22 | Offline/resume | Mobile/tablet browser | Tắt mạng khi submit profile/onboarding | Hiển thị offline; không tạo duplicate mutation khi online lại; draft local không mất. | Cao |
 | TC-23 | Responsive/accessibility | Desktop/mobile/tablet | Kiểm tra 3 breakpoint, keyboard, screen reader, focus | Touch target ≥44px, focus visible, label/error accessible, không overflow table/form. | TB |
 | TC-24 | Data masking | Admin/support account | Mở profile/KYC/audit/bank | Không thấy password hash, refresh hash, TOTP secret, OTP raw, bank raw/KYC bytes. | Cao |
+| TC-25 | Favorite Products | Buyer đã login | Thêm/bỏ tim từ card/PDP; mở `Taca Buyer / Favorite Products`; đạt giới hạn 500 | Trạng thái tim đồng bộ giữa card/PDP/list; thêm trùng không lỗi; vượt 500 báo `FAVORITE_LIMIT_REACHED`; thẻ sản phẩm hydrate từ Product Catalog. | TB |
+| TC-26 | Follow shop + shop profile | Buyer login / khách | Mở `Taca Buyer / Shop` (khách xem được); bấm `+ Theo dõi`/bỏ theo dõi; xem số người theo dõi | Khách xem hồ sơ shop công khai (không thấy tax/bank); follow/unfollow idempotent; `follower_count` tăng/giảm; `is_verified` đúng theo KYC APPROVED. | TB |
 
 Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 
@@ -194,7 +196,31 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-ADMIN-15 | `GET /admin/audit-logs` | Filter 31 ngày/page size | 200 | Masked audit list | Không raw PII/secret. |
 | IT-ADMIN-16 | `GET /admin/audit-logs` | Range >31 ngày/sort lạ | 400 | `AUTH_INVALID_INPUT` | Query bounded. |
 
-### 3.5 Database/concurrency/reliability
+### 3.5 Favorites và Follow shop
+
+| Mã | Endpoint | Input | HTTP | Response mong đợi | Ghi chú |
+|---|---|---|---:|---|---|
+| IT-FAV-01 | `POST /users/me/favorites` | `product_id` UUID hợp lệ | 201 | `{product_id,created_at}` | Không gọi Product Catalog check tồn tại. |
+| IT-FAV-02 | `POST /users/me/favorites` | Thêm lại product đã có | 200/201 | Idempotent, không duplicate row | Unique `(user_id,product_id)`. |
+| IT-FAV-03 | `POST /users/me/favorites` | `product_id` không phải UUID | 400 | `AUTH_INVALID_INPUT` | Không ghi. |
+| IT-FAV-04 | `POST /users/me/favorites` | User đã có 500 favorites | 409 | `FAVORITE_LIMIT_REACHED` | Đếm trong transaction. |
+| IT-FAV-05 | `GET /users/me/favorites` | Page/size hợp lệ | 200 | List `product_id`+`created_at`, sort desc | Chỉ favorites của `sub`. |
+| IT-FAV-06 | `DELETE /users/me/favorites/{productId}` | Đang có | 204 | Xóa cứng row | — |
+| IT-FAV-07 | `DELETE /users/me/favorites/{productId}` | Không có | 204 | Idempotent | Không lỗi. |
+| IT-FAV-08 | `GET /users/me/favorites/contains` | 3 ID (1 đã tim) | 200 | `{id: bool}` đúng | — |
+| IT-FAV-09 | `GET /users/me/favorites/contains` | 101 ID | 400 | `AUTH_INVALID_INPUT` | Bounded batch. |
+| IT-FOLLOW-01 | `POST /shops/{shopId}/follow` | Shop ACTIVE | 201 | `{shop_id,followed_at}` | Kiểm bằng bảng `shops` local. |
+| IT-FOLLOW-02 | `POST /shops/{shopId}/follow` | Follow lại | 200/201 | Idempotent | Unique `(user_id,shop_id)`. |
+| IT-FOLLOW-03 | `POST /shops/{shopId}/follow` | Shop không tồn tại/DELETED | 404 | `SHOP_NOT_FOUND` | — |
+| IT-FOLLOW-04 | `POST /shops/{shopId}/follow` | User đã follow 1000 shop | 409 | `SHOP_FOLLOW_LIMIT_REACHED` | — |
+| IT-FOLLOW-05 | `DELETE /shops/{shopId}/follow` | Đang follow / không follow | 204 | Idempotent | Xóa cứng. |
+| IT-FOLLOW-06 | `GET /users/me/following` | Page/size | 200 | List shop_id + name/slug/logo snapshot | Chỉ của `sub`. |
+| IT-FOLLOW-07 | `GET /shops/{shopId}/followers/count` | Public | 200 | `{shop_id,follower_count}` | Không cần JWT. |
+| IT-SHOP-01 | `GET /shops/{shopId}` | Shop ACTIVE, KYC APPROVED | 200 | identity + `is_verified=true` + `follower_count` | Không trả `business_name/tax_code/bank_*/owner_user_id`. |
+| IT-SHOP-02 | `GET /shops/{shopId}` | Shop KYC chưa APPROVED | 200 | `is_verified=false` | Vẫn public nếu `status != DELETED`. |
+| IT-SHOP-03 | `GET /shops/{shopId}` | Shop `status=DELETED`/không tồn tại | 404 | `SHOP_NOT_FOUND` | — |
+
+### 3.6 Database/concurrency/reliability
 
 | Mã | Tình huống | Kết quả mong đợi |
 |---|---|---|
@@ -208,6 +234,8 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-DB-08 | Migration up/down trên database trống | Schema/index/check/FK tạo và rollback đúng; seed chạy idempotent. |
 | IT-DB-09 | Cleanup job chạy hai instance | Kết quả idempotent; không double revoke/event/audit. |
 | IT-DB-10 | MySQL deadlock retry | Transaction retry giới hạn; nếu thất bại trả lỗi an toàn, không partial mutation. |
+| IT-DB-11 | Hai request `POST /users/me/favorites` cùng product | Chỉ một row; request còn lại trả idempotent success, không vi phạm unique. |
+| IT-DB-12 | Hai request follow cùng shop | Chỉ một row `shop_follows`; `follower_count` không đếm trùng. |
 
 ## 4. Gợi ý unit test
 
@@ -229,6 +257,9 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | `AuditMapper` | Mask token/password/OTP/bank/KYC; event actor/target/reason; append-only payload. |
 | `OutboxPublisher` | 3 retries/2s backoff, DLQ, idempotent event ID, partition key. |
 | `CleanupJobs` | Unlock, token/document expiry, archive, restart/idempotency. |
+| `FavoritePolicy` | UUID validate, upsert idempotent, `MAX_FAVORITES_PER_USER`, contains batch ≤100, không gọi Product Catalog. |
+| `ShopFollowPolicy` | Shop exists/not DELETED, upsert idempotent, `MAX_FOLLOWED_SHOPS_PER_USER`, `follower_count` = count theo index. |
+| `PublicShopMapper` | Chỉ expose field công khai; `is_verified` từ `kyc_status`; ẩn `business_name/tax_code/bank_*/owner_user_id`. |
 
 ## 5. Contract, security và resilience test
 
@@ -290,7 +321,9 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
 | 1 | Test dùng mock Notification/S3/Kafka và test RSA/JWKS fixture; provider thật chưa tích hợp ở auth-user test suite. | Cần thêm certification test với provider thật trước production. | DevOps/Security |
-| 2 | UI token transport là JSON Bearer; chưa có cookie/CSRF flow. | Nếu đổi sang HttpOnly cookie, bổ sung browser security/E2E test. | Frontend/Security |
+| 2 | UI token transport là JSON Bearer; chưa có cookie/CSRF flow. | Nếu đổi sang HttpOnly cookie, bổ sung browser security/E2E test. | MFE/Security |
 | 3 | Threshold performance để team điền theo capacity thực tế; test plan chỉ yêu cầu ghi baseline p50/p95/p99. | Không thể dùng số liệu này làm SLO nếu chưa có target. | Tech lead/DevOps |
 | 4 | Seller Staff invitation UI chưa đầy đủ trong Penpot; test scope chỉ cover assignment/status cơ bản. | Nếu mở full staff lifecycle, thêm invite/accept/revoke test. | Product owner |
 | 5 | Checkout-active session được mock bằng flag/service fixture vì Order Service chưa có trong test repository. | E2E address deletion cần chạy lại khi Order contract hoàn tất. | Order owner |
+| 6 | Favorites/Follow bổ sung từ Frontend Design (không có trong HLD), đặt tại `auth-user`; favorites chỉ lưu `product_id`, thẻ sản phẩm hydrate qua Product Catalog trong E2E. | Nếu tách service `engagement`, di chuyển bộ test IT-FAV/IT-FOLLOW. | Product owner |
+| 7 | `GET /shops/{id}` chỉ trả identity + `is_verified` + `follower_count`; rating/product count từ Product Catalog. | E2E Shop hero cần cả hai nguồn; test contract ghép ở tầng frontend/BFF. | Frontend + Product owner |

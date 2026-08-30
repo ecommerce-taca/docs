@@ -58,6 +58,8 @@
 | TC-GW-18 | Health/readiness | Tắt Redis/JWKS/mock upstream | Mở health endpoints | Liveness phản ánh process; readiness phản ánh dependency; không lộ secret/IP. | Cao |
 | TC-GW-19 | Metrics/logging | Exporter hoạt động | Gọi public/protected/error | Metric route/status/outcome tăng; log có request ID; không có token/PII. | Cao |
 | TC-GW-20 | Responsive/admin error | Browser desktop/mobile/tablet | Kiểm tra error states | Envelope map đúng UI, không overflow message/table; retry action đúng method. | TB |
+| TC-GW-21 | Realtime chat handshake | Có buyer token | Mở `/ws/messages` với/không token, token hết hạn, sai origin | Có token hợp lệ → `101` và nhận message realtime; thiếu/hết hạn → `401` không upgrade; origin ngoài allowlist → `403`. | Cao |
+| TC-GW-22 | Realtime chat reconnect | Đang có socket mở | Ngắt mạng client rồi kết nối lại | Gateway không tự reconnect; client reconnect + `conversation.sync` REST lấy message miss; không mất/không nhân đôi message. | Cao |
 
 Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 
@@ -93,7 +95,18 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-GW-19 | `GET /api/v1/admin/shops/kyc` | Risk admin JWT | Upstream | Auth-user response | Step-up chỉ service yêu cầu. |
 | IT-GW-20 | `POST /api/v1/payments` | Valid buyer/seller JWT | Upstream | Không retry | Payment idempotency ở service. |
 | IT-GW-21 | `POST /api/v1/unknown` | Bất kỳ | 404 | `GATEWAY_ROUTE_NOT_FOUND` | Không internal call. |
-| IT-GW-22 | Route family `/messages` | Valid JWT | Upstream | REST proxy | WebSocket/SSE chưa v1. |
+| IT-GW-22 | Route family `/messages` | Valid JWT | Upstream | REST proxy đúng Message Service. |
+| IT-GW-23 | `GET /ws/messages` handshake | Valid JWT ở `Sec-WebSocket-Protocol` | 101 | Tunnel mở tới Message Service; actor headers forward; token không xuất hiện trong log. |
+| IT-GW-24 | `GET /ws/messages` thiếu token | Không token | 401 | `GATEWAY_AUTH_REQUIRED`; không mở tunnel. |
+| IT-GW-25 | `GET /ws/messages` token hết hạn | `expired_token` | 401 | `GATEWAY_TOKEN_EXPIRED`; không upgrade. |
+| IT-GW-26 | `GET /ws/messages` vượt connection cap | > `WS_MAX_CONNECTIONS_PER_USER` | 429 | `GATEWAY_RATE_LIMITED`; các connection cũ không bị đóng. |
+| IT-GW-27 | `GET /ws/messages` khi Message circuit OPEN | Mock message down | 503 | `GATEWAY_UPSTREAM_UNAVAILABLE` ngay ở handshake. |
+| IT-GW-28 | WS idle timeout | Socket mở, không frame | Close | Gateway đóng socket sau `WS_IDLE_TIMEOUT`; ghi `ws.close` với outcome. |
+| IT-GW-29 | WS token qua query `?access_token=` | Valid token | 101 | Upgrade OK; query token bị redact trong access log/metric. |
+| IT-GW-30 | `GET /api/v1/admin/settlements` | Finance admin JWT | Upstream | Route đúng `payment-wallet`; Gateway coarse-gate role admin, service enforce `FINANCE_OPS`. |
+| IT-GW-31 | `PUT /api/v1/admin/fees` | Buyer/seller JWT | 403 | `GATEWAY_PERMISSION_DENIED`; không gọi payment-wallet. |
+| IT-GW-32 | `GET /api/v1/admin/catalog/products` | Catalog admin JWT | Upstream | Route đúng `product-catalog`. |
+| IT-GW-33 | `GET /api/v1/admin/dashboard` | Bất kỳ admin JWT | 404 | `GATEWAY_ROUTE_NOT_FOUND`; Gateway không có endpoint dashboard (tầng đọc do `mfe-admin`/BFF). |
 
 ### 3.3 JWT/JWKS
 
@@ -145,7 +158,8 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | `CircuitBreaker` | CLOSED→OPEN threshold, OPEN reject, HALF_OPEN probe, recovery. |
 | `ErrorMapper` | Gateway errors, upstream 4xx allowlist, 5xx sanitization, trace ID. |
 | `HealthService` | Liveness independent, readiness dependency state, no secret output. |
-| `LogRedactor` | Authorization/password/OTP/KYC/bank/IP/user fields masked or omitted. |
+| `LogRedactor` | Authorization/password/OTP/KYC/bank/IP/user fields masked or omitted; `?access_token=` query và `Sec-WebSocket-Protocol` bearer bị redact. |
+| `WsProxy` | Handshake JWT validate, subprotocol/query token parse, connection cap, idle timeout, tunnel không parse frame, close khi user revoked, circuit OPEN reject. |
 
 ## 5. Security, resilience và performance test
 
@@ -163,6 +177,9 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | SEC-GW-08 | Log/event scan | Không có access/refresh token, password, OTP hoặc PII raw. |
 | SEC-GW-09 | Rate-limit bypass qua forwarded IP | Chỉ tin trusted proxy chain; không tự set X-Forwarded-For. |
 | SEC-GW-10 | Metrics exposure | Public client không đọc `/metrics`, labels không có PII. |
+| SEC-GW-11 | WS handshake không auth | `/ws/messages` không token/token sai → 401, không mở tunnel; không có đường bypass qua `/ws/**` path khác. |
+| SEC-GW-12 | WS token trong query log | `?access_token=` và subprotocol bearer bị redact trong access log/metric/trace. |
+| SEC-GW-13 | WS sau revoke | User bị suspend/revoke → socket đang mở bị đóng theo Redis `revoked_user_id`; handshake mới bị từ chối. |
 
 ### 5.2 Resilience/performance
 
@@ -189,8 +206,9 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | Security gate | SEC-GW-01 đến SEC-GW-10 pass; không leak secret/PII. |
 | Rate-limit gate | Public/auth/authenticated buckets đúng khi chạy nhiều instances. |
 | Retry gate | Không retry write; GET retry tối đa 1; circuit state đúng. |
+| WebSocket gate | `/ws/messages` handshake auth/connection-cap/idle-timeout/redaction/circuit pass; không tự reconnect/không buffer frame. |
 | Health gate | Liveness/readiness/metrics không lộ dữ liệu nhạy cảm và phản ánh dependency. |
-| UI gate | Buyer/Seller/Admin error/loading/offline state nhận đúng envelope/tracing. |
+| UI gate | Các Micro-Frontends (`mfe-buyer`, `mfe-seller`, `mfe-admin`) error/loading/offline state nhận đúng envelope/tracing. |
 | Performance gate | Có baseline p50/p95/p99 và không có memory leak/unbounded request. |
 | Release gate | Không còn defect Critical/High; route/config rollback được kiểm tra. |
 
@@ -202,5 +220,5 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | 2 | Gateway dùng Redis distributed rate limit, không local fallback production. | Redis HA/outage policy cần được DevOps kiểm chứng trên staging. | DevOps |
 | 3 | JWKS endpoint/issuer/audience hiện dùng mock contract từ auth-user. | Cần contract test với auth-user thật trước production. | Auth-user owner |
 | 4 | Refresh token dùng Bearer JSON flow; cookie/CSRF chưa thuộc test hiện tại. | Nếu chuyển cookie, bổ sung browser security suite. | Frontend/Security |
-| 5 | Message chỉ REST trong v1; WebSocket/SSE chưa test. | Nếu bật realtime, cần test connection auth/upgrade/reconnect riêng. | Product/frontend |
+| 5 | Message v1 dùng REST + WebSocket `/ws/messages`; test suite phủ handshake auth, connection cap, idle timeout, reconnect và redaction token. SSE không test vì không dùng trong v1. | Nếu Message Service đổi handshake/subprotocol, cập nhật IT-GW-23..29. | Product/frontend/Message owner |
 | 6 | Timeout/circuit thresholds là baseline LLD; performance target/SLO chưa chốt. | Không dùng baseline này làm SLA chính thức nếu chưa có capacity test. | Architecture/DevOps |

@@ -71,6 +71,7 @@
 | PC-API-007 | `GET /categories` | Tree depth ≤5 | `200`, chỉ category public `ACTIVE`, children đúng thứ tự. |
 | PC-API-008 | `GET /categories/{id}` | Inactive/archived public | Không expose theo visibility policy; error/status ổn định. |
 | PC-API-009 | `GET /shops/{slug}/products` | Shop active/suspended | Listing đúng shop snapshot/visibility; không bypass suspended policy. |
+| PC-API-009b | `GET /products?product_ids=` | 100 ID (vài ID archived/không tồn tại), >100 ID | Trả đúng product `ACTIVE` visible, bỏ ID biến mất không lỗi; >100 ID → `400`. Dùng hydrate Favorites/Cart. |
 
 ### 3.2 Seller product API
 
@@ -86,6 +87,7 @@
 | PC-API-017 | `PATCH /seller/products/{id}` | Wrong version/concurrent tabs | `409 PRODUCT_VERSION_CONFLICT`, document giữ nguyên. |
 | PC-API-018 | `PATCH /seller/products/{id}` | Đổi `shop_id`/product_id/archived | Từ chối immutable/state với code phù hợp. |
 | PC-API-019 | `PUT /seller/products/{id}/skus` | Typed attributes + canonicalization | Variant key server-generated, SKU saved atomically. |
+| PC-API-019b | `PUT /seller/products/{id}/skus` | `display_as=COLOR_SWATCH`/`IMAGE_THUMB` + `value_meta` | Lưu như hint; `variant_key` không đổi so với khi bỏ `display_as`; publish không bắt buộc `value_meta`. |
 | PC-API-020 | `PUT /seller/products/{id}/skus` | Enum ngoài allowlist/sai NUMBER/unknown key | `400 PRODUCT_ATTRIBUTE_INVALID`, no partial SKU write. |
 | PC-API-021 | `PUT /seller/products/{id}/skus` | Duplicate variant_key/seller_sku | `409 PRODUCT_SKU_DUPLICATE`; duplicate detection intra-request + DB. |
 | PC-API-022 | `PUT /seller/products/{id}/skus` | >1.000 SKU hoặc >50 attrs | `409 PRODUCT_SKU_LIMIT_EXCEEDED`/`400 PRODUCT_ATTRIBUTE_INVALID`. |

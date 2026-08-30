@@ -15,14 +15,14 @@
 | Giá | `product-catalog` là source of truth cho `base_price`/`sale_price` hiển thị. Order-Commerce đọc giá qua API/event và lưu price snapshot khi checkout/order; voucher/discount rule thuộc Order-Commerce. |
 | Publish | Seller có thể tạo/cập nhật draft không cần product approval/censor. Publish yêu cầu shop đã `KYC_APPROVED`; không có trạng thái `PENDING_APPROVAL`. |
 | Inventory display | Product giữ read-only inventory projection từ event của Inventory để hiển thị `Còn hàng/Hết hàng` hoặc số lượng snapshot. Projection có thể eventual consistent và không dùng để trừ stock. |
-| Search | Product phát event sau commit; `search` consume event và sở hữu search index. Product không đọc trực tiếp Elasticsearch. |
+| Search | Search đồng bộ dữ liệu qua CDC (Debezium/Kafka) từ MongoDB; `search` sở hữu search index. Product không đọc/ghi trực tiếp Elasticsearch. |
 | Không thuộc service | User/profile/KYC decision, inventory deduction/reservation, cart/checkout/order, voucher calculation, payment, shipment, review, message và search index. |
-| Được gọi bởi | Buyer Web, Seller Center và Admin Console qua API Gateway; Order/Inventory/Search dùng REST/event contract, không đọc MongoDB trực tiếp. |
+| Được gọi bởi | Các ứng dụng Micro-Frontends (`mfe-buyer`, `mfe-seller`, `mfe-admin`, `mfe-catalog` qua `mfe-shell`) thông qua API Gateway; Order/Inventory/Search dùng REST/event contract, không đọc MongoDB trực tiếp. |
 
 ### 1.2 Boundary với các service khác
 
 ```text
-Buyer / Seller / Admin frontend
+Micro-Frontends (mfe-buyer, mfe-seller, mfe-admin, mfe-catalog, mfe-shell)
   │ HTTPS
   ▼
 API Gateway
@@ -31,7 +31,7 @@ API Gateway
 Product Catalog
   ├─ MongoDB: product, SKU, category, media, price, shop snapshot
   ├─ S3/MinIO: product media bytes qua signed URL
-  ├─ Kafka outbox → Search, Order, Inventory và consumers khác
+  ├─ Kafka outbox → Order, Inventory và consumers khác (Search dùng CDC Debezium)
   ├─ Kafka consumer ← Inventory stock snapshot
   └─ Kafka consumer ← Auth User shop/KYC status event
 ```
@@ -40,6 +40,7 @@ Product Catalog
 - `shop_id`, `sku_id`, `category_id` và `user_id` từ service khác là reference ID, không phải cross-service FK.
 - Product có thể hiển thị sản phẩm `ACTIVE` với stock bằng 0; trạng thái stock chỉ ảnh hưởng khả năng mua ở Cart/Checkout, không tự làm Product trừ stock.
 - Nếu Inventory không phát event hoặc projection bị stale, Product phải đánh dấu snapshot stale; không được suy diễn rằng còn hàng để reserve.
+- `GET /products?product_ids=` là điểm hydrate thẻ sản phẩm cho các danh sách chỉ giữ reference ở service khác (Favorites/Wishlist ở `auth-user`, Cart ở `order-commerce`). Public shop **profile** (`GET /api/v1/shops/{id}`) thuộc `auth-user`; Product Catalog chỉ phục vụ `GET /api/v1/shops/{slug}/products` và có thể trả `rating_avg`/`product_count` của shop từ projection cho Shop hero.
 
 ### 1.3 Mapping với HLD và Penpot
 
@@ -114,7 +115,7 @@ Chi tiết field type, validator, index và migration nằm ở `docs/db/product
 | Product media metadata | Product Catalog | Validate metadata/object; bytes do S3/MinIO lưu. |
 | Shop identity/KYC | Auth User | Lưu snapshot để đọc/gate; không quyết định KYC. |
 | Available/reserved stock | Inventory | Chỉ consume snapshot; không reserve/deduct. |
-| Search index | Search | Phát event; không ghi Elasticsearch. |
+| Search index | Search | Nguồn dữ liệu được đồng bộ qua CDC (Debezium/Kafka); Product không ghi Elasticsearch. |
 | Voucher/discount | Order-Commerce | Product trả giá niêm yết; không tính voucher. |
 | Order price | Order-Commerce | Product cung cấp giá hiện tại; Order snapshot giá tại checkout. |
 
@@ -130,6 +131,7 @@ Attribute không giới hạn ở tên field cố định. Mỗi attribute defin
 | `is_variant_dimension` | Nếu `true`, value tham gia tạo SKU combination. |
 | `allowed_values` | Bắt buộc với `ENUM`; có thể rỗng với type khác. |
 | `unit` | Đơn vị hiển thị tùy attribute, ví dụ `kg`, `cm`; không dùng để đổi precision ngầm. |
+| `display_as` | Gợi ý render UI, **không đổi logic validate/canonicalize**: `PLAIN` (mặc định), `COLOR_SWATCH` (kèm `swatch_hex` optional cho từng allowed value), `IMAGE_THUMB` (kèm `swatch_media_id` optional). Khớp các chip "Attribute type / Image | Color | Text" trong Frontend Seller SKU builder — về bản chất vẫn là `type` `STRING`/`ENUM`. |
 | `sort_order` | Thứ tự hiển thị trong Product Detail/editor. |
 
 Ví dụ SKU:
@@ -238,7 +240,7 @@ Ràng buộc:
    └─ không có duplicate variant_key
 4. Set product.status=ACTIVE, published_at=now, increment version
 5. Ghi product.published vào outbox cùng transaction
-6. Search consume event; Inventory tiếp tục quản lý stock riêng
+6. Search cập nhật index thông qua CDC (Debezium); Inventory tiếp tục quản lý stock riêng
 7. Trả 200 product public summary + stock snapshot metadata nếu có
 ```
 
@@ -255,12 +257,12 @@ Quy tắc publish:
 Unpublish:
   1. Check ownership/permission + status ACTIVE
   2. Set INACTIVE, published_at giữ lại, unpublished_at=now
-  3. Publish product.unpublished → Search bỏ public visibility
+  3. Publish product.unpublished → Search cập nhật visibility qua CDC/Outbox
 
 Archive:
   1. Check ownership/admin permission + không còn workflow active cần giữ
   2. Set ARCHIVED và archive reason
-  3. Publish product.archived → Search xóa/ẩn index
+  3. Publish product.archived → Search xóa/ẩn index qua CDC/Outbox
 ```
 
 - Unpublish không xóa SKU, price history hoặc audit.
@@ -273,7 +275,7 @@ Archive:
 1. Admin gửi reason + step-up context
 2. Product kiểm tra CATALOG_ADMIN/SUPER_ADMIN và 2FA requirement
 3. Set status=BLOCKED, lưu actor/reason/audit
-4. Publish product.blocked để Search ẩn public listing
+4. Ghi nhận trạng thái BLOCKED; Search cập nhật ẩn public listing qua CDC/Outbox
 5. Không xóa dữ liệu; seller vẫn xem được lý do và trạng thái trong Seller Center
 ```
 
@@ -365,7 +367,7 @@ Ràng buộc tuyệt đối:
 
 - Product không đọc KYC document hoặc quyết định `APPROVED/REJECTED`.
 - `shop_snapshot` là display/projection; Auth User vẫn là source of truth.
-- Nếu shop đổi tên/slug/logo, Product cập nhật snapshot và phát `product.shop_snapshot_updated` nếu Search cần reindex.
+- Nếu shop đổi tên/slug/logo, Product cập nhật snapshot để Search reindex thông qua CDC.
 
 ## 4. Hằng số & cấu hình
 
@@ -458,6 +460,7 @@ Chuyển trạng thái:
 | Enum | Giá trị hợp lệ |
 |---|---|
 | `AttributeType` | `STRING`, `NUMBER`, `BOOLEAN`, `ENUM` |
+| `AttributeDisplayAs` | `PLAIN`, `COLOR_SWATCH`, `IMAGE_THUMB` (chỉ gợi ý render, không đổi validate/canonicalize) |
 | `MediaScope` | `SPU`, `SKU` |
 | `MediaStatus` | `UPLOADING`, `SCANNING`, `READY`, `REJECTED`, `DELETED` |
 | `CategoryStatus` | `ACTIVE`, `INACTIVE`, `ARCHIVED` |
@@ -596,7 +599,7 @@ Ràng buộc:
 - Publisher retry tối đa 3 lần, backoff 2 giây; sau đó đưa `product-catalog.events.dlq.v1`.
 - Consumer ghi `processed_event_id` hoặc dùng unique event ID để dedupe; không xử lý lại event hoàn tất.
 - Inventory projection cho phép replay/resync từ Inventory snapshot; Product không dùng event replay để suy ra deduction.
-- Search có thể lag sau publish; Product response `ACTIVE` là source of truth catalog, Search eventually indexes theo event.
+- Search có thể lag sau publish; Product response `ACTIVE` là source of truth catalog, Search eventually indexes thông qua CDC.
 
 ## 7. Mã lỗi
 
@@ -647,6 +650,9 @@ Ràng buộc:
 | 9 | Media baseline là 12 ảnh + 3 video/product, S3/MinIO signed URL; virus scan provider và exact product media policy chưa chốt. | Ảnh hưởng upload UX, storage cost, publish readiness và security. | Product/Security/DevOps |
 | 10 | Admin `BLOCKED` là post-publication emergency action, không phải pre-approval/censor workflow. | Nếu cần review trước publish, phải thêm state machine, queue và SLA. | Product owner |
 | 11 | Shop snapshot nhận từ Auth User event; event schema/version và field allowlist cần align với auth-user API/event spec. | Product detail có thể hiển thị shop stale hoặc publish gate sai. | Auth-user owner |
-| 12 | Search eventual consistency qua Kafka; Product response ACTIVE không đợi Search index thành công. | User có thể thấy product detail trước khi tìm thấy qua search. | Search owner |
+| 12 | Search eventual consistency qua CDC/Kafka; Product response ACTIVE không đợi Search index thành công. | User có thể thấy product detail trước khi tìm thấy qua search. | Search owner |
 | 13 | Product detail không gọi Inventory synchronous; snapshot stale sau 60 giây hiển thị metadata `STALE`. | Nếu UX bắt buộc số tồn realtime, phải bổ sung read API/timeout/fallback. | Product + frontend |
-| 14 | Realtime price history, promotion campaign, brand approval và AI content moderation chưa thuộc v1. | Nếu Penpot/HLD bổ sung, cần thêm aggregate/permission/event riêng. | Product owner |
+| 14 | Realtime price history, promotion campaign, brand approval và AI content moderation chưa thuộc v1. Campaign/flash sale (giá theo thời gian) là service **`campaign` riêng ở v1.1** (`System_Overview.md` §6.3), không nhồi vào Product Catalog. | Nếu Penpot/HLD bổ sung sớm, cần thêm aggregate/permission/event riêng. | Product owner |
+| 15 | Đã chốt (`System_Overview.md` §6.3): admin catalog (Categories, Products/SKU, moderation) phục vụ qua `/api/v1/admin/catalog/**` **trên chính service này**, gác `CATALOG_ADMIN`/`SUPER_ADMIN` — không tách microservice admin. Product Catalog **cố ý** không có pre-approval, chỉ `BLOCKED` sau publish; màn "Product moderation queue" của Penpot render thành "danh sách product đã publish + hành động block", không phải hàng đợi duyệt trước. | Nếu bắt buộc duyệt trước, phải thêm state `PENDING_REVIEW` + queue + SLA + event — thay đổi logic lifecycle. | Product owner |
+| 16 | `display_as` (`PLAIN`/`COLOR_SWATCH`/`IMAGE_THUMB`) chỉ là hint render cho Frontend Seller SKU builder; không ảnh hưởng `variant_key`. | Nếu cần swatch bắt buộc theo value, thêm validate riêng. | Product + Frontend |
+| 17 | `GET /products?product_ids=` (batch ≤100) là contract hydrate thẻ sản phẩm cho Favorites (`auth-user`) và Cart (`order-commerce`). | Nếu payload thẻ cần field khác, mở rộng response `ProductCard`. | Product + Frontend |

@@ -7,12 +7,12 @@
 
 | Mục | Nội dung |
 |---|---|
-| Trách nhiệm chính | Sign up/sign in/sign out, JWT access/refresh token, email/phone verification, password reset, buyer profile, address book, seller onboarding, shop/KYC metadata, RBAC và admin 2FA. |
+| Trách nhiệm chính | Sign up/sign in/sign out, JWT access/refresh token, email/phone verification, password reset, buyer profile, address book, seller onboarding, shop/KYC metadata, RBAC và admin 2FA, **product favorites (wishlist)**, **follow shop**, **public shop profile**. |
 | Nguồn dữ liệu chính | MySQL 8.4 database riêng `userdb`; không tạo cross-service foreign key. Các service khác chỉ giữ ID tham chiếu và nhận event. |
 | Tài liệu liên quan | Chi tiết cột, kiểu dữ liệu, constraint và migration nằm ở `docs/db/auth-user.md`; request/response đầy đủ nằm ở `docs/api/auth-user.md`. |
-| Không thuộc service này | Product/SPU/SKU, category, inventory, cart, order, voucher, payment, wallet, shipment, review, message content và product moderation. |
+| Không thuộc service này | Product/SPU/SKU, category, inventory, cart, order, voucher, payment, wallet, shipment, review, message content và product moderation. Favorites/follow chỉ lưu **reference ID** (`product_id`, `shop_id`); nội dung sản phẩm/thẻ sản phẩm do Product Catalog cung cấp. |
 | Phụ thuộc vào | `api-gateway`, Kafka, Notification Service, S3/MinIO private bucket và hệ thống tạo email/SMS của Notification Service. |
-| Được gọi bởi | Buyer/Seller/Admin frontend qua API Gateway; API Gateway gọi trực tiếp cho auth/profile; các domain service dùng event hoặc ID, không đọc `userdb`. |
+| Được gọi bởi | Các module Micro-Frontends (MFE) (`mfe-buyer`, `mfe-seller`, `mfe-admin`, `mfe-shell`) qua API Gateway; API Gateway gọi trực tiếp cho auth/profile; các domain service dùng event hoặc ID, không đọc `userdb`. |
 | Chính sách seller | Tạo shop và vào Seller Center không đồng nghĩa KYC approved. Không duyệt từng sản phẩm; KYC chỉ điều khiển quyền publish và withdraw theo trạng thái shop. |
 
 ### Màn hình và luồng phụ thuộc
@@ -21,6 +21,8 @@
 |---|---|---|
 | `Overlay / Sign in` | Sign in bằng email hoặc phone, forgot password, 2FA challenge | Public → unauthenticated / Admin step-up |
 | `Taca Buyer / Account`, `Account / Profile` | Xem/cập nhật profile, thêm/sửa/xóa address | Buyer đã đăng nhập |
+| `Taca Buyer / Favorite Products`, `Favorites / Main`, `Favorite product / …`, `Account icon / Sản phẩm yêu thích` | Xem danh sách sản phẩm yêu thích, thêm/bỏ yêu thích, tìm trong danh sách | Buyer đã đăng nhập |
+| `Taca Buyer / Shop`, `Shop / Hero`, `CTA / + Theo dõi`, `PDP / Shop card` | Xem hồ sơ shop công khai, theo dõi/bỏ theo dõi shop, số người theo dõi | Xem: public; theo dõi: buyer đã đăng nhập |
 | `Overlay / Seller onboarding` | Hồ sơ → KYC → kho/vận chuyển → ngân hàng → sản phẩm đầu tiên | Buyer đã đăng nhập, có seller onboarding |
 | `State Mobile / Permission KYC` | Hiển thị KYC thiếu/hết hạn và hành động bổ sung hồ sơ | Seller |
 | `Taca Admin / Shops / KYC`, `Overlay / KYC review` | Queue và quyết định KYC | `RISK_MANAGER`, `SUPER_ADMIN` |
@@ -66,6 +68,9 @@ HTTP
 | `AddressController` | CRUD address của user hiện tại | Mọi mutation phải kiểm tra `user_id` từ token, không tin `user_id` trong body. |
 | `SellerOnboardingController` | Tạo/cập nhật shop, KYC, warehouse, bank metadata | S3/MinIO chỉ lưu object; metadata và trạng thái thuộc `auth-user`. |
 | `AdminAccessController` | KYC review, user status, role/permission, audit query | Bắt buộc permission và step-up 2FA cho destructive action. |
+| `FavoriteController` | `GET/POST /users/me/favorites`, `DELETE /users/me/favorites/{productId}`, `GET /users/me/favorites/contains` | Chỉ thao tác favorites của `token.sub`; chỉ lưu `product_id`, không validate product tồn tại (Product Catalog là nguồn); giới hạn `MAX_FAVORITES_PER_USER`. |
+| `ShopFollowController` | `POST/DELETE /shops/{shopId}/follow`, `GET /users/me/following`, `GET /shops/{shopId}/followers/count` | Follow theo `token.sub`; chỉ lưu `shop_id`; không cho follow shop `deleted`/không tồn tại (dùng local shop projection). |
+| `PublicShopController` | `GET /shops/{shopId}` (public) | Trả hồ sơ shop công khai (identity + verified badge + follower count). Không trả bank/tax raw; rating/product count do Product Catalog phục vụ. |
 | `TokenService` | Hash/rotate/revoke refresh token, tạo JWT access token | Refresh token lưu hash, không lưu plaintext. |
 | `KycPolicy` | Kiểm tra trạng thái KYC và quyền publish/withdraw | Product/Payment service phải consume event và áp dụng local gate. |
 | `RbacPolicy` | Resolve role → permission → scope | Seller staff luôn có `shop_id` scope; admin có system scope. |
@@ -80,6 +85,8 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
 |---|---|---|
 | `users` | `id`, `email`, `phone`, `password_hash`, `full_name`, `date_of_birth`, `status`, `email_verified_at`, `phone_verified_at` | Unique normalized email; unique normalized phone khi khác `NULL`; status; created time |
 | `addresses` | `id`, `user_id`, `recipient`, `phone`, `line1`, `ward`, `district`, `province`, `is_default`, `deleted_at` | `(user_id, is_default)`, `(user_id, deleted_at)` |
+| `favorites` | `id`, `user_id`, `product_id`, `created_at` | Unique `(user_id, product_id)`, `(user_id, created_at)` |
+| `shop_follows` | `id`, `user_id`, `shop_id`, `created_at` | Unique `(user_id, shop_id)`, `(shop_id, created_at)`, `(user_id, created_at)` |
 | `shops` | `id`, `owner_user_id`, `name`, `slug`, `business_name`, `tax_code`, `status`, `warehouse_snapshot`, `bank_account_snapshot` | Unique owner; unique slug; status; tax code |
 | `refresh_tokens` | `id`, `user_id`, `token_hash`, `family_id`, `expires_at`, `revoked_at`, `revoke_reason` | User + active token; family; expiry |
 | `verification_tokens` | `id`, `user_id`, `channel`, `purpose`, `token_hash`, `expires_at`, `used_at`, `attempt_count` | `(user_id, purpose, channel, used_at)`, expiry |
@@ -388,6 +395,72 @@ Mock response:
 
 Sau khi upload thành công, client gọi `POST /api/v1/seller/onboarding/kyc/documents/complete`; auth-user kiểm tra object metadata, checksum, content type và lưu `kyc_documents`. Không cho client tự gửi `object_key` của hồ sơ khác.
 
+### 3.14 Product favorites (wishlist) — `GET/POST /api/v1/users/me/favorites`, `DELETE /api/v1/users/me/favorites/{productId}`, `GET /api/v1/users/me/favorites/contains`
+
+```text
+POST:
+  1 Xác thực JWT; lấy user_id = token.sub
+  2 Validate product_id là UUID hợp lệ (không gọi Product Catalog để check tồn tại)
+  3 Đếm favorites còn sống của user; nếu ≥ MAX_FAVORITES_PER_USER → 409 FAVORITE_LIMIT_REACHED
+  4 INSERT ... ON DUPLICATE: nếu đã có (user_id, product_id) → trả 200 idempotent (không lỗi)
+  5 Trả 201 { product_id, created_at }
+
+GET (list):
+  - Trả trang product_id + created_at, sort created_at desc; client/BFF hydrate thẻ sản phẩm qua Product Catalog batch API
+  - Query "q" (tìm trong favorites) KHÔNG do auth-user xử lý: auth-user không có product title; frontend lọc client-side hoặc BFF gọi Product Catalog
+
+GET /contains?product_ids=a,b,c (tối đa 100):
+  - Trả { product_id: boolean } để render trạng thái tim trên card/PDP
+
+DELETE /{productId}:
+  - Xóa cứng row (favorites không cần audit/soft delete); không tồn tại → 204 idempotent
+```
+
+Ràng buộc:
+
+- `favorites` chỉ lưu reference `product_id`; auth-user **không** validate product tồn tại/visible và **không** đồng bộ khi product bị archive/block — frontend/BFF tự lọc khi hydrate.
+- Không phát sự kiện bắt buộc; tùy chọn phát `user.favorite.added/removed` cho analytics (xem §6.2).
+- Không có thao tác bulk trong v1.
+
+### 3.15 Follow shop — `POST/DELETE /api/v1/shops/{shopId}/follow`, `GET /api/v1/users/me/following`, `GET /api/v1/shops/{shopId}/followers/count`
+
+```text
+POST /shops/{shopId}/follow:
+  1 Xác thực JWT; user_id = token.sub
+  2 Kiểm shop tồn tại và status != DELETED bằng bảng shops local (đã là source of truth ở auth-user)
+     └─ không có/deleted → 404 SHOP_NOT_FOUND
+  3 Đếm shop_follows của user; ≥ MAX_FOLLOWED_SHOPS_PER_USER → 409 SHOP_FOLLOW_LIMIT_REACHED
+  4 INSERT ON DUPLICATE → idempotent
+  5 Trả 201 { shop_id, followed_at }
+
+DELETE /shops/{shopId}/follow → 204 idempotent
+
+GET /users/me/following → trang shop_id + shop name/slug/logo_url snapshot + followed_at
+
+GET /shops/{shopId}/followers/count (public) → { shop_id, follower_count }
+  - count cache được (eventual); hiển thị "X người theo dõi" trên Shop hero
+```
+
+Ràng buộc:
+
+- Follow shop là quan hệ nhẹ; không cấp quyền gì cho user, chỉ dùng hiển thị và (tương lai) voucher targeting/notification cho follower.
+- `follower_count` không cần realtime chính xác tuyệt đối; có thể tính bằng `COUNT(*)` với index hoặc counter cache.
+- Tùy chọn phát `shop.followed/unfollowed` cho Notification/analytics (xem §6.2).
+
+### 3.16 Public shop profile — `GET /api/v1/shops/{shopId}`
+
+```text
+1 Không bắt buộc JWT (public)
+2 Load shops theo id; status = DELETED → 404
+3 Trả các field công khai:
+   id, name, slug, logo_url (resolve từ logo_object_key), description,
+   is_verified (kyc_status == APPROVED), status, follower_count, created_at
+4 KHÔNG trả: business_name, tax_code, bank_*, warehouse_snapshot, owner_user_id
+```
+
+- `rating_avg`, `product_count`, `sales_count` **không** thuộc response này — Product Catalog phục vụ (đã sở hữu `shop_snapshots` + product aggregate). Frontend Shop hero ghép từ hai nguồn.
+- Endpoint này đáp ứng HLD mục 10 (`GET /api/v1/shops/{shopId} -> public shop profile`).
+
 ## 4. Hằng số & cấu hình
 
 | Tên | Giá trị | Đơn vị | Ghi chú |
@@ -404,6 +477,9 @@ Sau khi upload thành công, client gọi `POST /api/v1/seller/onboarding/kyc/do
 | `LOGIN_FAILURE_WINDOW` | 15 | phút | Theo user/identifier hash. |
 | `ACCOUNT_LOCK_DURATION` | 15 | phút | Tự mở khóa sau TTL nếu không bị suspend. |
 | `MAX_ADDRESSES_PER_USER` | 20 | address | Chỉ tính record chưa soft delete. |
+| `MAX_FAVORITES_PER_USER` | 500 | product | Vượt trả `409 FAVORITE_LIMIT_REACHED`. |
+| `MAX_FOLLOWED_SHOPS_PER_USER` | 1000 | shop | Vượt trả `409 SHOP_FOLLOW_LIMIT_REACHED`. |
+| `FAVORITES_CONTAINS_MAX_IDS` | 100 | product_id/request | Batch check trạng thái tim. |
 | `PAGE_SIZE_DEFAULT` | 20 | record | `PAGE_SIZE_MAX=100`. |
 | `EMAIL_VERIFICATION_TTL` | 24 | giờ | Token dùng một lần. |
 | `PHONE_OTP_TTL` | 5 | phút | `PHONE_OTP_MAX_ATTEMPTS=5`. |
@@ -473,7 +549,12 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | KYC permission | `KYC_READ`, `KYC_DECIDE`, `KYC_REQUEST_INFO` |
 | User permission | `USER_READ`, `USER_SUSPEND`, `ROLE_READ`, `ROLE_ASSIGN` |
 | Seller scope permission | `SHOP_READ`, `SHOP_UPDATE`, `SELLER_STAFF_MANAGE` |
+| Search admin permission | `SEARCH_ADMIN` (search reindex/diagnostics) |
+| Commerce admin permission | `VOUCHER_MANAGE` (order-commerce platform voucher CRUD) |
+| Finance admin scope | Role `FINANCE_OPS` (đã có ở §5.3 bảng Admin role) là scope cho payment-wallet `/admin/**`: fee/tax config, settlement, finance summary, reconciliation |
 | Step-up marker | `MFA_REQUIRED`, `MFA_VERIFIED` |
+
+> Phạm vi Admin đã chốt (`System_Overview.md` §6.3): **không có microservice admin riêng trong v1**; mỗi màn admin do service sở hữu dữ liệu phục vụ qua `/api/v1/admin/**`. Permission cross-service (`SEARCH_ADMIN`, `VOUCHER_MANAGE`, `FINANCE_OPS`, …) do `auth-user` cấp qua RBAC nhưng **được enforce tại service sở hữu tài nguyên** (Gateway chỉ coarse-gate theo role admin). Product Catalog moderation gate bằng role `CATALOG_ADMIN`/`SUPER_ADMIN`. `auth-user` tự phục vụ Shops/KYC + Users/Roles qua `AdminAccessController`. `dispute`/`campaign` là service v1.1 — khi có sẽ bổ sung role/permission tương ứng.
 
 ### 5.4 Token và verification state
 
@@ -531,6 +612,10 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `notification.commands.v1` | `AUTH_VERIFICATION_REQUESTED` | channel, recipient, template, data, dedupe key | Signup/resend | `user_id` |
 | `notification.commands.v1` | `PASSWORD_RESET_REQUESTED` | channel, recipient, template, reset token data | Forgot password | `user_id` |
 | `notification.commands.v1` | `PHONE_OTP_REQUESTED` | channel, recipient, OTP challenge data | Phone verification | `user_id` |
+| `user.events.v1` | `user.favorite.added` / `user.favorite.removed` *(optional v1)* | `user_id`, `product_id` | Thêm/bỏ favorite | `user_id` |
+| `shop.events.v1` | `shop.followed` / `shop.unfollowed` *(optional v1)* | `shop_id`, `user_id`, `follower_count` | Follow/unfollow shop | `shop_id` |
+
+> `user.favorite.*` và `shop.*followed` là event tùy chọn cho analytics/notification tương lai (VD: shop có sản phẩm mới → thông báo follower). Không có consumer bắt buộc trong v1; nếu không bật thì bỏ khỏi outbox.
 
 ### 6.3 Event lắng nghe
 
@@ -579,6 +664,8 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `KYC_DOCUMENT_INVALID` | 400 | Sai type/checksum/object metadata | `Tài liệu không hợp lệ.` |
 | `KYC_DOCUMENT_TOO_LARGE` | 413 | File vượt 10 MiB | `Tài liệu vượt quá dung lượng cho phép.` |
 | `KYC_DECISION_INVALID` | 400 | Thiếu reason hoặc decision không hợp lệ | `Quyết định KYC chưa đầy đủ.` |
+| `FAVORITE_LIMIT_REACHED` | 409 | Đã đạt `MAX_FAVORITES_PER_USER` | `Bạn đã đạt giới hạn số sản phẩm yêu thích.` |
+| `SHOP_FOLLOW_LIMIT_REACHED` | 409 | Đã đạt `MAX_FOLLOWED_SHOPS_PER_USER` | `Bạn đã đạt giới hạn số shop theo dõi.` |
 | `RATE_LIMITED` | 429 | Vượt request limit | `Bạn thao tác quá nhanh. Vui lòng thử lại sau.` |
 | `INTERNAL_ERROR` | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
 
@@ -595,3 +682,6 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | 7 | Phone login/OTP dùng Notification Service channel `SMS`; provider thật chưa được chọn, hiện chỉ có mock contract. | Ảnh hưởng chi phí, deliverability và retry policy. | Tech lead |
 | 8 | Admin 2FA dùng TOTP, step-up TTL 5 phút; recovery-code policy chưa mô tả trong HLD. | Ảnh hưởng account recovery và support operation. | Security owner |
 | 9 | Product moderation không thuộc `auth-user`; KYC event là gate duy nhất từ user/shop side. | Nếu cần duyệt từng sản phẩm, Product Service phải có workflow riêng. | Product owner |
+| 12 | Phạm vi Admin đã chốt (`System_Overview.md` §6.3): v1 **không** tách microservice admin. `auth-user` phục vụ các màn Shops/KYC, Users/Roles, Administrator roles, Admin role editor qua `AdminAccessController` (`/api/v1/admin/users/**`, `/api/v1/admin/shops/**`), gác `RISK_MANAGER`/`SUPER_ADMIN` + 2FA. `dispute`/`campaign` là service v1.1. | Nếu sau này gộp admin thành service riêng phải chuyển ownership KYC/role. | Architecture owner |
+| 10 | Favorites (wishlist) và Follow shop có trong Frontend Design nhưng **không có trong HLD**; đặt tại `auth-user` (bảng `favorites`, `shop_follows`) vì là dữ liệu cá nhân của user, tương tự `addresses`. Chỉ lưu reference ID, không đồng bộ vòng đời product/shop. | Nếu khối lượng lớn hoặc cần feed/notification follower, có thể tách service `engagement` riêng sau này. | Product owner |
+| 11 | `GET /api/v1/shops/{shopId}` (public shop profile, HLD mục 10) đặt tại `auth-user` — chỉ trả identity + verified badge + `follower_count`. `rating_avg`/`product_count` do Product Catalog phục vụ; Frontend Shop hero ghép hai nguồn. | Nếu muốn một endpoint hợp nhất, cần chọn service tổng hợp hoặc BFF. | Product owner + Architecture |

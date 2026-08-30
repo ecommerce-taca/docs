@@ -46,6 +46,13 @@ API Gateway
 
 Không dùng Redis key để xác nhận role, ownership, balance, order state hoặc inventory.
 
+WebSocket `/ws/messages` dùng thêm hai loại key ephemeral, cùng bản chất counter/marker, không phải domain data:
+
+| Thành phần | Format | TTL | Nội dung |
+|---|---|---:|---|
+| Connection counter | `ws:v1:conn:{user_id_hash}` | Xóa khi socket đóng hoặc TTL ngắn refresh theo heartbeat | Số socket đang mở/user để enforce `WS_MAX_CONNECTIONS_PER_USER`. |
+| Revoked user marker | `revoked_user:{user_id}` (dùng chung với HTTP) | 15 phút | Do Auth User đẩy vào khi suspend/revoke; Gateway đóng socket đang mở và từ chối handshake mới. |
+
 ### 3.2 In-memory JWKS cache — không phải persistence
 
 | Field | Kiểu | TTL/điều kiện |

@@ -137,6 +137,8 @@ Tách collection để giới hạn kích thước product document và hỗ tr�
 | `is_variant_dimension` | boolean | Có | Tối đa 10 dimension/product. |
 | `allowed_values` | string[] | Có với ENUM | Tối đa 200 giá trị, unique. |
 | `unit` | string/null | Không | Hiển thị; không tự đổi precision. |
+| `display_as` | enum | Không | `PLAIN` (default), `COLOR_SWATCH`, `IMAGE_THUMB`. Chỉ hint render editor/PDP; không đổi `variant_key`. |
+| `value_meta` | object/null | Không | Map `value → {swatch_hex?, swatch_media_id?}` cho `COLOR_SWATCH`/`IMAGE_THUMB`. Optional; không validate bắt buộc. |
 | `sort_order` | int | Có | Dùng cho editor/detail display. |
 | `status` | enum | Có | `ACTIVE`, `INACTIVE`, `ARCHIVED`. |
 

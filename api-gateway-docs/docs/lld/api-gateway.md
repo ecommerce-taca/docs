@@ -9,8 +9,8 @@
 
 | Mục | Nội dung |
 |---|---|
-| Trách nhiệm chính | Làm entry point duy nhất cho client; route `/api/v1/**`; kiểm tra CORS và request size; validate JWT; áp dụng route-level role gate; rate limit; timeout/retry/circuit breaker; chuẩn hóa request ID, lỗi và telemetry. |
-| Client | Buyer Web, Seller Center, Admin Console và các client tương lai dùng HTTPS. Các màn hình Penpot không gọi trực tiếp domain/IP của service. |
+| Trách nhiệm chính | Làm entry point duy nhất cho client; route `/api/v1/**` (HTTP) và `/ws/messages` (WebSocket upgrade); kiểm tra CORS và request size; validate JWT (HTTP header và WS handshake); áp dụng route-level role gate; rate limit; timeout/retry/circuit breaker; chuẩn hóa request ID, lỗi và telemetry. |
+| Client | Micro-Frontends (MFE: `mfe-shell`, `mfe-catalog`, `mfe-buyer`, `mfe-seller`, `mfe-admin`) và các client tương lai dùng HTTPS. Các màn hình Penpot không gọi trực tiếp domain/IP của service. |
 | Upstream | `auth-user`, `product-catalog`, `search`, `order-commerce`, `inventory`, `payment-wallet`, `shipment`, `rating-comment`, `notification`, `message` qua REST và địa chỉ nội bộ cấu hình bằng environment. |
 | Nguồn dữ liệu | Không có domain database. Redis chỉ lưu counter/rate-limit key có TTL; không lưu user, product, order, token hoặc business state. Chi tiết được ghi ở `docs/db/api-gateway.md` với trạng thái N/A. |
 | Xác thực | Auth-user ký access JWT bằng RS256. Gateway tải public key từ JWKS của auth-user và validate local; không gọi auth-user cho mỗi request. |
@@ -49,8 +49,8 @@ API Gateway
 | HLD — API Gateway | Nêu authentication, authorization, rate limit, routing ở mức trách nhiệm. | Bổ sung pipeline, route registry, policy, timeout và error contract trong LLD này. |
 | Penpot — Buyer | Home, search, category, shop, product detail, cart, checkout, orders, account, voucher, favorite, review. | Public GET đi qua route public; cart/checkout/order/account và action cá nhân yêu cầu JWT. |
 | Penpot — Seller | Dashboard, product SPU/SKU, order, voucher, finance, settings, onboarding. | Route seller yêu cầu JWT + role/scope; quyền publish/withdraw do product/payment service kiểm tra theo KYC event. |
-| Penpot — Admin | KYC, catalog, finance, order/dispute, voucher, user/role, settings; nhiều admin role và 2FA. | Gateway gate role/permission sơ bộ; auth-user kiểm tra RBAC và step-up 2FA ở mutation nhạy cảm. |
-| Penpot — Messaging | Buyer ↔ seller và support escalation. | V1 expose REST conversation/message route; realtime WebSocket/SSE chưa thuộc scope vì HLD chưa chốt. |
+| Penpot — Admin | KYC, catalog, finance, voucher, user/role, settings; nhiều admin role và 2FA. V1 **không** có microservice admin: mỗi màn route qua `/api/v1/admin/**` tới service sở hữu dữ liệu (§2.3, §8 #9). Dispute và Campaign là service v1.1 (`System_Overview.md` §6.3). | Gateway gate role/permission sơ bộ; service sở hữu enforce RBAC chi tiết và step-up 2FA ở mutation nhạy cảm. |
+| Penpot — Messaging | Buyer ↔ seller và support escalation. | V1 expose REST conversation/message route **và** WebSocket `/ws/messages` cho realtime. Gateway validate JWT ở handshake, kiểm rate limit/connection cap rồi proxy TCP upgrade tới Message Service; không buffer/không retry message. SSE không dùng trong v1. |
 | Penpot — States | Loading, empty, error, offline và retry. | Gateway trả error envelope ổn định, status rõ ràng, `traceId` để frontend hiển thị/retry phù hợp. |
 
 ## 2. Cấu trúc bên trong
@@ -67,6 +67,7 @@ src/
 ├── proxy/                  # internal REST client, timeout/retry/circuit
 ├── security/               # CORS, body/header limit, trusted headers
 ├── request-context/        # request-id, actor context, trace propagation
+├── ws-proxy/               # WebSocket handshake auth + TCP upgrade proxy tới Message Service
 ├── errors/                 # gateway/upstream error mapper
 ├── health/                 # liveness/readiness/dependency checks
 └── observability/          # structured log, metric, trace, redaction
@@ -82,7 +83,8 @@ src/
 | `SecurityModule` | CORS allowlist, header/body limit, strip spoofed headers, trusted proxy. | Không dùng `Access-Control-Allow-Origin: *` cùng credentials; không log raw token/password/PII. |
 | `ErrorModule` | Map lỗi gateway/upstream thành envelope `{error:{code,message,details,trace_id}}`. | Giữ HTTP semantics; không expose stack trace, internal host, SQL hoặc secrets. |
 | `HealthModule` | Liveness, readiness và kiểm tra dependency tối thiểu. | Liveness không phụ thuộc Redis/upstream; readiness kiểm tra config, JWKS và Redis theo deployment policy. |
-| `ObservabilityModule` | Log JSON, metrics latency/status/rate-limit/circuit, trace propagation. | Mọi log request phải có `traceId`/`requestId`; chỉ log allowlist field. |
+| `WsProxyModule` | Nhận HTTP `Upgrade: websocket` trên `/ws/messages`; validate JWT từ query/`Sec-WebSocket-Protocol`/header, kiểm connection cap và rate limit; mở tunnel TCP tới Message Service giữ nguyên trace context. | Chỉ path allowlist được upgrade; không parse/không sửa frame; không tự reconnect; đóng socket khi JWT hết hạn theo policy hoặc quá `WS_IDLE_TIMEOUT`. |
+| `ObservabilityModule` | Log JSON, metrics latency/status/rate-limit/circuit/ws-connection, trace propagation. | Mọi log request/handshake phải có `traceId`/`requestId`; chỉ log allowlist field; không log message frame. |
 
 ### 2.2 Request pipeline
 
@@ -106,24 +108,28 @@ src/
 | Route family | Upstream | Exposure mặc định | Timeout | Retry |
 |---|---|---|---:|---|
 | `/api/v1/auth/**` | `auth-user` | Public tùy endpoint; signout/2FA protected | 5s | Chỉ GET public nếu có |
-| `/api/v1/users/**`, `/api/v1/addresses/**` | `auth-user` | Authenticated | 5s | Không retry mutation |
-| `/api/v1/seller/onboarding/**`, `/api/v1/admin/users/**`, `/api/v1/admin/shops/**` | `auth-user` | Role-gated | 5s | Không retry mutation |
-| `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/seller/products/**` | `product-catalog` | GET public; seller/admin mutation role-gated | GET 5s, mutation 5s | GET tối đa 1 lần |
+| `/api/v1/users/**` (gồm `/users/me/favorites/**`), `/api/v1/addresses/**` | `auth-user` | Authenticated | 5s | Không retry mutation |
+| `/api/v1/seller/onboarding/**`, `/api/v1/seller/shop`, `/api/v1/admin/users/**`, `/api/v1/admin/shops/**` | `auth-user` | Role-gated | 5s | Không retry mutation |
+| `/api/v1/shops/{id}`, `/api/v1/shops/{id}/follow` | `auth-user` | GET public (profile); follow authenticated | 5s | GET tối đa 1 lần |
+| `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/seller/products/**`, `/api/v1/admin/catalog/**`, `/api/v1/shops/{id}/products` | `product-catalog` | GET public; seller/admin mutation role-gated | GET 5s, mutation 5s | GET tối đa 1 lần |
 | `/api/v1/search/**` | `search` | GET public | 5s | GET tối đa 1 lần |
-| `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**` | `order-commerce` | Authenticated; seller/admin route theo endpoint | 5s; checkout 10s | Chỉ GET; mutation dùng idempotency ở service |
-| `/api/v1/inventory/**` | `inventory` | Seller/admin role-gated | 5s | GET tối đa 1 lần |
-| `/api/v1/payments/**`, `/api/v1/wallet/**`, `/api/v1/payouts/**`, `/api/v1/refunds/**` | `payment-wallet` | Authenticated hoặc admin/seller role | 10s | Không retry mutation |
-| `/api/v1/shipments/**` | `shipment` | Buyer/seller/admin theo endpoint | 10s | GET tối đa 1 lần |
-| `/api/v1/reviews/**`, `/api/v1/comments/**` | `rating-comment` | GET public; create/update authenticated | 5s | GET tối đa 1 lần |
+| `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**`, `/api/v1/seller/vouchers/**`, `/api/v1/seller/orders/**`, `/api/v1/admin/vouchers/**` | `order-commerce` | Authenticated; seller/admin route theo endpoint | 5s; checkout 10s | Chỉ GET; mutation dùng idempotency ở service |
+| `/api/v1/inventory/**`, `/api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | `inventory` | Seller/admin role-gated; `/internal/**` không expose public | 5s | GET tối đa 1 lần |
+| `/api/v1/payments/**`, `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `/api/v1/seller/revenue`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated hoặc admin/seller role; `/payments/webhook` không JWT | 10s | Không retry mutation |
+| `/api/v1/orders/{id}/shipment`, `/api/v1/seller/orders/{id}/shipment`, `/api/v1/webhooks/shipping/**` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
+| `/api/v1/products/{id}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; create/update/reply authenticated | 5s | GET tối đa 1 lần |
 | `/api/v1/notifications/**` | `notification` | Authenticated | 5s | GET tối đa 1 lần |
-| `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/support/**` | `message` | Authenticated; support/admin route role-gated | 5s | GET tối đa 1 lần |
+| `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**`, `/api/v1/support/**` | `message` | Authenticated; support/admin route role-gated | 5s | GET tối đa 1 lần |
+| `/ws/messages` (HTTP `Upgrade: websocket`) | `message` | Authenticated (JWT ở handshake) | handshake `WS_HANDSHAKE_TIMEOUT`; sau đó idle theo `WS_IDLE_TIMEOUT` | Không retry; không buffer frame |
 
 Quy tắc route:
 
 - Các endpoint public cụ thể phải khai báo rõ trong route policy; không mặc định toàn bộ `GET` là public.
 - `/health/live`, `/health/ready` và `/metrics` là endpoint vận hành, không expose qua public API prefix nếu chưa có ingress policy riêng.
-- Internal service không được expose route quản trị database, actuator/debug hoặc endpoint bypass authorization.
+- Internal service không được expose route quản trị database, actuator/debug hoặc endpoint bypass authorization. Các route `/internal/**` của Inventory/Shipment/Payment chỉ gọi service-to-service, không map ra public API prefix.
 - `POST /checkout`, `POST /payments`, `POST /orders` và action tương tự không được tự retry ở Gateway; idempotency key và duplicate protection thuộc service sở hữu nghiệp vụ.
+- `/ws/messages` là path WebSocket duy nhất được phép `Upgrade` trong v1; mọi path `/ws/**` khác trả `404`. Handshake bắt buộc JWT hợp lệ; token hết hạn giữa phiên xử lý theo `WS_IDLE_TIMEOUT`/policy, Gateway không tự refresh.
+- `/api/v1/admin/**`: Gateway chỉ **coarse-gate** theo role admin (có bất kỳ admin role nào); permission chi tiết (`VOUCHER_MANAGE`, `CATALOG_ADMIN`, `FINANCE_OPS`, `RISK_MANAGER`…) và step-up 2FA do **service sở hữu dữ liệu** enforce. V1 không có microservice admin riêng: mỗi nhánh `/admin/**` route thẳng tới service chủ tương ứng (xem §8 #9, `System_Overview.md` §6.3). Admin Dashboard là tầng đọc tổng hợp (`mfe-admin` compose read-API hoặc BFF mỏng), Gateway không có endpoint dashboard riêng.
 
 ### 2.4 JWT và actor context
 
@@ -305,6 +311,30 @@ Log start/end với method, route template, status, latency, upstream, outcome
 - Gateway chỉ proxy metadata/complete request có kích thước nhỏ và vẫn áp JWT/rate limit.
 - Nếu sau này bắt buộc multipart qua Gateway, phải tạo route policy riêng: content type allowlist, file size, virus scan, timeout và không retry.
 
+### 3.9 WebSocket upgrade — `GET /ws/messages`
+
+```text
+1. Client gửi HTTP GET /ws/messages với header Upgrade: websocket, Connection: Upgrade
+   và access token qua Sec-WebSocket-Protocol (`bearer,<token>`) hoặc query `?access_token=`
+2. Gateway kiểm CORS origin allowlist (WS cũng phải qua CORS/Origin check)
+3. Rate limit handshake theo IP + user; kiểm WS_MAX_CONNECTIONS_PER_USER
+4. Validate JWT RS256/JWKS như HTTP protected route (iss/aud/exp/nbf/kid)
+   └─ sai/thiếu → trả 401 và KHÔNG upgrade
+5. Strip header giả mạo, tạo actor context, gắn X-User-ID/X-Trace-ID
+6. Mở TCP tunnel tới MESSAGE_BASE_URL, forward Upgrade request kèm actor headers
+7. Sau khi upgrade: Gateway chỉ relay byte frame, không parse, không sửa, không buffer quá TCP window
+8. Đóng socket khi: client/upstream đóng, quá WS_IDLE_TIMEOUT không có frame,
+   Message Service báo lỗi, hoặc user bị revoke (theo Redis revoked_user_id của Gateway)
+```
+
+Ràng buộc:
+
+- Gateway không giữ message history, không đảm bảo delivery; đó là trách nhiệm Message Service (REST cursor là source of truth khi reconnect).
+- Không retry handshake và không tự reconnect socket; client tự reconnect và gọi `conversation.sync` qua REST.
+- Handshake fail dùng cùng error envelope HTTP (`GATEWAY_AUTH_REQUIRED`, `GATEWAY_TOKEN_EXPIRED`, `GATEWAY_RATE_LIMITED`, `GATEWAY_UPSTREAM_UNAVAILABLE`).
+- Circuit breaker cho `message` upstream áp cho cả REST và WS handshake; khi OPEN, handshake trả `503` ngay.
+- Không log message frame; chỉ log sự kiện `ws.handshake`, `ws.open`, `ws.close` với `traceId`, `requestId`, `outcome`, `duration_ms` và connection count.
+
 ## 4. Hằng số & cấu hình
 
 | Tên | Giá trị baseline | Đơn vị | Ghi chú |
@@ -337,6 +367,11 @@ Log start/end với method, route template, status, latency, upstream, outcome
 | `HEALTH_LIVE_PATH` | `/health/live` | path | Không phụ thuộc upstream. |
 | `HEALTH_READY_PATH` | `/health/ready` | path | Kiểm tra config/JWKS/Redis theo policy. |
 | `METRICS_PATH` | `/metrics` | path | Chỉ internal/observability network. |
+| `WS_ALLOWED_PATH` | `/ws/messages` | path | Path WebSocket duy nhất được upgrade; path khác trả 404. |
+| `WS_HANDSHAKE_TIMEOUT` | `5` | giây | Tối đa cho validate JWT + mở tunnel upstream. |
+| `WS_IDLE_TIMEOUT` | `1800` | giây | Đồng bộ `WEBSOCKET_IDLE_TIMEOUT` của Message Service; không frame trong khoảng này thì đóng socket. |
+| `WS_MAX_CONNECTIONS_PER_USER` | `10` | connection | Vượt trả `429` ở handshake; chống connection flood. |
+| `WS_UPSTREAM` | `message` | service | Mọi WS chỉ proxy tới Message Service. |
 | `LOG_BODY_ENABLED` | `false` | boolean | Không log body production. |
 | `TIMESTAMP_STORAGE` | `UTC` | timezone | Log/response ISO-8601. |
 
@@ -349,6 +384,7 @@ Log start/end với method, route template, status, latency, upstream, outcome
 | `PUBLIC` | Không cần JWT | Vẫn qua CORS, rate limit và route policy. |
 | `AUTHENTICATED` | Cần access JWT hợp lệ | User status/verification chi tiết do auth-user/service kiểm tra. |
 | `ROLE_GATED` | Cần JWT và role/permission coarse | Service đích kiểm tra scope/ownership/2FA cuối cùng. |
+| `WS_AUTHENTICATED` | WebSocket upgrade cần JWT hợp lệ ở handshake | Chỉ `/ws/messages`; sau upgrade Gateway chỉ relay frame, không kiểm từng message. |
 | `INTERNAL_ONLY` | Chỉ internal/ops network | Không expose qua client ingress. |
 
 ### 5.2 `CircuitState`
@@ -549,10 +585,11 @@ Readiness body không được chứa secret, internal IP công khai ra client h
 | 3 | Auth-user cung cấp JWKS `GET /.well-known/jwks.json`, issuer/audience và RS256 key rotation. | Không thể validate JWT hoặc xử lý key rotation đúng nếu endpoint/claim khác. | Auth-user owner |
 | 4 | Client gửi Bearer access token; refresh token transport (JSON response, HttpOnly cookie hay mobile secure storage) chưa chốt. | Ảnh hưởng CORS credentials, CSRF policy và frontend interceptor. | Frontend + Security |
 | 5 | Redis dùng chung cho rate limit; topology HA, password/TLS, eviction policy và failure policy chưa chốt. | Ảnh hưởng availability và việc fail-closed khi Redis lỗi. | DevOps |
-| 6 | CORS allowlist thật cho Buyer Web, Seller Center và Admin Console chưa được cung cấp. | Nếu cấu hình sai, frontend bị chặn hoặc vô tình mở public origin. | Frontend/DevOps |
+| 6 | CORS allowlist thật cho các ứng dụng Micro-Frontends (`mfe-shell`, `mfe-buyer`, `mfe-seller`, `mfe-admin`) chưa được cung cấp. | Nếu cấu hình sai, frontend bị chặn hoặc vô tình mở public origin. | Frontend/DevOps |
 | 7 | Internal service có được truy cập trực tiếp bằng IP hay bắt buộc mTLS/network policy chưa chốt. | Nếu header context bị tin tuyệt đối, client có thể bypass qua đường nội bộ. | Security/DevOps |
-| 8 | Message v1 hiện dùng REST; WebSocket/SSE cho realtime conversation chưa có trong HLD/Penpot contract. | Nếu cần realtime, phải bổ sung gateway protocol, connection auth và timeout khác. | Product + frontend |
-| 9 | Exact ownership của một số route như `/shops/**`, `/vouchers/**`, `/notifications/**` cần align trong API spec từng service. | Route nhầm upstream gây duplicate API hoặc sai source of truth. | Backend leads |
+| 8 | Message v1 dùng REST **và** WebSocket `/ws/messages`; Gateway validate JWT ở handshake, proxy TCP upgrade, không buffer/không retry/không tự reconnect. SSE không dùng trong v1. Subprotocol handshake (`Sec-WebSocket-Protocol`) cần Message Service xác nhận format token. | Nếu Message Service đổi handshake/subprotocol hoặc thêm SSE, phải cập nhật `ws-proxy` contract. | Product + frontend + Message owner |
+| 9 | Route ownership đã chốt: `/api/v1/shops/{id}` + `/api/v1/shops/{id}/follow` → `auth-user`; `/api/v1/shops/{id}/products` → `product-catalog`; `/api/v1/vouchers/**` (buyer validate) + `/api/v1/seller/vouchers/**` + `/api/v1/admin/vouchers/**` → `order-commerce`; `/api/v1/seller/wallet/**` + `/api/v1/seller/payouts/**` + `/api/v1/seller/revenue` + `/api/v1/admin/fees/**` + `/api/v1/admin/taxes/**` + `/api/v1/admin/settlements/**` + `/api/v1/admin/finance/**` → `payment-wallet`; `/api/v1/admin/catalog/**` → `product-catalog`; `/api/v1/admin/users/**` + `/api/v1/admin/shops/**` → `auth-user`; `/api/v1/notifications/**` → `notification`. | Route nhầm upstream gây duplicate API hoặc sai source of truth. | Backend leads |
+| 13 | Phạm vi Admin/back-office đã chốt (xem `System_Overview.md` §6.3): v1 **không thêm microservice**; mỗi màn admin đi qua `/api/v1/admin/**` trên service sở hữu dữ liệu. `dispute` và `campaign` là service riêng ở v1.1 — khi có, Gateway thêm route family mới `/api/v1/admin/disputes/**` và `/api/v1/admin/campaigns/**`. | Nếu sau này tách service admin gộp, phải thiết kế lại route + auth model. | Architecture owner |
 | 10 | Observability backend/exporter và retention chưa được chỉ định; LLD chỉ chuẩn hóa adapter/field. | Ảnh hưởng dashboard, alert, trace sampling và chi phí lưu log. | Platform/DevOps |
 | 11 | V1 không cache business response và không tự phát business event. | Nếu cần CDN/cache hoặc audit event qua Kafka, cần thêm module và contract. | Architecture owner |
 | 12 | Error envelope `{error:{code,message,details,trace_id}}` là contract áp dụng thống nhất cho toàn bộ Gateway và upstream services. | Đảm bảo tính nhất quán trên toàn bộ hệ thống API. | Backend leads |

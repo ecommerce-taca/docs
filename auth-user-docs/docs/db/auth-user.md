@@ -53,6 +53,8 @@ users ──1:n──► addresses
   │             └──1:n──► kyc_cases ──1:n──► kyc_documents
   │
   ├──1:1──► two_factor_credentials ──1:n──► two_factor_recovery_codes
+  ├──1:n──► favorites            (reference product_id, không FK)
+  ├──1:n──► shop_follows ──n:1──► shops
   └──1:n──► mfa_challenges / login_attempts / audit_logs
 
 shops ──n:m──► users                         (qua shop_staff)
@@ -62,6 +64,9 @@ mọi domain event ──1:n──► outbox_events
 | Quan hệ | Kiểu | Khoá nội bộ | Khi cha bị xoá |
 |---|---|---|---|
 | `users → addresses` | 1:n | `addresses.user_id → users.id` | Không hard delete user; address soft delete. FK `RESTRICT`. |
+| `users → favorites` | 1:n | `favorites.user_id → users.id` | Xóa cứng row khi bỏ yêu thích. FK `RESTRICT`. `product_id` là reference, không FK. |
+| `users → shop_follows` | 1:n | `shop_follows.user_id → users.id` | Xóa cứng row khi unfollow. FK `RESTRICT`. |
+| `shops → shop_follows` | 1:n | `shop_follows.shop_id → shops.id` | Đếm follower theo `shop_id`. FK `RESTRICT`. |
 | `users → refresh_tokens` | 1:n | `refresh_tokens.user_id → users.id` | Revoke trước; cleanup job mới xóa token hết hạn. FK `RESTRICT`. |
 | `users → shops` | 1:n về mặt lịch sử, tối đa 1 onboarding/active shop ở v1 | `shops.owner_user_id → users.id` | Không hard delete; shop chuyển status. FK `RESTRICT`. |
 | `shops → seller_onboarding` | 1:1 | `seller_onboarding.shop_id → shops.id` | Xóa soft cùng shop nếu migration cleanup. FK `CASCADE` chỉ cho hard-delete test fixture. |
@@ -417,6 +422,39 @@ Không update/delete audit log qua application API.
 | `last_error_code` | `VARCHAR(64)` | Y | `NULL` | Sanitized | Không raw stack trace. |
 | `created_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | UTC. |
 
+### 3.21 `favorites` — sản phẩm yêu thích (wishlist) của user
+
+| Cột | Kiểu | Null | Default | Ràng buộc | Mô tả |
+|---|---|---:|---|---|---|
+| `id` | `BINARY(16)` | N | — | PK | UUIDv7. |
+| `user_id` | `BINARY(16)` | N | — | FK `users.id` (`RESTRICT`) | Chủ danh sách. |
+| `product_id` | `BINARY(16)` | N | — | Reference ID, **không FK** | Sản phẩm; Product Catalog là nguồn. |
+| `created_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | UTC. |
+
+Ràng buộc:
+
+- UNIQUE `(user_id, product_id)`; thêm trùng là idempotent (không lỗi).
+- Không soft delete; bỏ yêu thích xóa cứng row.
+- Không validate product tồn tại/visible; không đồng bộ khi product bị archive/block — frontend/BFF tự lọc khi hydrate qua Product Catalog.
+- Tối đa `MAX_FAVORITES_PER_USER = 500` row/user (đếm trong transaction trước insert).
+
+### 3.22 `shop_follows` — user theo dõi shop
+
+| Cột | Kiểu | Null | Default | Ràng buộc | Mô tả |
+|---|---|---:|---|---|---|
+| `id` | `BINARY(16)` | N | — | PK | UUIDv7. |
+| `user_id` | `BINARY(16)` | N | — | FK `users.id` (`RESTRICT`) | Người theo dõi. |
+| `shop_id` | `BINARY(16)` | N | — | FK `shops.id` (`RESTRICT`) | Shop được theo dõi (nội bộ `userdb`). |
+| `created_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | UTC. |
+
+Ràng buộc:
+
+- UNIQUE `(user_id, shop_id)`; follow trùng idempotent.
+- Chỉ cho follow shop `status != DELETED`.
+- Không soft delete; unfollow xóa cứng row.
+- Tối đa `MAX_FOLLOWED_SHOPS_PER_USER = 1000` row/user.
+- `follower_count` = `COUNT(*)` theo `shop_id` (có index); có thể thay bằng counter cache eventual sau nếu cần.
+
 ## 4. Index
 
 | Tên index | Bảng | Cột | Loại | Truy vấn/màn hình phục vụ |
@@ -466,6 +504,11 @@ Không update/delete audit log qua application API.
 | `ix_audit_actor_time` | `audit_logs` | `actor_user_id, occurred_at` | B-tree | Admin audit query. |
 | `ix_outbox_pending` | `outbox_events` | `published_at, failed_at, next_retry_at, created_at` | B-tree | Publisher polling. |
 | `ix_outbox_aggregate` | `outbox_events` | `aggregate_type, aggregate_id, created_at` | B-tree | Replay/order per aggregate. |
+| `uk_favorites_user_product` | `favorites` | `user_id, product_id` | UNIQUE | Chống trùng; upsert idempotent. |
+| `ix_favorites_user_created` | `favorites` | `user_id, created_at` | B-tree | List favorites sort mới nhất. |
+| `uk_shop_follows_user_shop` | `shop_follows` | `user_id, shop_id` | UNIQUE | Chống follow trùng. |
+| `ix_shop_follows_shop_created` | `shop_follows` | `shop_id, created_at` | B-tree | `follower_count`, danh sách follower. |
+| `ix_shop_follows_user_created` | `shop_follows` | `user_id, created_at` | B-tree | `GET /users/me/following`. |
 
 Không tạo index trên raw JSON `warehouse_snapshot`, `metadata` hoặc encrypted ciphertext nếu không có truy vấn thật.
 
@@ -531,8 +574,9 @@ Không tạo index trên raw JSON `warehouse_snapshot`, `metadata` hoặc encryp
 | 008 | Tạo `kyc_cases`, `kyc_documents` | `shops` |
 | 009 | Tạo `two_factor_credentials`, `two_factor_recovery_codes`, `mfa_challenges` | `users` |
 | 010 | Tạo `login_attempts`, `audit_logs`, `outbox_events` | `users` |
-| 011 | Thêm CHECK constraints, indexes và scheduled cleanup metadata | Tất cả bảng liên quan |
-| 012 | Seed RBAC baseline và permission matrix | `roles`, `permissions` |
+| 011 | Tạo `favorites`, `shop_follows` | `users`, `shops` |
+| 012 | Thêm CHECK constraints, indexes và scheduled cleanup metadata | Tất cả bảng liên quan |
+| 013 | Seed RBAC baseline và permission matrix | `roles`, `permissions` |
 
 Mỗi migration phải có `up` và `down` cho local/test. Production rollback destructive phải có migration kế tiếp hoặc backup plan; không drop bảng trực tiếp khi có dữ liệu thật.
 
@@ -545,6 +589,7 @@ Mỗi migration phải có `up` và `down` cho local/test. Production rollback d
 | KYC permissions | `KYC_READ`, `KYC_DECIDE`, `KYC_REQUEST_INFO`. |
 | User permissions | `USER_READ`, `USER_SUSPEND`, `ROLE_READ`, `ROLE_ASSIGN`. |
 | Seller permissions | `SHOP_READ`, `SHOP_UPDATE`, `SELLER_STAFF_MANAGE`. |
+| Cross-service admin scope | Permission `SEARCH_ADMIN` (search), `VOUCHER_MANAGE` (order-commerce) và role `FINANCE_OPS` (payment-wallet) cấp qua RBAC, enforce tại service sở hữu tài nguyên. Product moderation gate bằng role `CATALOG_ADMIN`. v1 không tách microservice admin (`System_Overview.md` §6.3). |
 | Seed admin account | Không seed password cố định; bootstrap job tạo invite/reset flow và bắt buộc bật 2FA. |
 | Feature/config | Không seed secret, private key, S3 credential, Kafka credential hoặc provider API key. |
 
@@ -572,4 +617,6 @@ Mỗi migration phải có `up` và `down` cho local/test. Production rollback d
 | 6 | `kyc_cases` chỉ enforce một case hiện hành bằng transaction/application lock, chưa dùng partial unique index. | Concurrent submit/review cần integration test và row lock đúng. | Backend lead |
 | 7 | `mfa_challenges` lưu MySQL thay vì Redis vì HLD chưa chốt Redis cho auth-user. | Có thể tăng DB write; đổi sang Redis sẽ cần TTL/HA contract. | Architecture owner |
 | 8 | Audit retention baseline 365 ngày; compliance retention dài hơn cần partition/archive policy riêng. | Ảnh hưởng storage cost và legal hold. | Security/Compliance |
+| 9 | `favorites`/`shop_follows` là bảng nhẹ, xóa cứng, không audit, không soft delete; `favorites.product_id` không FK. | Nếu cần lịch sử wishlist hoặc feed follower, phải thêm bảng event/soft-delete. | Product owner |
+| 10 | `follower_count` tính bằng `COUNT(*)` trên index `ix_shop_follows_shop_created`; chấp nhận eventual khi hiển thị. | Nếu shop có hàng triệu follower, chuyển sang counter cache/materialized. | Backend lead |
 | 9 | KYC object storage dùng private S3/MinIO, max 10 MiB/file và signed URL 10 phút; virus scan chưa có provider. | Ảnh hưởng trạng thái `SCANNING` và publish readiness. | Security/DevOps |
