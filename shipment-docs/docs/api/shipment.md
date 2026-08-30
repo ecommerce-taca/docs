@@ -32,23 +32,129 @@
 
 ### 3.1 Tracking read
 
-`GET /orders/{orderId}/shipment` trả shipment status, carrier, tracking code, safe timeline, shipping fee và estimated delivery. Buyer không thấy shipment của user khác. Seller route filter shop scope.
+`GET /orders/{orderId}/shipment` (buyer) và `GET /seller/orders/{orderId}/shipment` (seller) dùng chung response. Buyer không thấy shipment của user khác; seller route filter theo shop scope trong token.
+
+```json
+{
+  "data": {
+    "shipment_id": "shp-01912fb0",
+    "order_id": "order-01912f91",
+    "shop_id": "shop-01912f31",
+    "carrier": "GHN",
+    "tracking_code": "GHN123456789",
+    "status": "IN_TRANSIT",
+    "shipping_fee": 32000,
+    "currency": "VND",
+    "estimated_delivery": { "min_date": "2026-09-01", "max_date": "2026-09-03" },
+    "timeline": [
+      { "status": "CREATED",    "occurred_at": "2026-08-30T09:05:00Z", "source": "SYSTEM",  "note": null },
+      { "status": "PICKED_UP",  "occurred_at": "2026-08-31T02:10:00Z", "source": "CARRIER", "note": "Đã lấy hàng" },
+      { "status": "IN_TRANSIT", "occurred_at": "2026-08-31T08:00:00Z", "source": "CARRIER", "note": "Đang trung chuyển" }
+    ],
+    "version": 3,
+    "created_at": "2026-08-30T09:05:00Z"
+  },
+  "meta": { "request_id": "01912fb1-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`timeline` chỉ chứa trạng thái an toàn — **không** trả địa chỉ thô, số điện thoại tài xế, hay payload carrier gốc. Đơn chưa tạo vận đơn → `404 SHIPMENT_NOT_FOUND` (không trả object rỗng).
 
 ### 3.2 `GET /internal/shipping/quote`
 
-Query/body gồm shop origin, destination snapshot, items weight/dimensions, carrier `GHN|MOCK`. Response `200` `{fee,currency:"VND",estimate,quote_expires_at}`. Không tạo shipment; address max 16 KiB và không log raw.
+| Query | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `from_shop_id` | string | Có | — |
+| `to_address_id` | string | Có | Snapshot địa chỉ ≤ 16 KiB |
+| `items` | array | Có | `{sku_id, quantity, weight_gram?, length_cm?, width_cm?, height_cm?}`, ≤100 dòng |
+| `carrier` | enum | Không | `GHN` \| `MOCK`, mặc định `GHN` |
+
+```json
+{
+  "data": {
+    "fee": 32000,
+    "currency": "VND",
+    "carrier": "GHN",
+    "estimate": { "min_days": 2, "max_days": 4 },
+    "quote_expires_at": "2026-08-30T09:30:00Z"
+  },
+  "meta": { "request_id": "01912fb2-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Không tạo shipment. Không log địa chỉ thô. Quote hết hạn không chặn tạo shipment — phí thật chốt tại `POST /internal/shipments`.
 
 ### 3.3 `POST /internal/shipments`
 
-Headers Idempotency-Key. Request `{order_id,shop_id,buyer_user_id,carrier,from_address_snapshot,to_address_snapshot,items[]}`. Response `201` shipment `CREATED`, tracking code và external ID. Mỗi shop-order một shipment; duplicate trả shipment cũ. Carrier timeout không retry blind create; state `PENDING_RECONCILIATION`.
+Headers: `Idempotency-Key` bắt buộc.
+
+```json
+{
+  "order_id": "order-01912f91",
+  "shop_id": "shop-01912f31",
+  "buyer_user_id": "usr-01912f10",
+  "carrier": "GHN",
+  "from_address_snapshot": {
+    "contact_name": "Anker Official", "phone": "0900000000",
+    "line1": "Kho A, 15 Lê Lợi", "ward": "Bến Thành", "district": "Quận 1", "province": "TP.HCM"
+  },
+  "to_address_snapshot": {
+    "contact_name": "Nguyễn Văn A", "phone": "0912345678",
+    "line1": "12 Nguyễn Huệ", "ward": "Bến Nghé", "district": "Quận 1", "province": "TP.HCM"
+  },
+  "items": [{ "sku_id": "sku-01912f33", "title": "Sạc Anker 65W", "quantity": 2, "weight_gram": 300 }],
+  "cod_amount": 0,
+  "shipping_fee": 32000
+}
+```
+
+Response `201`:
+
+```json
+{
+  "data": {
+    "shipment_id": "shp-01912fb0",
+    "order_id": "order-01912f91",
+    "carrier": "GHN",
+    "tracking_code": "GHN123456789",
+    "external_id": "5e2f1a9c",
+    "status": "CREATED",
+    "shipping_fee": 32000,
+    "version": 1
+  },
+  "meta": { "request_id": "01912fb3-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Mỗi shop-order **một** shipment; gọi trùng trả shipment cũ (`200`, không tạo mới). `cod_amount > 0` chỉ hợp lệ khi order dùng COD. Carrier timeout → **không** retry create một cách mù quáng: shipment vào `PENDING_RECONCILIATION`, job đối soát sẽ tra theo `Idempotency-Key`/`order_id`.
 
 ### 3.4 Cancel
 
-`POST /internal/shipments/{id}/cancel` body `{reason,version}`; chỉ trước `PICKED_UP`, gọi carrier cancel idempotently, state `CANCELLED` khi carrier confirmation/policy đạt. Không refund/payment trực tiếp.
+`POST /internal/shipments/{shipmentId}/cancel` body `{ "reason": "BUYER_CANCELLED", "version": 1 }`.
+
+Chỉ hợp lệ trước `PICKED_UP` → sau đó `409 SHIPMENT_STATE_INVALID`. `version` lệch → `409`. Gọi carrier cancel idempotently; state về `CANCELLED` khi carrier xác nhận hoặc theo policy timeout. **Không** chạm refund/payment — đó là việc của Order/Payment.
 
 ### 3.5 `POST /webhooks/shipping/{carrier}`
 
-Không JWT; verify carrier signature/IP/secret, unique `external_event_id`, map status và transaction timeline/event publishing. Status cũ lưu ignored diagnostic, không lùi state; không mfe-buyer/mfe-seller set delivered.
+Không JWT. Bắt buộc: verify chữ ký carrier + IP allowlist, và `external_event_id` unique.
+
+```json
+{
+  "external_event_id": "ghn-evt-88213",
+  "tracking_code": "GHN123456789",
+  "status": "DELIVERED",
+  "occurred_at": "2026-09-01T04:22:10Z",
+  "note": "Giao thành công",
+  "signature": "<carrier-signature>"
+}
+```
+
+Response `200 {"data":{"accepted":true}}`. Quy tắc:
+- Event trùng `external_event_id` → `200` idempotent, không xử lý lại.
+- Status **cũ hơn** state hiện tại → ghi log diagnostic `ignored`, **không lùi state**.
+- Chữ ký sai → `400 SHIPMENT_WEBHOOK_INVALID`, không đổi state.
+- Chỉ carrier được set `DELIVERED`; buyer/seller UI **không** có đường set trạng thái này.
+- Map status carrier → state nội bộ qua bảng ánh xạ trong LLD; status lạ → lưu raw đã redact + cảnh báo, không tự đoán.
 
 ### 3.6 Health
 

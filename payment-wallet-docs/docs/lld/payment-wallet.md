@@ -169,7 +169,8 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `SUCCESS → PARTIALLY_REFUNDED/RE
 |---|---|---|
 | Order-Commerce | `order.created`, `order.cancelled` | Create payment intent/release pending payment/refund policy. |
 | Shipment | `shipment.delivered`, `shipment.failed` | COD collection confirmation hoặc hold. |
-| Auth User | `shop.kyc.approved/expired/suspended` | Local payout/withdraw gate projection. |
+| Auth User | `shop.kyc.approved`, `shop.kyc.expired` | Local payout/withdraw gate projection (KYC phải `APPROVED` mới cho payout). |
+| Auth User | `shop.status_changed` | Shop `SUSPENDED`/`CLOSED` → khoá payout/withdraw. Không có event `shop.kyc.suspended`; đình chỉ shop đến qua `shop.status_changed`. |
 
 ### 6.3 Mock contract — VNPAY webhook
 

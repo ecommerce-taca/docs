@@ -189,22 +189,31 @@ Order state là source of truth của Order-Commerce; payment/shipment/inventory
 | Nguồn | Event | Xử lý |
 |---|---|---|
 | Payment-Wallet | `payment.succeeded`, `payment.failed`, `payment.refunded` | Update payment projection, transition order, commit/release Inventory. |
-| Inventory | `inventory.reservation.confirmed/rejected/expired`, `inventory.stock_committed` | Reconcile order intent/reservation; không tự sửa quantity. |
+| Inventory | `inventory.reservation.created`, `inventory.reservation.committed`, `inventory.reservation.released`, `inventory.reservation.expired` | Reconcile order intent/reservation; không tự sửa quantity. Tên event lấy đúng catalog của Inventory — **không có** `reservation.confirmed`/`reservation.rejected`/`stock_committed`: reserve thành công/thất bại là kết quả **đồng bộ** của `POST /internal/inventory/reservations`, event chỉ dùng để reconcile khi mất response. |
 | Shipment | `shipment.created`, `shipment.status_changed` | Update shipment projection/order status. |
 | Auth User | `user.status_changed` (mock policy) | Chặn hành động account mới nếu suspended; không đổi order history. |
 
-### 6.3 Mock contract — Inventory reserve request
+### 6.3 Contract — Inventory reserve request
+
+Contract thật do Inventory sở hữu (`inventory-docs/docs/api/inventory.md` §3.2). Correlation đi ở **header**, không nằm trong body; item chỉ có `sku_id` + `quantity` (Inventory không nhận `product_id`).
+
+```http
+POST /internal/inventory/reservations
+Idempotency-Key: checkout-intent-01912f81
+X-Request-ID: 01912f80-7a1b-7c12-9c55-8b1c34a6d921
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+Content-Type: application/json
+```
 
 ```json
 {
-  "request_id": "01912f80-7a1b-7c12-9c55-8b1c34a6d921",
-  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-  "idempotency_key": "checkout-intent-01912f81",
   "order_intent_id": "intent-01912f81",
   "expires_at": "2026-08-30T09:15:00Z",
-  "items": [{"sku_id": "sku-01912f33", "product_id": "product-01912f31", "quantity": 2}]
+  "items": [{ "sku_id": "sku-01912f33", "quantity": 2 }]
 }
 ```
+
+Response `201`: `{ "data": { "reservation_id", "status": "RESERVED", "expires_at", "items": [...] } }`. Commit/release theo `POST /internal/inventory/reservations/{id}/commit|release`. `expires_at` do Order đặt phải khớp `INVENTORY_RESERVATION_TTL` (15 phút) đã align với Inventory.
 
 ## 7. Mã lỗi
 

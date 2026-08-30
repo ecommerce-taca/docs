@@ -34,11 +34,73 @@
 
 ### 3.1 `GET /products/{productId}/reviews`
 
-Query `rating?`, `with_media?`, `page`, `size`, `sort` (`newest`,`rating_desc`). Response `200` gồm review published, seller reply nếu có, aggregate `{avg,count,distribution}`. Deleted/hidden không public.
+Query `rating?` (1–5), `with_media?` (bool), `page`, `size` (max 100), `sort` (`newest` | `rating_desc`). Review `DELETED`/`HIDDEN` không xuất hiện public.
+
+```json
+{
+  "data": {
+    "aggregate": {
+      "avg": 4.6,
+      "count": 128,
+      "distribution": { "1": 2, "2": 3, "3": 8, "4": 30, "5": 85 }
+    },
+    "reviews": [
+      {
+        "review_id": "rv-01912fd0",
+        "product_id": "product-01912f31",
+        "sku_id": "sku-01912f33",
+        "variant_label": "Đen / 65W",
+        "rating": 5,
+        "comment": "Sạc nhanh, đóng gói kỹ.",
+        "media": [
+          { "media_id": "rm-1", "url": "https://cdn.taca.vn/r/rm-1.webp", "type": "IMAGE", "status": "READY" }
+        ],
+        "author": { "display_name": "Nguyễn V. A", "avatar_url": null },
+        "is_verified_purchase": true,
+        "seller_reply": {
+          "content": "Cảm ơn bạn đã ủng hộ shop ạ!",
+          "replied_at": "2026-08-28T02:00:00Z"
+        },
+        "created_at": "2026-08-27T10:00:00Z",
+        "edited_at": null
+      }
+    ]
+  },
+  "meta": { "request_id": "01912fd1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 128 }
+}
+```
+
+`author.display_name` đã được rút gọn (`Nguyễn V. A`) — **không** trả `user_id`, email, phone. Media `SCANNING` bị loại khỏi response public.
 
 ### 3.2 `POST /products/{productId}/reviews`
 
-Body `{order_id,sku_id,rating,comment,media_ids[]}`. Server verify buyer/order item/product/delivered và unique key; rating 1–5, comment max 5.000, media max 6. Response `201` review `PUBLISHED` + aggregate. Không qua approval queue.
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `order_id` | string | Có | Order phải `DELIVERED` và thuộc buyer trong token |
+| `sku_id` | string | Có | Phải nằm trong order item của `order_id` |
+| `rating` | int | Có | 1–5 |
+| `comment` | string | Không | ≤ 5.000 ký tự |
+| `media_ids` | string[] | Không | ≤ 6, phải `READY` |
+
+```json
+{
+  "data": {
+    "review_id": "rv-01912fd2",
+    "product_id": "product-01912f31",
+    "sku_id": "sku-01912f33",
+    "rating": 5,
+    "comment": "Sạc nhanh, đóng gói kỹ.",
+    "status": "PUBLISHED",
+    "is_verified_purchase": true,
+    "version": 1,
+    "created_at": "2026-08-31T04:00:00Z",
+    "aggregate": { "avg": 4.6, "count": 129, "distribution": { "1": 2, "2": 3, "3": 8, "4": 30, "5": 86 } }
+  },
+  "meta": { "request_id": "01912fd3-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Một buyer chỉ review **một lần cho mỗi `(order_id, sku_id)`** — trùng trả `409 REVIEW_ALREADY_EXISTS`. Order chưa `DELIVERED` → `409 REVIEW_NOT_ELIGIBLE`. Review **published ngay**, không có hàng đợi duyệt. Sau khi ghi, service phát `rating.aggregate.updated` để Product Catalog và Search cập nhật (§6 LLD).
 
 ### 3.3 Update/delete
 

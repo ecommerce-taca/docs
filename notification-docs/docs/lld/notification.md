@@ -136,21 +136,42 @@ Retryable provider failure không mark `SENT`; duplicate completed event trả i
 | Shipment | `shipment.delivered`, `shipment.failed` | Review prompt/tracking update. |
 | Payment-Wallet | `payment.succeeded/failed`, `payout.succeeded/failed` | Payment/wallet notification. |
 
-### 6.2 Mock contract — notification command
+### 6.2 Contract — notification command
+
+Notification nhận **hai loại input, không được nhầm lẫn**:
+
+1. **Domain event** trên topic của service chủ (`order.events.v1`, `invoice.events.v1`, `shipment.events.v1`, `payment.events.v1`, `wallet.events.v1`) — Notification **tự** ánh xạ event → template. Producer không cần biết template.
+2. **Command** trên `notification.commands.v1` — dùng khi producer cần chỉ định rõ template/kênh (verification, reset password, OTP, message, review request). Command type hợp lệ chỉ gồm: `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED`, `MESSAGE_RECEIVED`, `REVIEW_REQUESTED`.
+
+> **Không có command `ORDER_SUCCESS`.** Email đơn hàng đến từ domain event `order.paid` (không phải command), Notification map sang template `order-success-v1`.
+
+Envelope command:
 
 ```json
 {
-  "event_id":"event-01912fb0",
-  "schema_version":1,
-  "command_type":"ORDER_SUCCESS",
-  "occurred_at":"2026-08-30T12:00:00Z",
-  "dedupe_key":"order-success:order-1:user-1",
-  "recipient":{"user_id":"user-1","email":"masked-at-runtime"},
-  "channels":["EMAIL","IN_APP"],
-  "template":"order-success-v1",
-  "data":{"order_id":"order-1","invoice_id":"invoice-1","total_amount":249000,"currency":"VND"}
+  "event_id": "event-01912fb0",
+  "schema_version": 1,
+  "command_type": "AUTH_VERIFICATION_REQUESTED",
+  "occurred_at": "2026-08-30T12:00:00Z",
+  "dedupe_key": "auth-verification:user-1:token-01912fb1",
+  "recipient": { "user_id": "user-1", "email": "masked-at-runtime" },
+  "channels": ["EMAIL"],
+  "template": "auth-verification-v1",
+  "data": { "verification_url": "https://taca.vn/verify?t=…", "expires_in_minutes": 30 }
 }
 ```
+
+Ánh xạ domain event → template (Notification sở hữu bảng này):
+
+| Event nguồn | Template | Kênh |
+|---|---|---|
+| `order.paid` | `order-success-v1` | EMAIL + IN_APP |
+| `order.cancelled` | `order-cancelled-v1` | EMAIL + IN_APP |
+| `invoice.issued` | `invoice-issued-v1` | EMAIL |
+| `shipment.delivered` | `shipment-delivered-v1` | IN_APP |
+| `shipment.failed` | `shipment-failed-v1` | EMAIL + IN_APP |
+| `payment.succeeded` / `payment.failed` | `payment-result-v1` | EMAIL + IN_APP |
+| `payout.succeeded` / `payout.failed` | `payout-result-v1` | EMAIL + IN_APP |
 
 Payload producer không gửi password/token/card; consumer phải reject field ngoài allowlist.
 

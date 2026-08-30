@@ -42,12 +42,84 @@ WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event nam
 - `POST /conversations`: body `{type,participant_user_ids[],shop_id?,context_type?,context_id?}`; server kiểm tra participant/scope và deterministic key; không cho arbitrary admin injection.
 - `GET /conversations/{id}`: trả participants safe, context label/reference, last sequence/time, unread count; không trả private account data.
 
+`GET /conversations` response:
+
+```json
+{
+  "data": [
+    {
+      "conversation_id": "cv-01912fc0",
+      "type": "BUYER_SELLER",
+      "status": "OPEN",
+      "shop": { "shop_id": "shop-01912f31", "shop_name": "Anker Official", "logo_url": "https://cdn.taca.vn/s/anker.webp" },
+      "participants": [
+        { "user_id": "usr-01912f10", "display_name": "Nguyễn Văn A", "role": "BUYER" },
+        { "user_id": "usr-01912f20", "display_name": "Anker Official", "role": "SELLER" }
+      ],
+      "context": { "type": "ORDER", "id": "order-01912f91", "label": "Đơn TC-20260830-0001" },
+      "last_message": { "sequence": 42, "preview": "Shop gửi hàng chưa ạ?", "sender_user_id": "usr-01912f10", "created_at": "2026-08-31T03:00:00Z" },
+      "unread_count": 2
+    }
+  ],
+  "meta": { "request_id": "01912fc1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 5 }
+}
+```
+
+`participants` chỉ trả `display_name` + `role` — **không** trả email/phone/địa chỉ. `preview` cắt ≤120 ký tự và redact nếu message bị xoá.
+
 ### 3.2 Message history/send
 
-- `GET /conversations/{id}/messages?after_sequence=&before_sequence=&limit=`: cursor bounded, ordered sequence; reconnect dùng `after_sequence`.
-- `POST /conversations/{id}/messages` header Idempotency-Key, body `{client_message_id?,body?,attachment_ids[]}`; body max 5.000, attachment max 6, ít nhất một body/attachment; response `201` sequence/message ID.
-- `PATCH /messages/{id}` body `{version,body,attachment_ids[]}`; sender + edit window 15 phút baseline.
-- `DELETE /messages/{id}` body `{version}`; soft delete placeholder.
+`GET /conversations/{id}/messages?after_sequence=&before_sequence=&limit=` — cursor theo `sequence` tăng dần trong conversation (`limit` mặc định 50, max 100). Reconnect WebSocket dùng `after_sequence` để lấy phần bị miss.
+
+```json
+{
+  "data": [
+    {
+      "message_id": "msg-01912fc5",
+      "conversation_id": "cv-01912fc0",
+      "sequence": 42,
+      "sender_user_id": "usr-01912f10",
+      "body": "Shop gửi hàng chưa ạ?",
+      "attachments": [],
+      "status": "SENT",
+      "edited_at": null,
+      "deleted": false,
+      "created_at": "2026-08-31T03:00:00Z"
+    }
+  ],
+  "meta": { "request_id": "01912fc2-7a1b-7c12-9c55-8b1c34a6d921", "has_more": true, "next_after_sequence": 42 }
+}
+```
+
+`POST /conversations/{id}/messages` — header `Idempotency-Key` bắt buộc.
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `client_message_id` | string | Không | Dùng để khớp optimistic UI với `message_id` server trả |
+| `body` | string | Có nếu không có attachment | ≤ 5.000 ký tự |
+| `attachment_ids` | string[] | Có nếu không có body | ≤ 6 phần tử, phải ở trạng thái `READY` |
+
+```json
+{
+  "data": {
+    "message_id": "msg-01912fc6",
+    "client_message_id": "tmp-8821",
+    "conversation_id": "cv-01912fc0",
+    "sequence": 43,
+    "sender_user_id": "usr-01912f20",
+    "body": "Shop đã gửi hàng rồi ạ.",
+    "attachments": [],
+    "status": "SENT",
+    "created_at": "2026-08-31T03:05:00Z"
+  },
+  "meta": { "request_id": "01912fc3-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Gửi lại cùng `Idempotency-Key` trả **đúng message cũ**, không tạo `sequence` mới. Attachment chưa `READY` → `400 MESSAGE_ATTACHMENT_INVALID`.
+
+- `PATCH /messages/{id}` body `{version, body, attachment_ids[]}` — chỉ sender, trong cửa sổ sửa 15 phút; hết hạn → `409 MESSAGE_EDIT_EXPIRED`.
+- `DELETE /messages/{id}` body `{version}` — soft delete, giữ `sequence`, trả placeholder `deleted:true` và `body:null` cho mọi participant.
 
 ### 3.3 Read/realtime
 

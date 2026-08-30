@@ -535,9 +535,10 @@ Consumers phải xử lý idempotent theo `event_id`, kiểm tra `schema_version
 | Auth User | `shop.created` | Tạo shop snapshot để seller/product read. |
 | Auth User | `shop.updated` | Cập nhật name/slug/logo/business display snapshot. |
 | Auth User | `shop.status_changed` | Cập nhật shop status; không tự đổi product content. |
-| Auth User | `shop.kyc.approved/needs_info/rejected/expired/suspended` | Cập nhật KYC gate projection; chặn publish/resume nếu không APPROVED. |
+| Auth User | `shop.kyc.approved`, `shop.kyc.needs_info`, `shop.kyc.rejected`, `shop.kyc.expired` | Cập nhật KYC gate projection; chặn publish/resume nếu không APPROVED. Không có event `shop.kyc.suspended` — đình chỉ shop đến qua `shop.status_changed`. |
 | Inventory | `inventory.stock_snapshot.updated` | Upsert read-only SKU/product stock projection. |
-| Inventory | `inventory.sku.deleted/disabled` | Đánh dấu projection/source warning; không tự delete SKU catalog. |
+
+> **Không consume `inventory.sku.deleted/disabled`** (Inventory không phát event này). SKU là aggregate của Product Catalog: chiều dữ liệu là Product Catalog → Inventory qua `sku.created/updated/status_changed`. Inventory chỉ phát ngược lại *số lượng* (`inventory.stock_snapshot.updated`), không phát vòng đời SKU.
 
 ### 6.4 Mock contract — Inventory stock snapshot
 

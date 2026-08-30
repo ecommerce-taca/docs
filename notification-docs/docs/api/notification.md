@@ -35,9 +35,29 @@ Không có public endpoint để client tự gửi Email hoặc chọn template 
 
 ### 3.1 In-app list/count
 
-- `GET /notifications`: query `page,size,read_status,category`; chỉ recipient user hiện tại, newest-first; trả title/body safe, type, read status, created_at, reference IDs allowlist.
+- `GET /notifications`: query `page`, `size` (max 100), `read_status` (`ALL`|`READ`|`UNREAD`), `category`; chỉ recipient hiện tại, newest-first.
 - `GET /notifications/unread-count`: `200 {data:{unread_count},meta}`; count không âm.
-- Empty list là `200 data=[]`, không phải 404.
+- Empty list là `200 data=[]`, **không phải** `404`.
+
+```json
+{
+  "data": [
+    {
+      "notification_id": "ntf-01912fe0",
+      "category": "ORDER",
+      "template": "order-success-v1",
+      "title": "Đặt hàng thành công",
+      "body": "Đơn TC-20260830-0001 đã được thanh toán.",
+      "reference": { "type": "ORDER", "id": "order-01912f91" },
+      "read": false,
+      "created_at": "2026-08-30T09:03:20Z"
+    }
+  ],
+  "meta": { "request_id": "01912fe1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 12, "unread_count": 3 }
+}
+```
+
+`reference.type` nằm trong allowlist `ORDER | SHIPMENT | PAYMENT | REVIEW | CONVERSATION | SHOP` — client dùng để deep-link. **Không** trả email/phone người nhận, không trả nội dung email thô.
 
 ### 3.2 Mark read
 
@@ -46,7 +66,23 @@ Không có public endpoint để client tự gửi Email hoặc chọn template 
 
 ### 3.3 Preferences
 
-`GET` trả channel/category status. `PUT` body `{channel:"EMAIL",category:"ORDER",status:"DISABLED"}`; security-critical Auth command có thể không opt-out theo policy; client không tạo category/template mới.
+```json
+{
+  "data": {
+    "preferences": [
+      { "category": "ORDER",    "channel": "EMAIL",  "status": "ENABLED",  "locked": false },
+      { "category": "ORDER",    "channel": "IN_APP", "status": "ENABLED",  "locked": false },
+      { "category": "MARKETING","channel": "EMAIL",  "status": "DISABLED", "locked": false },
+      { "category": "SECURITY", "channel": "EMAIL",  "status": "ENABLED",  "locked": true }
+    ]
+  },
+  "meta": { "request_id": "01912fe2-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`PUT /notifications/preferences` body `{ "channel": "EMAIL", "category": "MARKETING", "status": "DISABLED" }`.
+
+`locked: true` = **không được opt-out** (category `SECURITY`: verification, reset password, OTP, cảnh báo đăng nhập) — cố tình tắt trả `403 NOTIFICATION_PREFERENCE_LOCKED`. Client **không** tạo được `category`/`template` mới; giá trị ngoài enum → `400`.
 
 ### 3.4 Admin delivery
 
@@ -54,7 +90,14 @@ Không có public endpoint để client tự gửi Email hoặc chọn template 
 
 ### 3.5 Internal command contract
 
-Kafka command `ORDER_SUCCESS`, `INVOICE_ISSUED`, `SHIPMENT_DELIVERED`, `PASSWORD_RESET_REQUESTED` có event ID, dedupe key, template key, allowlisted data; consumer persist rồi dispatch Email/In-app. Producer không gọi public API để bypass dedupe.
+Notification nhận **hai loại input** (chi tiết ở LLD §6.2):
+
+1. **Domain event** trên topic của service chủ — `order.paid`, `order.cancelled`, `invoice.issued`, `shipment.delivered`, `shipment.failed`, `payment.succeeded/failed`, `payout.succeeded/failed`. Notification **tự** map event → template; producer không cần biết template.
+2. **Command** trên `notification.commands.v1` — chỉ gồm `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED`, `MESSAGE_RECEIVED`, `REVIEW_REQUESTED`.
+
+> **Không có command `ORDER_SUCCESS`** — email đơn hàng đến từ domain event `order.paid`, map sang template `order-success-v1`.
+
+Mọi input có `event_id`, `dedupe_key`, `schema_version` và data theo allowlist; consumer persist rồi mới dispatch. Producer **không** được gọi public API để bypass dedupe.
 
 ### 3.6 Health
 
@@ -70,6 +113,7 @@ Kafka command `ORDER_SUCCESS`, `INVOICE_ISSUED`, `SHIPMENT_DELIVERED`, `PASSWORD
 | `NOTIFICATION_NOT_FOUND` | 404 | Không tìm thấy. |
 | `NOTIFICATION_TEMPLATE_NOT_FOUND` | 409 | Template/version chưa có. |
 | `NOTIFICATION_CHANNEL_DISABLED` | 409 | Channel bị preference tắt. |
+| `NOTIFICATION_PREFERENCE_LOCKED` | 403 | Cố tắt category bắt buộc (`SECURITY`). |
 | `NOTIFICATION_PROVIDER_UNAVAILABLE` | 503 | MySQL/Kafka/SMTP down. |
 | `NOTIFICATION_DELIVERY_FAILED` | 503 | Gửi fail sau retry. |
 | `NOTIFICATION_IDEMPOTENCY_CONFLICT` | 409 | Dedupe key khác payload. |

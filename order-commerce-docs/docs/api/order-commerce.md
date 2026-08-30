@@ -58,17 +58,114 @@
 - `PUT /cart/items/{itemId}` request `{quantity}`; quantity `0` không dùng update, phải DELETE.
 - `DELETE /cart/items/{itemId}` trả `204`; item khác user trả `404 ORDER_CART_ITEM_NOT_FOUND` theo anti-enumeration policy.
 
-### 3.2 `GET /vouchers/validate?code=&cartId=`
+### 3.2 `GET /vouchers/validate?code=&cart_id=`
 
-Response `200` trả `valid`, discount, applicable shop/items, expires_at và warning. Đây là preview; redemption/usage limit phải kiểm tra lại trong checkout.
+Preview áp mã trên cart hiện tại. **Không** giữ chỗ voucher; `usage_limit`/redemption được kiểm tra lại (và tăng) trong `POST /checkout`.
+
+| Query | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `code` | string | Có | 1–32 ký tự, normalize uppercase/trim trước khi so |
+| `cart_id` | string (UUIDv7) | Có | Phải thuộc buyer trong token |
+
+```json
+{
+  "data": {
+    "valid": true,
+    "code": "SHOP10",
+    "scope": "SHOP",
+    "shop_id": "shop-01912f31",
+    "discount_type": "PERCENT",
+    "value": 10,
+    "discount_amount": 25000,
+    "applicable_item_ids": ["item-1", "item-2"],
+    "min_order": 200000,
+    "expires_at": "2026-09-30T16:59:59Z",
+    "warnings": []
+  },
+  "meta": { "request_id": "01912fa1-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOUND`/`EXPIRED`/`MIN_ORDER_NOT_MET`/`USAGE_LIMIT_REACHED`/`SCOPE_MISMATCH`) để UI hiển thị — **không** dùng `404` cho mã sai (tránh dò mã).
 
 ### 3.3 `GET /checkout/shipping-fee`
 
-Query `from_shop_id`, `to_address_id`, `items[]`; response `200` `{shipping_fee,currency,estimate}`. Address phải thuộc buyer; carrier calculation là Shipment contract/mock. Dependency down trả `503 ORDER_DEPENDENCY_UNAVAILABLE`.
+| Query | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `from_shop_id` | string | Có | — |
+| `to_address_id` | string | Có | Phải thuộc buyer, nếu không → `403 ORDER_FORBIDDEN` |
+| `items` | array | Có | `sku_id:quantity`, tối đa 100 dòng |
+
+```json
+{
+  "data": {
+    "shipping_fee": 32000,
+    "currency": "VND",
+    "estimate": { "min_days": 2, "max_days": 4 },
+    "quote_expires_at": "2026-08-30T09:30:00Z"
+  },
+  "meta": { "request_id": "01912fa2-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Giá lấy từ Shipment `GET /internal/shipping/quote`. Dependency down → `503 ORDER_DEPENDENCY_UNAVAILABLE` (UI phải cho retry, không tự đặt fee = 0).
 
 ### 3.4 `POST /checkout/preview`
 
-Request `{cart_id,selected_item_ids[],address_id,voucher_code?}`. Re-read Product price/status, Inventory availability read-only, validate voucher và shipping; response gồm `checkout_group_id`, item price snapshot preview, subtotal/discount/shipping/tax/grand_total, warnings và `expires_at`. Không reserve/charge.
+Tính lại toàn bộ tiền trước khi đặt. **Không reserve kho, không charge.**
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `cart_id` | string | Có | Thuộc buyer |
+| `selected_item_ids` | string[] | Có | 1–100 phần tử, thuộc cart |
+| `address_id` | string | Có | Thuộc buyer |
+| `voucher_code` | string | Không | — |
+
+```json
+{
+  "data": {
+    "checkout_group_id": "group-01912f90",
+    "shops": [
+      {
+        "shop_id": "shop-01912f31",
+        "shop_name": "Anker Official",
+        "items": [
+          {
+            "item_id": "item-1",
+            "product_id": "product-01912f31",
+            "sku_id": "sku-01912f33",
+            "title": "Sạc Anker 65W",
+            "variant_label": "Đen / 65W",
+            "unit_price": 590000,
+            "quantity": 2,
+            "line_total": 1180000,
+            "available_qty": 7
+          }
+        ],
+        "subtotal": 1180000,
+        "shipping_fee": 32000,
+        "discount": 118000,
+        "shop_total": 1094000
+      }
+    ],
+    "summary": {
+      "subtotal": 1180000,
+      "shipping_fee": 32000,
+      "discount": 118000,
+      "tax": 0,
+      "grand_total": 1094000,
+      "currency": "VND"
+    },
+    "warnings": [
+      { "code": "PRICE_CHANGED", "item_id": "item-1", "old_price": 620000, "new_price": 590000 }
+    ],
+    "expires_at": "2026-08-30T09:10:00Z"
+  },
+  "meta": { "request_id": "01912fa3-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`warnings` không chặn đặt hàng; UI phải hiển thị để buyer xác nhận lại. Mã warning: `PRICE_CHANGED`, `STOCK_LOW`, `ITEM_UNAVAILABLE`, `VOUCHER_NOT_APPLICABLE`. Item `ITEM_UNAVAILABLE` sẽ bị loại khỏi `POST /checkout`.
 
 ### 3.5 `POST /checkout`
 
@@ -94,11 +191,69 @@ Order revalidates Product/price, calls Inventory atomic reserve, then commits lo
 
 ### 3.6 Buyer order endpoints
 
-- `GET /orders`: query status/page/size; chỉ buyer own orders.
-- `GET /orders/{id}`: trả item/title/price/address/payment/shipment snapshot theo policy; không query lại giá Product.
+- `GET /orders`: query `status?`, `page`, `size` (max 100); chỉ buyer own orders.
+- `GET /orders/{id}`: trả snapshot; **không** query lại giá Product.
 - `GET /orders/{id}/status`: status + timeline từ Order/Shipment events.
-- `PATCH /orders/{id}/cancel` headers Idempotency-Key, body `{reason,version}`; chỉ trước shipping, release Inventory/refund compensation theo payment state.
+- `PATCH /orders/{id}/cancel` headers `Idempotency-Key`, body `{reason, version}`; chỉ trước shipping, release Inventory/refund compensation theo payment state.
 - `GET /orders/{id}/invoice`: `200` nếu issued; `409 ORDER_INVOICE_NOT_READY` nếu pending.
+
+`GET /orders/{orderId}` response:
+
+```json
+{
+  "data": {
+    "order_id": "order-01912f91",
+    "order_number": "TC-20260830-0001",
+    "checkout_group_id": "group-01912f90",
+    "status": "PENDING_PAYMENT",
+    "version": 1,
+    "shop": { "shop_id": "shop-01912f31", "shop_name": "Anker Official" },
+    "items": [
+      {
+        "order_item_id": "oi-1",
+        "product_id": "product-01912f31",
+        "sku_id": "sku-01912f33",
+        "title_snapshot": "Sạc Anker 65W",
+        "variant_label_snapshot": "Đen / 65W",
+        "unit_price_snapshot": 590000,
+        "quantity": 2,
+        "line_total": 1180000
+      }
+    ],
+    "address_snapshot": {
+      "recipient_name": "Nguyễn Văn A",
+      "phone_masked": "09****678",
+      "line1": "12 Nguyễn Huệ",
+      "ward": "Bến Nghé", "district": "Quận 1", "province": "TP.HCM"
+    },
+    "payment": { "method": "VNPAY", "status": "PENDING", "payment_id": "payment-01912f95" },
+    "shipment": { "status": "NOT_CREATED", "carrier": null, "tracking_code": null },
+    "amounts": { "subtotal": 1180000, "shipping_fee": 32000, "discount": 118000, "tax": 0, "grand_total": 1094000, "currency": "VND" },
+    "created_at": "2026-08-30T09:00:00Z"
+  },
+  "meta": { "request_id": "01912fa4-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Mọi field `*_snapshot` là bản chụp tại thời điểm đặt hàng — **không** đồng bộ khi Product/Address đổi về sau. `phone_masked` không bao giờ trả số đầy đủ ở list; detail chỉ trả cho chính buyer và seller sở hữu đơn.
+
+`GET /orders/{orderId}/status` response:
+
+```json
+{
+  "data": {
+    "order_id": "order-01912f91",
+    "status": "SHIPPED",
+    "timeline": [
+      { "status": "PENDING_PAYMENT", "occurred_at": "2026-08-30T09:00:00Z", "source": "ORDER" },
+      { "status": "PAID", "occurred_at": "2026-08-30T09:03:12Z", "source": "PAYMENT" },
+      { "status": "PROCESSING", "occurred_at": "2026-08-30T09:05:00Z", "source": "SELLER" },
+      { "status": "SHIPPED", "occurred_at": "2026-08-31T02:10:00Z", "source": "SHIPMENT" }
+    ]
+  },
+  "meta": { "request_id": "01912fa5-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
 
 ### 3.7 Seller order/voucher endpoints
 

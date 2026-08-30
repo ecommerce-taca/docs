@@ -45,26 +45,148 @@
 
 ### 3.1 `POST /payments`
 
-Internal request `{order_id,checkout_group_id,buyer_user_id,amount,currency:"VND",method:"VNPAY"|"COD",expires_at}`; client không được tự truyền trusted shop allocation. Header `Idempotency-Key` bắt buộc. Response `201` VNPAY trả `payment_id,status:PENDING,payment_url/qr_payload,expires_at`; COD trả `PENDING_COD`, không gọi provider.
+Header `Idempotency-Key` bắt buộc. Chỉ gọi từ Order-Commerce (internal scope) — client **không** được tự truyền allocation theo shop.
 
-Amount phải match Order contract; mismatch `409 PAYMENT_AMOUNT_MISMATCH`. Tạo URL không đồng nghĩa success.
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `order_id` | string | Có | — |
+| `checkout_group_id` | string | Có | Nhóm order multi-shop của cùng lần checkout |
+| `buyer_user_id` | string | Có | — |
+| `amount` | integer | Có | VND, > 0, **phải khớp** tổng của Order |
+| `currency` | string | Có | Cố định `"VND"` |
+| `method` | enum | Có | `VNPAY` \| `COD` |
+| `expires_at` | string | Có | ISO-8601 UTC |
+
+```json
+{
+  "data": {
+    "payment_id": "payment-01912f95",
+    "order_id": "order-01912f91",
+    "status": "PENDING",
+    "method": "VNPAY",
+    "amount": 1094000,
+    "currency": "VND",
+    "payment_url": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?…",
+    "qr_payload": "00020101021238…",
+    "expires_at": "2026-08-30T09:15:00Z"
+  },
+  "meta": { "request_id": "01912fa6-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+COD trả `status: "PENDING_COD"`, **không** có `payment_url`/`qr_payload` và không gọi provider. Amount lệch Order → `409 PAYMENT_AMOUNT_MISMATCH`. **Tạo được URL không đồng nghĩa đã thanh toán** — chỉ webhook đã verify mới chuyển `SUCCESS`.
 
 ### 3.2 `GET /payments/{paymentId}`
 
-Buyer chỉ xem payment của own order; seller chỉ xem allocation liên quan shop; admin/finance xem theo permission. Trả status, method, amount, provider reference masked, timestamps, không trả signature/secret.
+```json
+{
+  "data": {
+    "payment_id": "payment-01912f95",
+    "order_id": "order-01912f91",
+    "status": "SUCCESS",
+    "method": "VNPAY",
+    "amount": 1094000,
+    "currency": "VND",
+    "provider_ref_masked": "VNP****4821",
+    "paid_at": "2026-08-30T09:03:12Z",
+    "refunded_amount": 0,
+    "created_at": "2026-08-30T09:00:05Z"
+  },
+  "meta": { "request_id": "01912fa7-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Scope: buyer chỉ xem payment của order mình; seller chỉ xem phần allocation của shop mình; admin/finance theo permission. **Không bao giờ** trả signature, secret, hay payload provider thô.
 
 ### 3.3 `POST /payments/webhook`
 
-Không JWT; xác thực VNPAY signature/IP policy, unique provider event ID, amount/order/payment match. Callback success transactionally đổi payment + ledger + outbox `payment.succeeded`; duplicate ACK an toàn. Sai signature/amount không đổi state.
+Không JWT. Bắt buộc verify chữ ký VNPAY + IP policy, `provider_event_id` unique, và amount/order/payment khớp bản ghi nội bộ.
+
+```json
+{
+  "provider_event_id": "vnp-evt-77213",
+  "payment_id": "payment-01912f95",
+  "order_id": "order-01912f91",
+  "amount": 1094000,
+  "status": "SUCCESS",
+  "provider_ref": "VNP20260830004821",
+  "occurred_at": "2026-08-30T09:03:12Z",
+  "signature": "<vnpay-signature>"
+}
+```
+
+Response `200 {"data":{"accepted":true}}`. Quy tắc:
+- Success hợp lệ → **một transaction** đổi payment state + ghi ledger + ghi outbox `payment.succeeded`.
+- Trùng `provider_event_id` → ACK `200`, **không** ghi ledger lần hai.
+- Sai chữ ký → `400 PAYMENT_WEBHOOK_INVALID`, không đổi state.
+- Amount lệch → `409 PAYMENT_AMOUNT_MISMATCH`, không đổi state, ghi cảnh báo đối soát.
+- **Không tin amount từ webhook** — luôn so với intent nội bộ.
 
 ### 3.4 Refund
 
-`POST /payments/{paymentId}/refunds` body `{amount,reason,order_id}` + Idempotency-Key. Không vượt captured amount; response `202`/`200` theo provider. Payment state thành `PARTIALLY_REFUNDED` hoặc `REFUNDED` sau confirmation.
+`POST /payments/{paymentId}/refunds` + `Idempotency-Key`.
+
+```json
+{ "amount": 1094000, "reason": "BUYER_CANCELLED", "order_id": "order-01912f91" }
+```
+
+```json
+{
+  "data": {
+    "refund_id": "rf-01912fa8",
+    "payment_id": "payment-01912f95",
+    "amount": 1094000,
+    "status": "REQUESTED",
+    "payment_status_after": "REFUNDED"
+  },
+  "meta": { "request_id": "01912fa9-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Tổng refund **không vượt** số đã capture → `409 REFUND_AMOUNT_INVALID`. Refund một phần → payment `PARTIALLY_REFUNDED`; refund hết → `REFUNDED`. State cuối chỉ chốt sau xác nhận provider.
 
 ### 3.5 Seller wallet/ledger/revenue
 
-- `GET /seller/wallet`: trả `available_balance`, `pending_balance`, currency, wallet status, `as_of`.
-- `GET /seller/wallet/ledger`: page/size/date/type; chỉ ledger của shop, PII/payment credential masked.
+`GET /seller/wallet`:
+
+```json
+{
+  "data": {
+    "wallet_id": "wl-01912fb5",
+    "shop_id": "shop-01912f31",
+    "available_balance": 12500000,
+    "pending_balance": 3200000,
+    "currency": "VND",
+    "status": "ACTIVE",
+    "as_of": "2026-08-31T04:00:00Z"
+  },
+  "meta": { "request_id": "01912fb6-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+`pending_balance` = tiền đã ghi nhận nhưng chưa qua settlement (chưa rút được). `status` ∈ `ACTIVE | FROZEN | CLOSED`; `FROZEN` vẫn xem được số dư nhưng payout trả `403 WALLET_FROZEN`.
+
+`GET /seller/wallet/ledger?page=&size=&from=&to=&type=`:
+
+```json
+{
+  "data": [
+    {
+      "entry_id": "le-01912fb7",
+      "posting_id": "ps-01912fb8",
+      "entry_type": "CREDIT",
+      "amount": 1094000,
+      "balance_after": 12500000,
+      "reference": { "type": "ORDER", "id": "order-01912f91" },
+      "description": "Doanh thu đơn TC-20260830-0001",
+      "created_at": "2026-08-30T09:03:12Z"
+    }
+  ],
+  "meta": { "request_id": "01912fb9-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 340 }
+}
+```
+
+Ledger là **append-only** — không có endpoint sửa/xoá. Chỉ trả ledger của shop trong token; PII và thông tin thanh toán luôn masked.
 - `GET /seller/revenue?from=&to=&granularity=DAY|WEEK|MONTH`: báo cáo tổng hợp **read-only** trên `payment_allocations`/`ledger_entries` của shop (đáp ứng HLD #38 `/seller/revenue?range=`). Response:
 
 ```json
@@ -92,7 +214,28 @@ Ràng buộc: chỉ tổng hợp từ dữ liệu đã ghi (không tạo ledger 
 
 ### 3.6 `POST /seller/payouts`
 
-Body `{amount,bank_account_id,reason?}` + Idempotency-Key + step-up. Kiểm KYC projection approved, wallet active, available balance và minimum amount; reserve/debit wallet trước provider adapter. Response `202 REQUESTED`.
+Header `Idempotency-Key` + step-up 2FA. Body:
+
+```json
+{ "amount": 5000000, "bank_account_id": "ba-01912fc0", "reason": "Rút doanh thu tháng 8" }
+```
+
+```json
+{
+  "data": {
+    "payout_id": "po-01912fc1",
+    "shop_id": "shop-01912f31",
+    "amount": 5000000,
+    "currency": "VND",
+    "status": "REQUESTED",
+    "bank_account_masked": "VCB ****3021",
+    "requested_at": "2026-08-31T04:10:00Z"
+  },
+  "meta": { "request_id": "01912fc2-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+Response `202`. Điều kiện (kiểm theo đúng thứ tự này): KYC projection `APPROVED` → wallet `ACTIVE` → `amount` ≤ `available_balance` → `amount` ≥ ngưỡng tối thiểu. Sai điều kiện → `403 PAYOUT_NOT_ALLOWED` / `409 WALLET_INSUFFICIENT_BALANCE`. Wallet bị **debit trước** khi gọi bank adapter (tránh rút trùng); adapter fail thì hoàn lại bằng posting bù, không sửa ngược ledger cũ.
 
 ### 3.7 Reconciliation/health
 
@@ -108,8 +251,9 @@ Phục vụ các màn Penpot Admin *Fees/Taxes*, *Finance*, *Seller settlement*,
 - `AllocationService` luôn chọn version có `effective_from` ≤ thời điểm tạo allocation; đổi rate **không** hồi tố allocation/ledger đã ghi.
 - `PUT` với `effective_from` trong quá khứ → `409 FEE_CONFIG_INVALID`.
 
+`GET /admin/fees`:
+
 ```json
-// GET /admin/fees
 { "data": [
   { "version_id": "01J...", "scope": "PLATFORM", "category_id": null, "rate_bps": 700, "effective_from": "2026-09-01T00:00:00Z", "note": "Q4 baseline", "created_by": "usr_...", "created_at": "2026-08-30T10:00:00Z" }
 ], "meta": { "request_id": "01J..." } }

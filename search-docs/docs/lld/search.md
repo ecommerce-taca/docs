@@ -93,7 +93,7 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 
 1. Consumer nhận event với `event_id`, `aggregate_id`, `version`, `traceparent`.
 2. Kiểm schema/version, dedupe event và đọc current indexed version.
-3. `product.created/updated/published` → upsert document; `unpublished/blocked/archived` → đổi visibility hoặc delete logical.
+3. `product.created/updated/published` → upsert document; `unpublished/blocked/archived` → đổi visibility hoặc delete logical; `unblocked` → theo `next_status` (`ACTIVE` hiện lại, `INACTIVE` giữ ẩn).
 4. Bulk write index, cập nhật indexed version/event ID và metric lag.
 5. Lỗi retry tối đa 3 lần, backoff 2 giây; tiếp tục lỗi vào `search.events.dlq.v1`.
 
@@ -146,7 +146,7 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 
 | Topic | Event | Xử lý |
 |---|---|---|
-| `product.events.v1` | `product.created`, `product.updated`, `product.published`, `product.unpublished`, `product.blocked`, `product.archived` | Build/upsert/hide/delete logical document. |
+| `product.events.v1` | `product.created`, `product.updated`, `product.published`, `product.unpublished`, `product.blocked`, `product.unblocked`, `product.archived` | Build/upsert/hide/delete logical document. `product.unblocked` mang `next_status`: nếu `ACTIVE` thì hiển thị lại document, nếu `INACTIVE` thì giữ ẩn — không bỏ qua event này, nếu không sản phẩm được gỡ chặn sẽ không bao giờ quay lại index. |
 | `sku.events.v1` | `sku.created`, `sku.updated`, `sku.status_changed` | Cập nhật SKU/variant/price searchable. |
 | `category.events.v1` | `category.created`, `category.updated`, `category.status_changed` | Cập nhật category path/facet hoặc reindex affected docs. |
 | `catalog.events.v1` | `product.category_changed`, `product.media_updated`, `product.shop_snapshot_updated` | Reindex document affected. |
