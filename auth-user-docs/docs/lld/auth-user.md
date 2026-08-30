@@ -61,7 +61,7 @@ HTTP
 
 | Thành phần | Trách nhiệm | Ghi chú |
 |---|---|---|
-| `AuthController` | Sign up, sign in, refresh, sign out, verification, password reset, 2FA | Không trả password hoặc raw token persistence ra ngoài service. |
+| `AuthController` | Sign up, sign in, refresh, sign out, verification, password reset, 2FA, JWKS key set (`/.well-known/jwks.json`) | Không trả password hoặc raw token persistence ra ngoài service. |
 | `UserProfileController` | `GET/PUT /users/me` | Email đổi qua flow verification riêng; profile update không được tự đổi role. |
 | `AddressController` | CRUD address của user hiện tại | Mọi mutation phải kiểm tra `user_id` từ token, không tin `user_id` trong body. |
 | `SellerOnboardingController` | Tạo/cập nhật shop, KYC, warehouse, bank metadata | S3/MinIO chỉ lưu object; metadata và trạng thái thuộc `auth-user`. |
@@ -135,7 +135,9 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
   └─ không hợp lệ/không tìm thấy → cùng một lỗi 401, không tiết lộ account tồn tại
   ↓
 3 Verify Argon2id password
-  ├─ sai: ghi login_attempt; đủ 5 lần trong 15 phút → LOCKED 15 phút
+  ├─ sai: ghi login_attempt (theo IP + identifier hash)
+  │    └─ 3 lần sai trên IP → kích hoạt CAPTCHA challenge
+  │    └─ 5 lần sai trong 15 phút → LOCKED 15 phút (cho phép tự mở khóa tức thì qua email unlock link)
   └─ đúng: reset failure counter
   ↓
 4 Nếu user có role admin và 2FA enabled → trả MFA_REQUIRED + challenge_id, chưa cấp access token
@@ -147,7 +149,7 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
 |---|---|
 | Email chưa verify | Được đăng nhập buyer; seller onboarding và các action yêu cầu verified email trả `403 AUTH_EMAIL_NOT_VERIFIED`. |
 | Phone chưa verify | Không được dùng phone làm identifier; yêu cầu verify OTP trước. |
-| `status=LOCKED` và `lock_until` chưa hết | `423 AUTH_ACCOUNT_LOCKED`, trả thời điểm retry theo ISO-8601. |
+| `status=LOCKED` và `lock_until` chưa hết | `423 AUTH_ACCOUNT_LOCKED`, trả thời điểm retry theo ISO-8601 kèm tùy chọn gửi email mở khóa tài khoản. |
 | `status=SUSPENDED` hoặc `DELETED` | `403 AUTH_ACCOUNT_SUSPENDED`; không cấp token. |
 | Admin thiếu 2FA | `401 AUTH_MFA_REQUIRED` với `challenge_id`, TTL challenge 5 phút. |
 
@@ -240,7 +242,7 @@ PUT  → validate full_name, phone?, date_of_birth?
 ```
 
 - Tối đa 20 address còn sống/user.
-- Không được xóa address cuối cùng nếu user đang có checkout session active; Order Service vẫn lưu snapshot riêng.
+- Order Service lưu `address_snapshot` riêng độc lập tại thời điểm đặt hàng/checkout; việc soft delete địa chỉ tại Auth User không ảnh hưởng đến đơn hàng đang xử lý.
 - `DELETE` id không thuộc user trả `404`, không trả `403` để tránh lộ resource.
 - Thay đổi address không sửa `address_snapshot` của order đã đặt.
 
@@ -437,21 +439,25 @@ ACTIVE ──5 failures/15m──► LOCKED ──lock_until reached──► AC
    └─user deletion──────────────────────────────────────► DELETED
 ```
 
-### 5.2 `ShopStatus` và KYC gate
+### 5.2 `ShopStatus`, `KycStatus` và KYC gate
 
-| Giá trị | Ý nghĩa | Publish product | Withdraw |
-|---|---|---:|---:|
-| `DRAFT` | Chưa submit KYC. | Không | Không |
-| `PENDING` | Đang chờ review. | Không | Không |
-| `NEEDS_INFO` | Admin yêu cầu bổ sung. | Không | Không |
-| `APPROVED` | KYC đạt. | Có | Có |
-| `REJECTED` | Hồ sơ bị từ chối, được phép resubmit. | Không | Không |
-| `EXPIRED` | Tài liệu/case hết hạn. | Không | Không |
-| `SUSPENDED` | Shop bị khóa theo risk/policy. | Không | Không |
+- **`ShopStatus`** (vòng đời gian hàng): `DRAFT`, `ACTIVE`, `SUSPENDED`, `DELETED`.
+- **`KycStatus`** (tiến trình xét duyệt hồ sơ): `DRAFT`, `PENDING`, `NEEDS_INFO`, `APPROVED`, `REJECTED`, `EXPIRED`, `SUSPENDED`.
+
+| `KycStatus` | Ý nghĩa KYC | `ShopStatus` tương ứng | Publish product | Withdraw |
+|---|---|---|---:|---:|
+| `DRAFT` | Chưa submit KYC. | `DRAFT` | Không | Không |
+| `PENDING` | Đang chờ review. | `DRAFT` | Không | Không |
+| `NEEDS_INFO` | Admin yêu cầu bổ sung. | `DRAFT` | Không | Không |
+| `APPROVED` | KYC đạt. | `ACTIVE` | Có | Có |
+| `REJECTED` | Hồ sơ bị từ chối, được phép resubmit. | `DRAFT` | Không | Không |
+| `EXPIRED` | Tài liệu/case hết hạn. | `DRAFT` / `ACTIVE` (chặn action mới) | Không | Không |
+| `SUSPENDED` | Khóa theo risk/policy. | `SUSPENDED` | Không | Không |
 
 ```text
+KYC Workflow:
 DRAFT ──submit──► PENDING
-PENDING ──approve──► APPROVED
+PENDING ──approve──► APPROVED (Shops.status chuyển ACTIVE)
 PENDING ──need-info──► NEEDS_INFO ──resubmit──► PENDING
 PENDING ──reject──► REJECTED ──resubmit──► PENDING
 APPROVED ──document expiry──► EXPIRED ──resubmit──► PENDING
@@ -487,7 +493,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `PENDING → NEEDS_INFO` | `RISK_MANAGER`, `SUPER_ADMIN` | Có reason 10–1.000 ký tự. |
 | `PENDING → REJECTED` | `RISK_MANAGER`, `SUPER_ADMIN` | Có reason và 2FA step-up. |
 | `APPROVED → SUSPENDED` | `RISK_MANAGER`, `SUPER_ADMIN` | Policy/risk case tồn tại, ghi audit. |
-| `ACTIVE → SUSPENDED` | Admin có `USER_SUSPEND` | Có reason, revoke refresh sessions. |
+| `ACTIVE → SUSPENDED` | Admin có `USER_SUSPEND` | Có reason, revoke refresh sessions, phát event `user.status_changed` và đẩy `revoked_user_id` vào Redis chung của Gateway để block JWT ngay. |
 | Role assignment | `SUPER_ADMIN` hoặc permission được cấp | Không tự cấp quyền cao hơn quyền của actor. |
 
 ## 6. Event phát ra / lắng nghe

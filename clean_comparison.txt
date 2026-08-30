@@ -1,0 +1,281 @@
+========================================
+=== 1. HIGH-LEVEL DESIGN (HLD) SUMMARY ===
+========================================
+
+[HLD BLOCK] - Online marketplace where users/buyers purchase from multiple sellers | - Sellers manage own shop / products
+- Online marketplace where users/buyers purchase from multiple sellers
+- Sellers manage own shop / products
+
+[HLD BLOCK] 1. Functional Requirements — 2 actors: Users/Buyers, Sellers/Merchants/Shop
+1. Functional Requirements — 2 actors: Users/Buyers, Sellers/Merchants/Shop
+
+[HLD BLOCK] Users / Buyers
+Users / Buyers
+
+[HLD BLOCK] Shop / Merchants / Seller
+Shop / Merchants / Seller
+
+[HLD BLOCK] 5. API Designing
+5. API Designing
+
+[HLD BLOCK] 2. Non-Function Requirement
+2. Non-Function Requirement
+
+[HLD BLOCK] -- Buyer: Auth & Profile --
+-- Buyer: Auth & Profile --
+
+[HLD BLOCK] -- Buyer: Address --
+-- Buyer: Address --
+
+[HLD BLOCK] -- Buyer: Product & Search (public) --
+-- Buyer: Product & Search (public) --
+
+[HLD BLOCK] -- Buyer: Cart --
+-- Buyer: Cart --
+
+[HLD BLOCK] -- Buyer: Checkout, Voucher, Payment --
+-- Buyer: Checkout, Voucher, Payment --
+
+[HLD BLOCK] -- Buyer: Orders & Review --
+-- Buyer: Orders & Review --
+
+[HLD BLOCK] -- Seller: Shop & Product --
+-- Seller: Shop & Product --
+
+[HLD BLOCK] 26.GET/PUT /api/v1/seller/shop -> business profile | 27.POST    /api/v1/seller/products {fields} -> productId | 28.GET     /api/v1/seller/products -> list own products
+26.GET/PUT /api/v1/seller/shop -> business profile
+27.POST    /api/v1/seller/products {fields} -> productId
+28.GET     /api/v1/seller/products -> list own products 
+29.PUT     /api/v1/seller/products/{id} -> update  
+30.PATCH   /api/v1/seller/products/{id}/status
+           {publish|unpublish} 
+31.PATCH   /api/v1/seller/products/{id}/stock {qty} 
+32.DELETE  /api/v1/seller/products/{id}
+
+[HLD BLOCK] -- Seller: Orders --
+-- Seller: Orders --
+
+[HLD BLOCK] 33.GET   /api/v1/seller/orders -> list orders for shop | 34.GET   /api/v1/seller/orders/{orderId} -> detail | 35.PATCH /api/v1/seller/orders/{orderId}/fulfill
+33.GET   /api/v1/seller/orders -> list orders for shop 
+34.GET   /api/v1/seller/orders/{orderId} -> detail  
+35.PATCH /api/v1/seller/orders/{orderId}/fulfill
+         {status,tracking}  
+36.POST  /api/v1/seller/orders/{orderId}/cancel {reason}
+         -> result + notify to email for user
+37.GET   /api/v1/seller/orders/{orderId}/invoice
+
+[HLD BLOCK] -- Seller: Revenue & Wallet --
+-- Seller: Revenue & Wallet --
+
+[HLD BLOCK] 38.GET  /api/v1/seller/revenue?range= -> revenue report | incl. tax/commission breakdown | 39.GET  /api/v1/seller/wallet -> balance
+38.GET  /api/v1/seller/revenue?range= -> revenue report
+        incl. tax/commission breakdown 
+39.GET  /api/v1/seller/wallet -> balance
+40.POST /api/v1/seller/wallet/withdraw {amount} -> payoutId
+
+[HLD BLOCK] -- Seller: Voucher (full CRUD) --
+-- Seller: Voucher (full CRUD) --
+
+[HLD BLOCK] 41.POST   /api/v1/seller/vouchers {code,discount} -> voucherId | 42.GET    /api/v1/seller/vouchers -> list | 43.PUT    /api/v1/seller/vouchers/{id} -> update
+41.POST   /api/v1/seller/vouchers {code,discount} -> voucherId
+42.GET    /api/v1/seller/vouchers -> list  
+43.PUT    /api/v1/seller/vouchers/{id} -> update  
+44.DELETE /api/v1/seller/vouchers/{id}
+
+[HLD BLOCK] . For Buyers : Support many OS and Devices :  Web + Android + Desktop App + IOS | Optimize user experience + simple user interface | . For Seller/Shop : Web
+. For Buyers : Support many OS and Devices :  Web + Android + Desktop App + IOS
+        Optimize user experience + simple user interface
+. For Seller/Shop : Web
+. Must have responsive for web version
+. Maximum automatic
+
+[HLD BLOCK] API GATEWAY | . Authentication | . Authorization
+API GATEWAY
+ . Authentication
+ . Authorization
+ . Rate Limit
+ . Routing
+
+[HLD BLOCK] User Service
+User Service
+
+[HLD BLOCK] Product Service
+Product Service
+
+[HLD BLOCK] Payment Gateway
+Payment Gateway
+
+[HLD BLOCK] 7. DeepDive
+7. DeepDive
+
+[HLD BLOCK] API GATEWAY | . Authentication | . Authorization
+API GATEWAY
+ . Authentication
+ . Authorization
+ . Rate Limit
+ . Routing
+
+[HLD BLOCK] User Service
+User Service
+
+[HLD BLOCK] Product Service
+Product Service
+
+[HLD BLOCK] Payment Gateway
+Payment Gateway
+
+[HLD BLOCK] -- Buyer/Seller: Shipping -- | 45. GET  /api/v1/orders/{orderId}/shipment -> tracking | status
+-- Buyer/Seller: Shipping --
+45. GET  /api/v1/orders/{orderId}/shipment -> tracking
+status
+46. GET  /api/v1/seller/orders/{orderId}/shipment ->
+tracking status
+47. POST /api/v1/webhooks/shipping/{carrier} -> ack
+(internal, no auth JWT)
+
+[HLD BLOCK] Buyer/User
+Buyer/User
+
+[HLD BLOCK] Buyer/User
+Buyer/User
+
+[HLD BLOCK] Payment Gateway
+Payment Gateway
+
+[HLD BLOCK] Payment Gateway
+Payment Gateway
+
+[HLD BLOCK] Shop/Seller
+Shop/Seller
+
+[HLD BLOCK] Shop/Seller
+Shop/Seller
+
+[HLD BLOCK] 1. Seller onboarding & product management
+1. Seller onboarding & product management
+
+[HLD BLOCK] 2. Buyer browsing (no login required)
+2. Buyer browsing (no login required)
+
+[HLD BLOCK] 3. Buyer auth & cart management
+3. Buyer auth & cart management
+
+[HLD BLOCK] 7. Seller: orders, revenue & voucher management
+7. Seller: orders, revenue & voucher management
+
+[HLD BLOCK] mfe-buyer | (cart, checkout, orders, | account, messages)
+mfe-buyer
+(cart, checkout, orders,
+account, messages)
+
+[HLD BLOCK] mfe-seller | (shop dashboard: products, | orders, revenue, shipment)
+mfe-seller
+(shop dashboard: products,
+orders, revenue, shipment)
+
+[HLD BLOCK] calls (via Gateway): | - Product Service | - Search Service
+calls (via Gateway):
+- Product Service
+- Search Service
+- Rating & Comment
+Service
+
+[HLD BLOCK] calls (via Gateway): | - Order Service | - User Service
+calls (via Gateway):
+- Order Service
+- User Service
+- Payment Service
+- Message Service
+
+[HLD BLOCK] calls (via Gateway): | - User Service (Shop) | - Product Service
+calls (via Gateway):
+- User Service (Shop)
+- Product Service
+- Order Service
+- Inventory Service
+- Shipment Service
+
+[HLD BLOCK] Module Federation wiring: | mfe-shell webpack.config remotes: { catalog, buyer, seller } -> each remote's remoteEntry.js | Each remote exposes top-level route components; shell lazy-loads by route
+Module Federation wiring:
+mfe-shell webpack.config remotes: { catalog, buyer, seller } -> each remote's remoteEntry.js
+Each remote exposes top-level route components; shell lazy-loads by route
+Shared deps (react, react-dom, design-system) marked singleton:true in ModuleFederationPlugin
+
+[HLD BLOCK] 7.1  Per-Service Database Schemas (Deep Dive)
+7.1  Per-Service Database Schemas (Deep Dive)
+
+[HLD BLOCK] reviews { | _id, productId, shopId, orderId, | buyerUserId, rating(1-5), comment, images[],
+reviews {
+  _id, productId, shopId, orderId,
+  buyerUserId, rating(1-5), comment, images[],
+  isVerifiedPurchase, sellerReply, status }
+  uniq(orderId, productId, buyerUserId)
+rating_aggregates {
+  _id = productId, avg, count,
+  distribution{1..5} }   -> Product/Shop cache
+
+[HLD BLOCK] User Service  →  userdb  (MySQL)
+User Service  →  userdb  (MySQL)
+
+[HLD BLOCK] conversations { | _id, buyerUserId, shopId, lastMessageAt, | lastMsgPreview, unread{buyer, seller} }
+conversations {
+  _id, buyerUserId, shopId, lastMessageAt,
+  lastMsgPreview, unread{buyer, seller} }
+messages {
+  _id, conversationId, senderType, senderId,
+  body, attachments[], readAt, createdAt }
+  idx(conversationId, createdAt)
+
+[HLD BLOCK] Product Service  →  productdb  (MongoDB)
+Product Service  →  productdb  (MongoDB)
+
+[HLD BLOCK] shipments(id, order_id, shop_id, buyer_user_id, | carrier, tracking_code UNIQUE, status, | from_addr_snap, to_addr_snap, fee)
+shipments(id, order_id, shop_id, buyer_user_id,
+  carrier, tracking_code UNIQUE, status,
+  from_addr_snap, to_addr_snap, fee)
+shipment_events(id, shipment_id, status,
+  description, occurred_at, source)  tracking timeline
+carrier_webhook_log(id, carrier,
+  external_event_id UNIQUE, shipment_id)
+
+[HLD BLOCK] payments(id, buyer_user_id, method[VNPAY|COD], | amount, status, provider_txn_ref, | idempotency_key UNIQUE)
+payments(id, buyer_user_id, method[VNPAY|COD],
+  amount, status, provider_txn_ref,
+  idempotency_key UNIQUE)
+payment_allocations(id, payment_id, order_id,
+  shop_id, gross, commission, tax, seller_net)
+  <- marketplace split + commission
+payment_events(id, payment_id,
+  provider_event_id UNIQUE, raw_payload)
+  <- webhook idempotency
+wallets(id, shop_id UNIQUE, avail, pending)
+ledger_entries(id, wallet_id, type[CR|DR], amount,
+  balance_after, ref)  <- double-entry
+payouts(id, shop_id, amount, status,
+  bank_acct_snap, idempotency_key)
+refunds(id, payment_id, order_id, amount)
+
+========================================
+=== 2. FRONTEND DESIGN (PENPOT) SCREENS ===
+========================================
+
+--- PAGE: 00 · Taca Code Foundations === (Total frames: 23) ---
+Key Frames/Screens: Root Frame, Core components, Button / Outline, Responsive rules, Token / Border, Token / Admin dark, Token / Surface, Badge / Chờ duyệt, Token / Text muted, Button / Danger, Token / Warning, Badge / Đang bán, Badge / Giảm -20%, Input / Search, Token / Primary hover, Token / Primary, Badge / Official, Button / Primary, Token / Success, Taca / Foundations, Input action, Token / Text main, Token / Sale / error
+
+--- PAGE: 01 · Taca Buyer · Code Match === (Total frames: 337) ---
+Key Frames/Screens: Root Frame, CTA / Global search, Product card / Sony WH-1000XM5, Address / Default, CTA / Review pending 0, Flash product / 3, Favorite product / JBL Flip 6, Review filter / 5 sao, Hit / Account nav / Sản phẩm yêu thích, Chip / 256GB, Overlay / Delivery address, Account icon / Đăng xuất, PDP / Content tabs, Buyer / Sticky Header, Voucher metric / Sắp hết hạn, Product card / Kindle Paperwhite, CTA / Giỏ hàng 2, Category product / 1, Hit / Account nav / Voucher của tôi, Overlay / Taca Mega Menu, Field / Global search, Account icon / Tổng quan, CTA / Use VIPGOLD, Vouchers / Hero, Review metric / Chờ đánh giá, Chip / TACA GOLD, Voucher option / TACA200K, Category product / 3, Voucher card / VIPGOLD, Hit / Account nav / Tổng quan, Favorites / Main, CTA / Order detail review, Brand / Apple, CTA / Khám phá deal, Hit / Account nav / Đăng xuất, Voucher / Freeship 0Đ, Chip / Titan đen, CTA / Theo dõi đơn, Field / Địa chỉ, Account / Sidebar
+
+--- PAGE: 02 · Taca Seller · Code Match === (Total frames: 219) ---
+Key Frames/Screens: Root Frame, Taca Seller / Vouchers, Avatar / Linh Nguyễn, CTA / Tải PDF, Voucher user row / Nguyễn Minh Anh, Chip / Attribute type / Image, CTA / Save voucher draft, Field / Thương hiệu, Field / Mã voucher, Chip / CHỜ XÁC NHẬN, Overlay / Seller onboarding, Metric / Tỷ lệ chuyển đổi, Chip / Toàn shop, Status / Đang bán, Status / 38, CTA / Seller chat buyer, Selected user / Minh Anh, Status / 64, Settings / Sidebar, Voucher user row / Linh Nguyễn, Value / Kết nối / 5G, Chip / Chờ xác nhận 38, Value / Dung lượng / 512GB, Chip / SPU đã chọn, Voucher audience / Selected users, Status / 3, CTA / Withdraw, CTA / Add value / Kết nối, Field / Onboarding Người liên hệ, CTA / Apply voucher users, Voucher users / Tab buyers, Chip / Ngày mai 08:00 – 12:00, Status / 05:24:16, Field / New attribute name, Overlay / Prepare shipment, Value / Kết nối / Wi-Fi, CTA / Bộ lọc, Status / 12, Field / Withdraw amount, Field / Search voucher users
+
+--- PAGE: 04 · Taca Messaging · Buyer ↔ Seller === (Total frames: 180) ---
+Key Frames/Screens: Root Frame, Field / Global search, Taca Messaging / Support Escalation, CTA / Nhận xử lý, Buyer messages / Inbox, Taca Messaging / Seller Service Inbox, Avatar / TS, Message / Seller, CTA / Escalate support, Unread / 3, Field / Search messages, CTA / Giỏ hàng  2, CTA / Gửi ưu đãi, Order / Item detail, Message metric / SLA hôm nay, Message / Product reference, Share product / iPhone 16 Pro Max, Avatar / BH, CTA / Chia sẻ sản phẩm, Report reason / Yêu cầu thanh toán ngoài Taca, Support / Ticket summary, Messaging / Composer, Support / Policy, Report reason / Nội dung quấy rối / xúc phạm, Overlay / Send seller offer, Seller conversation / Chat, Seller service / Preview, Message / Buyer, Chip / Đã giao, Avatar / NM, Unread / 1, Avatar / MA, Chip / Ưu tiên cao, Overlay / Share product, Chip / Sản phẩm trong đơn, Avatar / SH, Chip / Ưu tiên: Bình thường, Chip / Mới nhất, Report reason / Khác, CTA / Tìm kiếm
+
+--- PAGE: 03 · Taca Admin · Code Match === (Total frames: 143) ---
+Key Frames/Screens: Root Frame, Metric / Trợ giá, Metric / Đang chạy, Admin / Sidebar, Metric / Abuse blocked, Metric / Chờ KYC, CTA / + Mời quản trị viên, Categories / Tree, Metric / GMV chờ đối soát, Metric / Chargeback, Table / Campaign calendar, Admin / Search, Status / ON, Taca Admin / Vouchers, CTA / Quy tắc rủi ro, Status / Hoàn tiền một phần, Status / Màu sắc, CTA / Chính sách ngành hàng, Dashboard / Health, Status / ALLOW, Status / Rủi ro cao, Taca Admin / Finance, CTA / Chạy đối soát, Categories / Detail, Document / Giấy đăng ký kinh doanh.pdf, Settings / Configuration, Taca Admin / Users / Roles, CTA / Phê duyệt KYC, Metric / Vi phạm, Table / Platform vouchers, CTA / + Tạo biểu phí, Overlay / KYC review, Field / Trạng thái, CTA / Lưu quyền, Metric / Phải trả seller, CTA / Chính sách SLA, Field / Tên hiển thị, Overlay / Dispute resolution, Status / Dòng sản phẩm, Field / Commission
+
+--- PAGE: 05 · Taca Responsive · Mobile + Tablet === (Total frames: 232) ---
+Key Frames/Screens: Root Frame, Chip / Titan tự nhiên, Mobile avatar / TA, Mobile Messaging / Buyer Chat, Mobile setting / Đơn vị vận chuyển, Mobile category / ÂM, Mobile setting / Bảo mật & 2FA, Chip / Chuẩn bị 64, Mobile voucher user / Bảo Đỗ, Seller mobile task, Mobile target voucher / Estimate, Chip / Chờ KYC 284, Mobile Messaging / Buyer Inbox, Seller mobile product / Sony WH-1000XM5, Mobile SKU value / Màu sắc / Đen, Mobile avatar / TS, Mobile cart / Voucher, Mobile voucher / FREESHIPMAX, Mobile product / 1, Tablet metric, CTA / Xem, Chip / Bán chạy, Seller mobile order / #TACA2408265, Chip / Tất cả, Seller buyer avatar / LP, Tablet Admin / Dashboard, Responsive / Handoff rules, Mobile Seller / Messages, Mobile Seller / Finance, Breakpoint / Mobile, Tablet review / Sony XM5, Tablet admin / Queue, Mobile setting / Địa chỉ kho, Unread, Mobile setting / Thanh toán & ngân hàng, Tablet review / TechPro 24h, Tablet admin / Case, Chip / 1TB, Seller mobile metric / Doanh thu tháng, Seller mobile metric / Tồn kho thấp
+
+--- PAGE: 06 · Taca States & Service Specs === (Total frames: 35) ---
+Key Frames/Screens: Root Frame, Validation / Order, Validation / KYC, Universal state / ERROR, CTA / Bổ sung hồ sơ, State Mobile / Checkout Conflict, Universal state / EMPTY, State / DEV HANDOFF, Message status / SENT, CTA / Chấp nhận & tiếp tục, Attachment state / Virus blocked, Universal state / LOADING, Conflict item, Message status / READ, Validation / Checkout, Message status / FAILED, CTA / Gửi, KYC state, Message status / DELIVERED, States / Developer service specification, Message status / QUEUED, State Mobile / Permission KYC, Attachment state / Uploading, Attachment state / Unsupported, State Mobile / Empty Messages, Validation / RBAC, Attachment state / Upload failed, State / CẦN BỔ SUNG, Universal state / OFFLINE, Validation / SPU / SKU, Failed mobile message, CTA / Quay lại giỏ hàng, Message status / SENDING, State Mobile / Offline Chat, CTA / Khám phá sản phẩm

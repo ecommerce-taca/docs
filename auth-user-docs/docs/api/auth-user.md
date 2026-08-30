@@ -112,6 +112,7 @@ Ràng buộc:
 | 33 | `PATCH` | `/admin/users/{userId}/roles` | Grant/revoke role | `ROLE_ASSIGN` + 2FA | Admin role editor |
 | 34 | `PATCH` | `/admin/users/{userId}/status` | Suspend/restore user | `USER_SUSPEND` + 2FA | Admin Users |
 | 35 | `GET` | `/admin/audit-logs` | Tra cứu audit | Role được cấp | Admin audit/support |
+| 36 | `GET` | `/.well-known/jwks.json` | Public JWKS key set cho Gateway và internal services | Public / Internal REST | API Gateway, internal clients |
 
 ## 2. Chi tiết endpoint
 
@@ -598,9 +599,9 @@ Quyền: Authenticated · Response: `204`
 
 Ràng buộc:
 
-- Không xóa cứng.
-- Nếu xóa default, chọn address sống gần nhất theo `updated_at DESC` làm default.
-- Không cho xóa address cuối khi user có checkout session active.
+- Không xóa cứng; chỉ set `deleted_at`.
+- Nếu xóa default, tự động chọn address sống gần nhất theo `updated_at DESC` làm default mới.
+- Order Service lưu `address_snapshot` riêng độc lập; soft-delete address tại Auth User không ảnh hưởng đơn hàng đã tạo hoặc phiên checkout đã clone snapshot.
 - Address không thuộc user trả `404 ADDRESS_NOT_FOUND`, không trả 403.
 
 Lỗi: `404 ADDRESS_NOT_FOUND`, `409 ADDRESS_DEFAULT_REQUIRED`.
@@ -997,7 +998,7 @@ Request:
 | `status` | enum | Có | `ACTIVE` hoặc `SUSPENDED`; `DELETED` không qua endpoint v1. |
 | `reason` | string | Có | 10–1.000 characters. |
 
-Khi suspend: revoke toàn bộ refresh token family, ghi audit, phát `user.status_changed`. Không thu hồi access JWT hiện tại; token tự hết hạn tối đa 15 phút.
+Khi suspend: revoke toàn bộ refresh token family, ghi audit, phát `user.status_changed` (kèm đẩy `revoked_user_id` TTL 15m vào Redis chung của Gateway để chặn Access JWT ngay lập tức). Access token JWT chưa hết hạn cũng sẽ bị Gateway từ chối sau khi đồng bộ cache.
 
 Lỗi: `404 AUTH_USER_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`, `428 RBAC_MFA_REQUIRED`, `409 AUTH_ACCOUNT_SUSPENDED`.
 
@@ -1019,6 +1020,35 @@ Query:
 Không trả `metadata` có secret/PII raw; field nhạy cảm phải masked.
 
 Lỗi: `400 AUTH_INVALID_INPUT`, `403 RBAC_PERMISSION_DENIED`.
+
+### 2.36 `GET /.well-known/jwks.json` — Public JWKS key set
+
+Quyền: Public / Internal REST · Cache-Control: `public, max-age=600` · Response: `200`
+
+Response:
+
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "kid": "auth-user-key-2026-01",
+      "use": "sig",
+      "alg": "RS256",
+      "n": "base64url-modulus-from-auth-user",
+      "e": "AQAB"
+    }
+  ]
+}
+```
+
+Ràng buộc:
+
+- Chỉ trả public key modulus `n` và exponent `e`; tuyệt đối không chứa private exponent `d` hoặc prime numbers.
+- `kid` khớp với `kid` trong header của Access Token JWT.
+- Khi xoay key (key rotation), endpoint giữ cả key cũ và key mới trong thời gian overlap (tối thiểu 30 phút).
+
+Lỗi: `500 INTERNAL_ERROR` nếu keystore không sẵn sàng.
 
 ## 3. Bảng mã lỗi dùng chung
 

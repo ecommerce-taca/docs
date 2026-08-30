@@ -266,13 +266,13 @@ PK/constraint: composite PK (`role_id`, `permission_id`); không duplicate mappi
 | `id` | `BINARY(16)` | N | — | PK | Assignment ID. |
 | `user_id` | `BINARY(16)` | N | — | FK `users.id` | User. |
 | `role_id` | `BINARY(16)` | N | — | FK `roles.id` | Role. |
-| `shop_id` | `BINARY(16)` | N | `0x00000000000000000000000000000000` | Zero UUID = system scope; otherwise FK `shops.id` | Scope. |
+| `shop_id` | `BINARY(16)` | Y | `NULL` | `NULL` = system scope; otherwise FK `shops.id` | Scope. |
 | `granted_by` | `BINARY(16)` | Y | `NULL` | User reference | Actor grant. |
 | `granted_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | — |
 | `revoked_at` | `DATETIME(6)` | Y | `NULL` | — | Revoke assignment; row có thể re-activate. |
 | `updated_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | — |
 
-UNIQUE (`user_id`, `role_id`, `shop_id`) vì một tuple assignment chỉ có một current row; lịch sử grant/revoke nằm ở `audit_logs`.
+UNIQUE (`user_id`, `role_id`, `shop_id`) hoặc unique active assignment; lịch sử grant/revoke nằm ở `audit_logs`.
 
 ### 3.12 `shop_staff` — thành viên Seller Staff
 
@@ -501,7 +501,7 @@ Không tạo index trên raw JSON `warehouse_snapshot`, `metadata` hoặc encryp
 | Một user tối đa một onboarding/active shop v1 | Lock owner user + `shops.owner_user_id/status`. |
 | KYC decision NEEDS_INFO/REJECTED cần reason 10–1000 | Application validator + audit. |
 | Publish/withdraw gate KYC APPROVED | Product/Payment service; auth-user phát event/status. |
-| Role scope system dùng zero UUID, shop role dùng shop ID | RBAC service + DB check `shop_id` không null. |
+| Role scope system dùng NULL, shop role dùng shop ID | RBAC service + DB check `shop_id` FK khi khác NULL. |
 | Admin mutation nhạy cảm phải có 2FA step-up 5 phút | Auth guard + `mfa_challenges`/TOTP. |
 | KYC file tối đa 10 MiB, PDF/JPG/PNG | Presign/complete adapter + document constraints. |
 | Audit không chứa secret/OTP/password/bank raw | Application redaction + code review/test. |

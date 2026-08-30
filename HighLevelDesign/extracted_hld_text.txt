@@ -1,0 +1,836 @@
+--- TEXT BLOCK ---
+Design Marketplace Platform - Tiki Style -V1
+
+--- TEXT BLOCK ---
+- Online marketplace where users/buyers purchase from multiple sellers
+- Sellers manage own shop / products
+
+--- TEXT BLOCK ---
+1. Functional Requirements — 2 actors: Users/Buyers, Sellers/Merchants/Shop
+
+--- TEXT BLOCK ---
+Users / Buyers
+
+--- TEXT BLOCK ---
+• Manage his/her own orders and invoices
+• Sign in, sign up, sign out / update information
+• Search and filter products by keyword / category / price
+• View product details
+• Add products to cart, update quantity [must be signed in]
+• Checkout: address, shipping, payment method [must be signed in]
+• Track order status and cancel before shipping
+• Rate / review product after delivery
+• Choose and apply voucher of system platform or shop
+• Don't need to sign in for search, view product, view shop
+• Must sign in to place an order
+• Can register to become a seller
+. User can payment via VNPAY QR Generate or cash on delivery 
+
+--- TEXT BLOCK ---
+Shop / Merchants / Seller
+
+--- TEXT BLOCK ---
+• Must sign in, provide detailed business information
+• Manage own products and stock [CRUD, publish, unpublish]
+• Manage own revenue [include taxes, platform income/commission]
+• View comments / ratings as part of buyers
+• Withdraw funds from platform
+• Cancel order 
+• Manage own orders and invoices
+• CRUD and manage shop vouchers
+
+--- TEXT BLOCK ---
+3. Identify Core Entity
+
+
+--- TEXT BLOCK ---
+. user
+. product
+. cart
+. order
+. comment
+. voucher
+. payment
+. checkout
+. invoice
+. notification
+. shop
+. shipment
+
+--- TEXT BLOCK ---
+System / platform
+
+
+
+--- TEXT BLOCK ---
+• Notify to user email when order success with invoice
+
+
+--- TEXT BLOCK ---
+4. GUI : Based on Tiki
+
+--- TEXT BLOCK ---
+5. API Designing
+
+
+--- TEXT BLOCK ---
+2. Non-Function Requirement
+
+--- TEXT BLOCK ---
+-- Buyer: Auth & Profile --
+
+--- TEXT BLOCK ---
+1. POST /api/v1/auth/signup {name,email,password + user info} -> token
+2. POST /api/v1/auth/signin {email,password} -> token
+3. POST /api/v1/auth/signout -> 204
+4. GET  /api/v1/users/me -> profile
+   PUT  /api/v1/users/me {fields} -> updated user
+5. POST /api/v1/users/register-seller {shop info} -> shopId
+
+--- TEXT BLOCK ---
+-- Buyer: Address --
+
+--- TEXT BLOCK ---
+6. GET  /api/v1/users/me/addresses -> list
+   POST /api/v1/users/me/addresses {addr} -> addressId
+   PUT/DELETE /api/v1/users/me/addresses/{id}
+
+--- TEXT BLOCK ---
+-- Buyer: Product & Search (public) --
+
+--- TEXT BLOCK ---
+7. GET /api/v1/products/search?q=&category=&price= -> List<Product>
+8. GET /api/v1/products/{productId} -> details
+9. GET /api/v1/categories -> tree 
+10.GET /api/v1/shops/{shopId} -> public shop profile 
+
+--- TEXT BLOCK ---
+-- Buyer: Cart --
+
+--- TEXT BLOCK ---
+11.GET    /api/v1/cart -> current cart
+12.POST   /api/v1/cart/items {productId,qty} -> cartId
+13.PUT    /api/v1/cart/items/{itemId} {qty} -> update 
+14.DELETE /api/v1/cart/items/{itemId} -> 204  
+
+--- TEXT BLOCK ---
+-- Buyer: Checkout, Voucher, Payment --
+
+--- TEXT BLOCK ---
+15.GET  /api/v1/vouchers/validate?code=&cartId= -> discount info
+15b. GET /api/v1/checkout/shipping-fee?fromShopId=&toAddressId=&items[]=
+     -> shippingFee
+16.POST /api/v1/checkout {cartId,addressId,paymentMethod,
+        voucherCode?} -> orderId(s), split per shop
+17.POST /api/v1/payments {orderId,paymentDetails} -> confirmation
+18.POST /api/v1/payments/webhook (internal) -> reconcile
+
+--- TEXT BLOCK ---
+-- Buyer: Orders & Review --
+
+--- TEXT BLOCK ---
+19.GET   /api/v1/orders -> list own orders  
+20.GET   /api/v1/orders/{orderId} -> detail 
+21.GET   /api/v1/orders/{orderId}/status -> status
+22.PATCH /api/v1/orders/{orderId}/cancel -> status
+23.GET   /api/v1/orders/{orderId}/invoice -> invoice
+24.POST  /api/v1/products/{id}/reviews {rating,comment} -> reviewId
+        (only allowed if order status = delivered)
+25.GET   /api/v1/products/{id}/reviews -> paginated list
+
+--- TEXT BLOCK ---
+-- Seller: Shop & Product --
+
+--- TEXT BLOCK ---
+26.GET/PUT /api/v1/seller/shop -> business profile
+27.POST    /api/v1/seller/products {fields} -> productId
+28.GET     /api/v1/seller/products -> list own products 
+29.PUT     /api/v1/seller/products/{id} -> update  
+30.PATCH   /api/v1/seller/products/{id}/status
+           {publish|unpublish} 
+31.PATCH   /api/v1/seller/products/{id}/stock {qty} 
+32.DELETE  /api/v1/seller/products/{id} 
+
+--- TEXT BLOCK ---
+-- Seller: Orders --
+
+--- TEXT BLOCK ---
+33.GET   /api/v1/seller/orders -> list orders for shop 
+34.GET   /api/v1/seller/orders/{orderId} -> detail  
+35.PATCH /api/v1/seller/orders/{orderId}/fulfill
+         {status,tracking}  
+36.POST  /api/v1/seller/orders/{orderId}/cancel {reason}
+         -> result + notify to email for user
+37.GET   /api/v1/seller/orders/{orderId}/invoice 
+
+--- TEXT BLOCK ---
+-- Seller: Revenue & Wallet --
+
+--- TEXT BLOCK ---
+38.GET  /api/v1/seller/revenue?range= -> revenue report
+        incl. tax/commission breakdown 
+39.GET  /api/v1/seller/wallet -> balance
+40.POST /api/v1/seller/wallet/withdraw {amount} -> payoutId
+
+--- TEXT BLOCK ---
+-- Seller: Voucher (full CRUD) --
+
+--- TEXT BLOCK ---
+41.POST   /api/v1/seller/vouchers {code,discount} -> voucherId
+42.GET    /api/v1/seller/vouchers -> list  
+43.PUT    /api/v1/seller/vouchers/{id} -> update  
+44.DELETE /api/v1/seller/vouchers/{id} 
+
+--- TEXT BLOCK ---
+. For Buyers : Support many OS and Devices :  Web + Android + Desktop App + IOS
+        Optimize user experience + simple user interface
+. For Seller/Shop : Web
+. Must have responsive for web version
+. Maximum automatic
+
+--- TEXT BLOCK ---
+6. High-Level Design
+
+
+--- TEXT BLOCK ---
+API GATEWAY
+ . Authentication
+ . Authorization
+ . Rate Limit
+ . Routing
+
+
+--- TEXT BLOCK ---
+Clients
+
+--- TEXT BLOCK ---
+Clients
+
+--- TEXT BLOCK ---
+Clients
+
+--- TEXT BLOCK ---
+Clients
+
+--- TEXT BLOCK ---
+User Service
+
+--- TEXT BLOCK ---
+Web App Service
+
+--- TEXT BLOCK ---
+MySQL
+
+--- TEXT BLOCK ---
+Marketplace Platform (Tiki-style) - End-to-End Sequence Diagram
+
+--- TEXT BLOCK ---
+Product Service
+
+--- TEXT BLOCK ---
+MongoDB
+
+--- TEXT BLOCK ---
+Search Service
+
+--- TEXT BLOCK ---
+order services
+
+--- TEXT BLOCK ---
+Payment Service
+
+--- TEXT BLOCK ---
+Payment Gateway
+
+--- TEXT BLOCK ---
+OrderDB
+
+--- TEXT BLOCK ---
+PaymentDB
+
+--- TEXT BLOCK ---
+MongoDb
+
+--- TEXT BLOCK ---
+Comment
+    and 
+Rating  Service
+
+--- TEXT BLOCK ---
+Notification 
+    Service
+
+--- TEXT BLOCK ---
+S3
+MinIO
+
+--- TEXT BLOCK ---
+7. DeepDive
+
+
+--- TEXT BLOCK ---
+API GATEWAY
+ . Authentication
+ . Authorization
+ . Rate Limit
+ . Routing
+
+
+--- TEXT BLOCK ---
+Clients
+
+--- TEXT BLOCK ---
+Clients
+
+--- TEXT BLOCK ---
+Clients
+
+--- TEXT BLOCK ---
+Clients
+
+--- TEXT BLOCK ---
+User Service
+
+--- TEXT BLOCK ---
+Web App Service
+
+--- TEXT BLOCK ---
+UserDB
+
+--- TEXT BLOCK ---
+Product Service
+
+--- TEXT BLOCK ---
+ProductDB
+
+--- TEXT BLOCK ---
+Search Service
+
+--- TEXT BLOCK ---
+Payment Service
+
+--- TEXT BLOCK ---
+Payment Gateway
+
+--- TEXT BLOCK ---
+OrderDB
+
+--- TEXT BLOCK ---
+PaymentDB
+
+--- TEXT BLOCK ---
+Rating DB
+
+--- TEXT BLOCK ---
+Comment
+    and 
+Rating  Service
+
+--- TEXT BLOCK ---
+Notification 
+    Service
+
+--- TEXT BLOCK ---
+S3
+MinIO
+
+--- TEXT BLOCK ---
+Elastic Search
+
+--- TEXT BLOCK ---
+CDC
+
+--- TEXT BLOCK ---
+CDN
+
+--- TEXT BLOCK ---
+Order Service
+
+--- TEXT BLOCK ---
+(Cart+Checkout+Invoice+Voucher)
+
+--- TEXT BLOCK ---
+Inventory Service
+
+--- TEXT BLOCK ---
+Inventory DB
+
+--- TEXT BLOCK ---
+Check inventory before checkout
+
+--- TEXT BLOCK ---
+KAFKA
+
+--- TEXT BLOCK ---
+ORDER CONSUMER
+
+--- TEXT BLOCK ---
+INVENTORY CONSUMER
+
+--- TEXT BLOCK ---
+CDC
+
+--- TEXT BLOCK ---
+EMAIL
+
+--- TEXT BLOCK ---
+Implementation
+
+--- TEXT BLOCK ---
+-- Buyer/Seller: Shipping --
+45. GET  /api/v1/orders/{orderId}/shipment -> tracking
+status
+46. GET  /api/v1/seller/orders/{orderId}/shipment ->
+tracking status
+47. POST /api/v1/webhooks/shipping/{carrier} -> ack
+(internal, no auth JWT)
+
+--- TEXT BLOCK ---
+Shipping Service
+
+--- TEXT BLOCK ---
+Shipment
+Services
+
+--- TEXT BLOCK ---
+Shipment DB
+
+--- TEXT BLOCK ---
+Shipment
+Consumer
+
+--- TEXT BLOCK ---
+Buyer/User
+
+--- TEXT BLOCK ---
+Buyer/User
+
+--- TEXT BLOCK ---
+System/Platform
+
+--- TEXT BLOCK ---
+System/Platform
+
+--- TEXT BLOCK ---
+Payment Gateway
+
+--- TEXT BLOCK ---
+Payment Gateway
+
+--- TEXT BLOCK ---
+Shop/Seller
+
+--- TEXT BLOCK ---
+Shop/Seller
+
+--- TEXT BLOCK ---
+1. Seller onboarding & product management
+
+--- TEXT BLOCK ---
+2. Buyer browsing (no login required)
+
+--- TEXT BLOCK ---
+3. Buyer auth & cart management
+
+--- TEXT BLOCK ---
+4. Checkout & payment
+
+--- TEXT BLOCK ---
+5. Order tracking, shipping & cancellation
+
+--- TEXT BLOCK ---
+6. Review & rating (after delivery)
+
+--- TEXT BLOCK ---
+7. Seller: orders, revenue & voucher management
+
+--- TEXT BLOCK ---
+Sign up + business info
+
+--- TEXT BLOCK ---
+Shop created, confirmation
+
+--- TEXT BLOCK ---
+Sign in
+
+--- TEXT BLOCK ---
+Auth token
+
+--- TEXT BLOCK ---
+Create product (CRUD, publish/unpublish)
+
+--- TEXT BLOCK ---
+Confirmation
+
+--- TEXT BLOCK ---
+Search / filter products by keyword, category, price
+
+--- TEXT BLOCK ---
+Product list
+
+--- TEXT BLOCK ---
+Get product detail / view shop
+
+--- TEXT BLOCK ---
+Product info + images
+
+--- TEXT BLOCK ---
+Sign up
+
+--- TEXT BLOCK ---
+Account created
+
+--- TEXT BLOCK ---
+Sign in
+
+--- TEXT BLOCK ---
+Auth token
+
+--- TEXT BLOCK ---
+Add to cart (item, qty) [must be signed in]
+
+--- TEXT BLOCK ---
+Cart updated
+
+--- TEXT BLOCK ---
+Update quantity / remove item
+
+--- TEXT BLOCK ---
+Cart updated
+
+--- TEXT BLOCK ---
+Select item(s) in cart to order
+
+--- TEXT BLOCK ---
+Order summary (selected items)
+
+--- TEXT BLOCK ---
+Apply voucher code
+
+--- TEXT BLOCK ---
+Cost breakdown (subtotal, discount, shipping, total)
+
+--- TEXT BLOCK ---
+Confirm order (address, shipping, payment method)
+
+--- TEXT BLOCK ---
+Create payment request (if VNPAY selected)
+
+--- TEXT BLOCK ---
+Return VNPAY QR code
+
+--- TEXT BLOCK ---
+Display VNPAY QR code to user
+
+--- TEXT BLOCK ---
+Scan QR & pay via VNPAY app
+
+--- TEXT BLOCK ---
+Submit payment proof / confirm payment
+
+--- TEXT BLOCK ---
+Payment noted (pending confirmation)
+
+--- TEXT BLOCK ---
+Payment webhook callback (auto-confirm)
+
+--- TEXT BLOCK ---
+Payment auto-confirmed
+
+--- TEXT BLOCK ---
+New order notification
+
+--- TEXT BLOCK ---
+Order accepted
+
+--- TEXT BLOCK ---
+Order confirmation + invoice
+
+--- TEXT BLOCK ---
+Email notification: order success + invoice
+
+--- TEXT BLOCK ---
+Get order status
+
+--- TEXT BLOCK ---
+Order status
+
+--- TEXT BLOCK ---
+Create shipment, get
+tracking code
+
+--- TEXT BLOCK ---
+Shipment created, tracking code
+
+--- TEXT BLOCK ---
+Shipping status updates (picked up / in transit / delivered)
+
+--- TEXT BLOCK ---
+Cancel order (must be before shipping)
+
+--- TEXT BLOCK ---
+Cancel order notice
+
+--- TEXT BLOCK ---
+Order canceled
+
+--- TEXT BLOCK ---
+Cancellation confirmed
+
+--- TEXT BLOCK ---
+Submit rating / review
+
+--- TEXT BLOCK ---
+Review saved
+
+--- TEXT BLOCK ---
+View comments / ratings
+
+--- TEXT BLOCK ---
+Reviews list
+
+--- TEXT BLOCK ---
+Get own orders / invoices
+
+--- TEXT BLOCK ---
+Orders list
+
+--- TEXT BLOCK ---
+View revenue (sales, tax, platform commission)
+
+--- TEXT BLOCK ---
+Revenue report
+
+--- TEXT BLOCK ---
+Manage voucher (CRUD)
+
+--- TEXT BLOCK ---
+Voucher saved
+
+--- TEXT BLOCK ---
+Withdraw funds request
+
+--- TEXT BLOCK ---
+Process withdrawal
+
+--- TEXT BLOCK ---
+Withdrawal result
+
+--- TEXT BLOCK ---
+Withdrawal confirmation
+
+--- TEXT BLOCK ---
+Shipment DB
+
+--- TEXT BLOCK ---
+Message Service
+
+--- TEXT BLOCK ---
+MessageDB
+(MongoDB)
+
+--- TEXT BLOCK ---
+Browser
+
+--- TEXT BLOCK ---
+mfe-shell
+(host container)
+auth, routing, layout
+
+--- TEXT BLOCK ---
+mfe-catalog
+(browse, search, product
+detail, ratings)
+
+--- TEXT BLOCK ---
+mfe-buyer
+(cart, checkout, orders,
+account, messages)
+
+--- TEXT BLOCK ---
+mfe-seller
+(shop dashboard: products,
+orders, revenue, shipment)
+
+--- TEXT BLOCK ---
+calls (via Gateway):
+- Product Service
+- Search Service
+- Rating & Comment
+Service
+
+--- TEXT BLOCK ---
+calls (via Gateway):
+- Order Service
+- User Service
+- Payment Service
+- Message Service
+
+--- TEXT BLOCK ---
+calls (via Gateway):
+- User Service (Shop)
+- Product Service
+- Order Service
+- Inventory Service
+- Shipment Service
+
+--- TEXT BLOCK ---
+Module Federation wiring:
+mfe-shell webpack.config remotes: { catalog, buyer, seller } -> each remote's remoteEntry.js
+Each remote exposes top-level route components; shell lazy-loads by route
+Shared deps (react, react-dom, design-system) marked singleton:true in ModuleFederationPlugin
+
+--- TEXT BLOCK ---
+7.1  Per-Service Database Schemas (Deep Dive)
+
+--- TEXT BLOCK ---
+one DB per service - no cross-service FKs - keys only (full columns in schema doc)
+
+--- TEXT BLOCK ---
+Comment & Rating Service  →  ratingdb  (MongoDB)
+
+--- TEXT BLOCK ---
+reviews {
+  _id, productId, shopId, orderId,
+  buyerUserId, rating(1-5), comment, images[],
+  isVerifiedPurchase, sellerReply, status }
+  uniq(orderId, productId, buyerUserId)
+rating_aggregates {
+  _id = productId, avg, count,
+  distribution{1..5} }   -> Product/Shop cache
+
+--- TEXT BLOCK ---
+User Service  →  userdb  (MySQL)
+
+--- TEXT BLOCK ---
+users(id PK, email UNIQUE, password_hash,
+  full_name, phone, role, status,
+  email_verified, created_at)
+addresses(id PK, user_id, recipient, line1,
+  ward, district, province, is_default)
+shops(id PK, owner_user_id UNIQUE, name,
+  slug UNIQUE, business_name, tax_code,
+  logo_url, status, rating_avg*)
+refresh_tokens(id PK, user_id, token_hash,
+  expires_at, revoked_at)   -> sign-out
+
+--- TEXT BLOCK ---
+Message Service  →  messagedb  (MongoDB)
+
+--- TEXT BLOCK ---
+conversations {
+  _id, buyerUserId, shopId, lastMessageAt,
+  lastMsgPreview, unread{buyer, seller} }
+messages {
+  _id, conversationId, senderType, senderId,
+  body, attachments[], readAt, createdAt }
+  idx(conversationId, createdAt)
+
+--- TEXT BLOCK ---
+Product Service  →  productdb  (MongoDB)
+
+--- TEXT BLOCK ---
+products {
+  _id, shopId, title, slug UNIQUE, description,
+  categoryId, categoryPath[], brand, images[],
+  attributes{}, variants[{sku, price,
+  compareAtPrice}], basePrice, status,
+  ratingAvg*, salesCount }
+categories {
+  _id, name, slug, parentId, ancestors[], level }
+  * stock is owned by Inventory, not here
+
+--- TEXT BLOCK ---
+Search Service  →  products index  (Elasticsearch)
+
+--- TEXT BLOCK ---
+title       text (analyzed)   full-text
+shopId      keyword           filter
+categoryPath keyword[]        facet+filter
+brand       keyword           facet
+price       long              range / sort
+ratingAvg   float             sort
+status      keyword           only PUBLISHED
+attributes  flattened         facets
+suggest     completion        autocomplete
+Fed by CDC from Product (product.* -> Kafka)
+
+--- TEXT BLOCK ---
+Order Service  →  orderdb  (MySQL) + Cart in Redis
+
+--- TEXT BLOCK ---
+carts(id, user_id UNIQUE, status)
+cart_items(id, cart_id, product_id, sku,
+  shop_id, qty, unit_price_snap)
+orders(id PK, order_number UNIQUE, buyer_user_id,
+  shop_id, status, subtotal, discount,
+  shipping_fee, tax, grand_total, payment_method,
+  address_snapshot JSON, placed_at)
+order_items(id, order_id, sku, title_snap,
+  unit_price, qty, line_total)
+invoices(id, order_id UNIQUE, invoice_no, pdf_url)
+vouchers(id, code, scope, shop_id, type, value,
+  min_order, usage_limit, used_count)
+voucher_redemptions(id, voucher_id, order_id,
+  user_id)   uniq(voucher, user)
+outbox(id, aggregate, event_type, payload,
+  published_at)        <- reliable events
+idempotency_keys(key PK, user_id, response_snap,
+  expires_at)          <- safe retries
+
+--- TEXT BLOCK ---
+Inventory Service  →  inventorydb  (MySQL)
+
+--- TEXT BLOCK ---
+inventory_items(id, sku UNIQUE, shop_id,
+  product_id, qty_available, qty_reserved,
+  version)             <- optimistic lock (no oversell)
+stock_reservations(id, sku, order_id, qty,
+  status[RESERVED|COMMITTED|RELEASED|EXPIRED],
+  expires_at)
+stock_movements(id, sku, delta, reason, ref_type,
+  ref_id, created_at)  <- audit ledger
+
+--- TEXT BLOCK ---
+Shipment Service  →  shipmentdb  (MySQL)
+
+--- TEXT BLOCK ---
+shipments(id, order_id, shop_id, buyer_user_id,
+  carrier, tracking_code UNIQUE, status,
+  from_addr_snap, to_addr_snap, fee)
+shipment_events(id, shipment_id, status,
+  description, occurred_at, source)  tracking timeline
+carrier_webhook_log(id, carrier,
+  external_event_id UNIQUE, shipment_id)
+
+--- TEXT BLOCK ---
+Payment Service  →  paymentdb  (MySQL)
+
+--- TEXT BLOCK ---
+payments(id, buyer_user_id, method[VNPAY|COD],
+  amount, status, provider_txn_ref,
+  idempotency_key UNIQUE)
+payment_allocations(id, payment_id, order_id,
+  shop_id, gross, commission, tax, seller_net)
+  <- marketplace split + commission
+payment_events(id, payment_id,
+  provider_event_id UNIQUE, raw_payload)
+  <- webhook idempotency
+wallets(id, shop_id UNIQUE, avail, pending)
+ledger_entries(id, wallet_id, type[CR|DR], amount,
+  balance_after, ref)  <- double-entry
+payouts(id, shop_id, amount, status,
+  bank_acct_snap, idempotency_key)
+refunds(id, payment_id, order_id, amount)
+
+--- TEXT BLOCK ---
+Notification Service  →  notificationdb  (MySQL) -> EMAIL
+
+--- TEXT BLOCK ---
+notifications(id, user_id, channel[EMAIL|IN_APP],
+  template, payload, status[QUEUED|SENT|FAILED],
+  ref_type, ref_id, sent_at)
+Consumes Kafka:
+  order.success       -> order + invoice email
+  shipment.delivered  -> "leave a review" prompt
+

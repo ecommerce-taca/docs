@@ -122,6 +122,7 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-AUTH-35 | `POST /auth/2fa/verify` | Login challenge + TOTP đúng | 200 | Token pair | Challenge verified một lần. |
 | IT-AUTH-36 | `POST /auth/2fa/verify` | Sai TOTP/recovery | 401 | `AUTH_MFA_INVALID` | Không cấp token. |
 | IT-AUTH-37 | `POST /auth/2fa/verify` | Challenge hết hạn | 400 | `AUTH_MFA_CHALLENGE_EXPIRED` | Không chấp nhận replay. |
+| IT-AUTH-38 | `GET /.well-known/jwks.json` | Public request | 200 | Public RSA key set | Chỉ chứa n, e; kid đúng; max-age=600. |
 
 ### 3.2 Profile và address
 
@@ -141,9 +142,9 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-PROFILE-12 | `POST /users/me/addresses` | Address thứ 21 | 409 | `ADDRESS_LIMIT_REACHED` | Không ghi record. |
 | IT-PROFILE-13 | `PUT /users/me/addresses/{id}` | Address của user khác | 404 | `ADDRESS_NOT_FOUND` | IDOR protection. |
 | IT-PROFILE-14 | `PUT /users/me/addresses/{id}` | Set default | 200 | Chỉ một default | Row lock/concurrency. |
-| IT-PROFILE-15 | `DELETE /users/me/addresses/{id}` | Address sống | 204 | Soft delete | Không hard delete. |
+| IT-PROFILE-15 | `DELETE /users/me/addresses/{id}` | Address sống | 204 | Soft delete; gán fallback default | Không hard delete. |
 | IT-PROFILE-16 | `DELETE /users/me/addresses/{id}` | Address không thuộc user | 404 | `ADDRESS_NOT_FOUND` | Không lộ resource. |
-| IT-PROFILE-17 | `DELETE /users/me/addresses/{id}` | Default cuối + checkout active | 409 | `ADDRESS_DEFAULT_REQUIRED` | Giữ address. |
+| IT-PROFILE-17 | `DELETE /users/me/addresses/{id}` | Xóa default address khi còn address khác | 204 | Address còn lại gần nhất thành default | Soft delete. |
 
 ### 3.3 Seller onboarding và KYC
 
@@ -188,7 +189,7 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-ADMIN-10 | `PATCH /admin/users/{id}/roles` | GRANT valid shop role | 200 | Role active + event | Unique assignment. |
 | IT-ADMIN-11 | `PATCH /admin/users/{id}/roles` | Self grant/SUPER_ADMIN escalation | 403 | `RBAC_PERMISSION_DENIED` | Không tự nâng quyền. |
 | IT-ADMIN-12 | `PATCH /admin/users/{id}/roles` | REVOKE missing assignment | 409 | `RBAC_ASSIGNMENT_NOT_FOUND` | Không mutation. |
-| IT-ADMIN-13 | `PATCH /admin/users/{id}/status` | SUSPENDED + MFA | 200 | User suspended; sessions revoked | Audit/event. |
+| IT-ADMIN-13 | `PATCH /admin/users/{id}/status` | SUSPENDED + MFA | 200 | User suspended; refresh sessions revoked; push Redis key | Audit/event + fast revocation. |
 | IT-ADMIN-14 | `PATCH /admin/users/{id}/status` | Suspend thiếu reason/MFA | 400/428 | Error | Không đổi status. |
 | IT-ADMIN-15 | `GET /admin/audit-logs` | Filter 31 ngày/page size | 200 | Masked audit list | Không raw PII/secret. |
 | IT-ADMIN-16 | `GET /admin/audit-logs` | Range >31 ngày/sort lạ | 400 | `AUTH_INVALID_INPUT` | Query bounded. |

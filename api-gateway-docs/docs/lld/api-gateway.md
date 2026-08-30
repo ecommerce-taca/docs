@@ -80,7 +80,7 @@ src/
 | `RateLimitModule` | Tạo key theo IP/user/route và cập nhật Redis counter có TTL. | Lỗi Redis trên route protected/public phải fail-closed theo policy đã cấu hình, không tự chuyển sang counter local trong production. |
 | `ProxyModule` | Forward request tới internal REST service, giới hạn timeout, retry request an toàn, circuit breaker. | Không retry POST/PATCH/PUT/DELETE mặc định; không tự thay đổi body hoặc business response. |
 | `SecurityModule` | CORS allowlist, header/body limit, strip spoofed headers, trusted proxy. | Không dùng `Access-Control-Allow-Origin: *` cùng credentials; không log raw token/password/PII. |
-| `ErrorModule` | Map lỗi gateway/upstream thành envelope `{code,message,traceId,details}`. | Giữ HTTP semantics; không expose stack trace, internal host, SQL hoặc secrets. |
+| `ErrorModule` | Map lỗi gateway/upstream thành envelope `{error:{code,message,details,trace_id}}`. | Giữ HTTP semantics; không expose stack trace, internal host, SQL hoặc secrets. |
 | `HealthModule` | Liveness, readiness và kiểm tra dependency tối thiểu. | Liveness không phụ thuộc Redis/upstream; readiness kiểm tra config, JWKS và Redis theo deployment policy. |
 | `ObservabilityModule` | Log JSON, metrics latency/status/rate-limit/circuit, trace propagation. | Mọi log request phải có `traceId`/`requestId`; chỉ log allowlist field. |
 
@@ -454,12 +454,14 @@ Upstream error tối thiểu:
 
 ```json
 {
-  "code": "ORDER_STOCK_UNAVAILABLE",
-  "message": "Sản phẩm không còn đủ tồn kho.",
-  "details": {
-    "item_id": "item-01912f31"
-  },
-  "traceId": "01912f31-7a1b-7c12-9c55-8b1c34a6d921"
+  "error": {
+    "code": "ORDER_STOCK_UNAVAILABLE",
+    "message": "Sản phẩm không còn đủ tồn kho.",
+    "details": {
+      "item_id": "item-01912f31"
+    },
+    "trace_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921"
+  }
 }
 ```
 
@@ -467,17 +469,19 @@ Gateway xử lý:
 
 - Giữ `code` nghiệp vụ đã allowlist và `message` an toàn nếu upstream trả status 4xx.
 - Xóa `details` nhạy cảm hoặc nội dung có internal host/stack trace.
-- Nếu upstream không có `traceId`, dùng `X-Request-ID` của Gateway.
+- Nếu upstream không có `trace_id`, dùng `X-Request-ID` của Gateway.
 - 5xx/timeout không trả raw body; map sang error code Gateway.
 
 ### 6.5 Mock contract — Gateway error envelope
 
 ```json
 {
-  "code": "GATEWAY_UPSTREAM_TIMEOUT",
-  "message": "Hệ thống đang phản hồi chậm. Vui lòng thử lại sau.",
-  "traceId": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
-  "details": []
+  "error": {
+    "code": "GATEWAY_UPSTREAM_TIMEOUT",
+    "message": "Hệ thống đang phản hồi chậm. Vui lòng thử lại sau.",
+    "details": [],
+    "trace_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921"
+  }
 }
 ```
 
@@ -509,7 +513,7 @@ Gateway xử lý:
     "redis": "UP",
     "upstreams": "DEGRADED"
   },
-  "traceId": "01912f31-7a1b-7c12-9c55-8b1c34a6d921"
+  "trace_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921"
 }
 ```
 
@@ -542,7 +546,7 @@ Readiness body không được chứa secret, internal IP công khai ra client h
 |---|---|---|---|
 | 1 | Framework là Node.js + NestJS; exact Node.js LTS major, NestJS version và HTTP adapter chưa chốt. | Ảnh hưởng Docker image, proxy adapter, dependency security và performance baseline. | Tech lead |
 | 2 | Gateway route qua REST tới internal domain/IP bằng environment tĩnh; không dùng Consul/Eureka và không có route database. | Ảnh hưởng deployment, failover và cách thay đổi route. | Tech lead/DevOps |
-| 3 | Auth-user cung cấp JWKS `GET /.well-known/jwks.json`, issuer/audience và RS256 key rotation; contract hiện là mock. | Không thể validate JWT hoặc xử lý key rotation đúng nếu endpoint/claim khác. | Auth-user owner |
+| 3 | Auth-user cung cấp JWKS `GET /.well-known/jwks.json`, issuer/audience và RS256 key rotation. | Không thể validate JWT hoặc xử lý key rotation đúng nếu endpoint/claim khác. | Auth-user owner |
 | 4 | Client gửi Bearer access token; refresh token transport (JSON response, HttpOnly cookie hay mobile secure storage) chưa chốt. | Ảnh hưởng CORS credentials, CSRF policy và frontend interceptor. | Frontend + Security |
 | 5 | Redis dùng chung cho rate limit; topology HA, password/TLS, eviction policy và failure policy chưa chốt. | Ảnh hưởng availability và việc fail-closed khi Redis lỗi. | DevOps |
 | 6 | CORS allowlist thật cho Buyer Web, Seller Center và Admin Console chưa được cung cấp. | Nếu cấu hình sai, frontend bị chặn hoặc vô tình mở public origin. | Frontend/DevOps |
@@ -551,4 +555,4 @@ Readiness body không được chứa secret, internal IP công khai ra client h
 | 9 | Exact ownership của một số route như `/shops/**`, `/vouchers/**`, `/notifications/**` cần align trong API spec từng service. | Route nhầm upstream gây duplicate API hoặc sai source of truth. | Backend leads |
 | 10 | Observability backend/exporter và retention chưa được chỉ định; LLD chỉ chuẩn hóa adapter/field. | Ảnh hưởng dashboard, alert, trace sampling và chi phí lưu log. | Platform/DevOps |
 | 11 | V1 không cache business response và không tự phát business event. | Nếu cần CDN/cache hoặc audit event qua Kafka, cần thêm module và contract. | Architecture owner |
-| 12 | Error envelope `{code,message,traceId,details}` là mock contract áp dụng thống nhất cho upstream. | Nếu service trả format khác, Gateway phải duy trì adapter riêng cho từng service. | Backend leads |
+| 12 | Error envelope `{error:{code,message,details,trace_id}}` là contract áp dụng thống nhất cho toàn bộ Gateway và upstream services. | Đảm bảo tính nhất quán trên toàn bộ hệ thống API. | Backend leads |
