@@ -153,9 +153,10 @@ Envelope command (producer khác — auth-user, message, rating-comment — ph�
   "command_type": "AUTH_VERIFICATION_REQUESTED",
   "occurred_at": "2026-08-30T12:00:00Z",
   "dedupe_key": "auth-verification:user-1:token-01912fb1",
-  "recipient": { "user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921", "email": "masked-at-runtime" },
-  "channels": ["EMAIL"],
-  "template": "auth-verification-v1",
+  "user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
+  "channel": "EMAIL",
+  "recipient": "masked-at-runtime",
+  "template": "auth-email-verification-v1",
   "data": { "verification_url": "https://taca.vn/verify?t=…", "expires_in_minutes": 30 }
 }
 ```

@@ -31,7 +31,7 @@ erDiagram
 |---|---|---|
 | `_id` | string | UUIDv7. |
 | `recipient_user_id` | string | Required Auth reference. |
-| `channel` | enum | `EMAIL`, `IN_APP`. |
+| `channel` | enum | `EMAIL`, `IN_APP`, `SMS`. |
 | `template_key`/`template_version` | string/int | Allowlist/versioned. |
 | `dedupe_key` | string | Unique theo recipient/template/campaign policy. |
 | `source_event_id` | string | Kafka event/command reference. |
@@ -40,6 +40,10 @@ erDiagram
 | `read_status` | enum | In-app `UNREAD/READ`; null với email. |
 | `scheduled_at`/`sent_at` | Date | UTC. |
 | `created_at`/`updated_at` | Date | UTC. |
+| `recipient_encrypted` | text | Recipient email/phone mã hoá AES-256-GCM (không lưu plaintext); null với `IN_APP`. |
+| `recipient_hash` | char(64) | HMAC-SHA256 của recipient (filter admin, không lộ thô). |
+| `category` | enum | `ORDER`/`SHIPMENT`/`PAYMENT`/`REVIEW`/`CONVERSATION`/`SHOP`/`SECURITY`/`MARKETING`. |
+| `reference_type`/`reference_id` | enum/string | Deep-link reference (nullable). |
 
 ### 3.2 `delivery_attempts`
 
@@ -70,7 +74,7 @@ erDiagram
 
 ## 5. Enum và rules
 
-Channel `EMAIL/IN_APP`; status `QUEUED/PROCESSING/SENT/FAILED/SKIPPED/EXPIRED`; retry max 3; no raw secret/template body in logs/events; unread count không âm.
+Channel `EMAIL/IN_APP/SMS`; status `QUEUED/PROCESSING/SENT/FAILED/SKIPPED/EXPIRED`; retry max 3; no raw secret/template body in logs/events; unread count không âm.
 
 ## 6. Migration và seed
 
@@ -92,7 +96,7 @@ Channel `EMAIL/IN_APP`; status `QUEUED/PROCESSING/SENT/FAILED/SKIPPED/EXPIRED`; 
 
 | Seed | Giá trị |
 |---|---|
-| `templates` | `order-success-v1`, `payment-received-v1`, `order-cancelled-v1`, `invoice-issued-v1`, `shipment-delivered-v1`, `shipment-failed-v1`, `payment-result-v1`, `payout-result-v1`, `auth-verification-v1`, `review-request-v1` — mỗi template locale `vi-VN`, `status=PUBLISHED`. |
+| `templates` | `order-success-v1`, `payment-received-v1`, `order-cancelled-v1`, `invoice-issued-v1`, `shipment-delivered-v1`, `shipment-failed-v1`, `payment-result-v1`, `payout-result-v1`, `auth-verification-v1`, `auth-email-verification-v1`, `auth-password-reset-v1`, `review-request-v1` — mỗi template locale `vi-VN`, `status=PUBLISHED`. |
 | `notification_preferences` | 1 user với `category=SECURITY,locked=true` (test không opt-out được); 1 user tắt `category=MARKETING`. |
 | `notifications` | 1 `SENT` in-app `read_status=UNREAD`; 1 `SENT` đã `READ`; 1 `FAILED` sau 3 lần retry; 1 `SKIPPED` (do preference disabled). |
 | `delivery_attempts` | Đủ attempt khớp fixture `FAILED` ở trên (3 attempt, `attempt_no` 1-3). |
