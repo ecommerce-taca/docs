@@ -11,7 +11,7 @@
 |---|---|
 | Trách nhiệm chính | Nhận notification command/event, render template, gửi Email/In-app, lưu delivery log, retry và đọc notification center. |
 | Nguồn dữ liệu | MySQL `notificationdb` sở hữu notification log, preference và delivery attempt metadata. |
-| Channel v1 | `EMAIL`, `IN_APP`, `SMS`; HLD yêu cầu email order success/invoice, schema có cả in-app; `SMS` cho auth OTP/verification. |
+| Channel v1 | `EMAIL`, `IN_APP`; HLD yêu cầu email order success/invoice, schema có cả in-app. |
 | Không thuộc service | Order/payment/shipment state, user profile/KYC, template business ownership, message chat, SMS/push provider. |
 | Delivery | At-least-once với dedupe key; không đảm bảo exactly-once ở external SMTP. |
 | Privacy | Không log raw token/OTP/password/payment/bank data; template data allowlist và redaction. |
@@ -117,7 +117,7 @@ src/
 
 | Enum | Giá trị |
 |---|---|
-| `Channel` | `EMAIL`, `IN_APP`, `SMS`. |
+| `Channel` | `EMAIL`, `IN_APP`. |
 | `NotificationStatus` | `QUEUED`, `PROCESSING`, `SENT`, `FAILED`, `SKIPPED`, `EXPIRED`. |
 | `AttemptStatus` | `STARTED`, `SENT`, `RETRYABLE_FAILED`, `PERMANENT_FAILED`. |
 | `ReadStatus` | `UNREAD`, `READ`. |

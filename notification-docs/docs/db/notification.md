@@ -31,7 +31,7 @@ erDiagram
 |---|---|---|
 | `_id` | string | UUIDv7. |
 | `recipient_user_id` | string | Required Auth reference. |
-| `channel` | enum | `EMAIL`, `IN_APP`, `SMS`. |
+| `channel` | enum | `EMAIL`, `IN_APP`. |
 | `template_key`/`template_version` | string/int | Allowlist/versioned. |
 | `dedupe_key` | string | Unique theo recipient/template/campaign policy. |
 | `source_event_id` | string | Kafka event/command reference. |
@@ -74,7 +74,7 @@ erDiagram
 
 ## 5. Enum và rules
 
-Channel `EMAIL/IN_APP/SMS`; status `QUEUED/PROCESSING/SENT/FAILED/SKIPPED/EXPIRED`; retry max 3; no raw secret/template body in logs/events; unread count không âm.
+Channel `EMAIL/IN_APP`; status `QUEUED/PROCESSING/SENT/FAILED/SKIPPED/EXPIRED`; retry max 3; no raw secret/template body in logs/events; unread count không âm.
 
 ## 6. Migration và seed
 
