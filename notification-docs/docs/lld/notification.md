@@ -104,8 +104,9 @@ src/
 | Tên | Giá trị baseline | Ghi chú |
 |---|---:|---|
 | `PAGE_SIZE_DEFAULT` | 20 | Max 100. |
-| `DELIVERY_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
-| `EMAIL_SEND_TIMEOUT` | 5s | SMTP/Mock adapter. |
+| `DELIVERY_RETRY_COUNT` | 3 | Tổng số lần gửi tối đa (gồm lần đầu). Backoff exponential + jitter, rồi DLQ. |
+| `EMAIL_SEND_TIMEOUT` | 5s | SMTP/Mock adapter (`SMTP_TIMEOUT_MS`). |
+| `OUTBOX_RELAY_INTERVAL_MS` | 5s | Relay publish delivery status từ outbox. |
 | `IN_APP_RETENTION` | 90 ngày | Cần confirm compliance. |
 | `TEMPLATE_KEY_MAX_LENGTH` | 100 | Allowlist only. |
 | `RENDERED_BODY_MAX_LENGTH` | 100000 | Không log body. |
@@ -119,7 +120,7 @@ src/
 |---|---|
 | `Channel` | `EMAIL`, `IN_APP`. |
 | `NotificationStatus` | `QUEUED`, `PROCESSING`, `SENT`, `FAILED`, `SKIPPED`, `EXPIRED`. |
-| `AttemptStatus` | `STARTED`, `SENT`, `RETRYABLE_FAILED`, `PERMANENT_FAILED`. |
+| `AttemptStatus` | `STARTED`, `SENT`, `SKIPPED`, `RETRYABLE_FAILED`, `RETRY_EXHAUSTED`, `PERMANENT_FAILED`. |
 | `ReadStatus` | `UNREAD`, `READ`. |
 | `PreferenceStatus` | `ENABLED`, `DISABLED`. |
 
