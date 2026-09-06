@@ -21,6 +21,7 @@ erDiagram
     NOTIFICATIONS ||--o{ DELIVERY_ATTEMPTS : has
     NOTIFICATIONS ||--o{ NOTIFICATION_PREFERENCES : scoped
     NOTIFICATIONS ||--o{ NOTIFICATION_AUDITS : audited
+    NOTIFICATIONS ||--o{ DELIVERY_OUTBOX : emits
 ```
 
 ## 3. Chi tiết bảng
@@ -60,6 +61,10 @@ erDiagram
 - `notification_audits`: actor/action/target/reason/metadata/occurred_at; no secret/body.
 - `processed_events`: event_id/dedupe_key/processed_at/status/error; unique event ID.
 
+### 3.5 `delivery_outbox`
+
+`_id` (event ID, UUIDv7), `aggregate_id` (→ `notifications._id`), `event_type` (`notification.delivered`/`notification.failed`), `payload` (JSON — toàn bộ delivery status event: `dedupeKey`/`notificationId`/`channel`/`templateKey`/`errorCode`/`occurredAt`), `created_at`, `published_at` (nullable, null tới khi relay worker publish thành công), `retry_count` (default `0`, tăng khi relay publish lỗi). Transactional outbox: ghi cùng 1 transaction với đổi `status` của `notifications` + tạo `delivery_attempts`, để relay worker publish Kafka (`notification.delivered.v1`/`notification.failed.v1`) sau mà không mất event nếu crash giữa persist và publish.
+
 > Toàn bộ bảng trên là **MySQL** (`notificationdb`), không phải MongoDB — chữ "collection" ở các bản trước là gõ nhầm thuật ngữ, giữ nguyên schema/field như trên nhưng đọc là **bảng**.
 
 ## 4. Index
@@ -72,6 +77,7 @@ erDiagram
 | `templates` | unique `(key,version,locale)`; `(key,status)` |
 | `processed_events` | unique `event_id`; unique `dedupe_key`; `(processed_at)` |
 | `notification_audits` | `(target_id,occurred_at)`; `(actor_user_id,occurred_at)` |
+| `delivery_outbox` | `(published_at,created_at)` (relay worker lấy batch event chưa publish, order theo `created_at`) |
 
 ## 5. Enum và rules
 
@@ -94,7 +100,7 @@ Channel `EMAIL/IN_APP`; status `QUEUED/PROCESSING/SENT/FAILED/SKIPPED/EXPIRED`; 
 | 009 | Seed template v1 + fixture cho local/test (§6.2) | Tất cả bảng trên |
 | 010 | Thêm index `(status,processing_started_at)` trên `notifications`, phục vụ `tryClaimProcessing`/`findPendingDelivery` | 009 |
 
-> Lưu ý (ngoài phạm vi cập nhật lần này): trên code thực tế, cột `processing_started_at` được thêm ở migration `1750000000009-delivery-hardening.ts`, cùng đợt còn tạo bảng `delivery_outbox` và mở rộng enum `delivery_attempts.status` (`SKIPPED`, `RETRY_EXHAUSTED`) — các thay đổi này chưa được phản ánh ở bảng migration/db doc trên (dòng 009 ở đây đang mô tả seed, không phải delivery-hardening). Migration 010 (index mới) phụ thuộc đúng vào migration thêm cột `processing_started_at` đó, dù số thứ tự trong docs chưa khớp code.
+> Lưu ý (ngoài phạm vi cập nhật lần này): trên code thực tế, cột `processing_started_at`, bảng `delivery_outbox` (§3.5, §4) và mở rộng enum `delivery_attempts.status` (`SKIPPED`, `RETRY_EXHAUSTED` — chưa cập nhật ở §5) đều được thêm cùng lúc ở migration `1750000000009-delivery-hardening.ts` — nhưng dòng 009 ở bảng trên vẫn đang mô tả seed, không phải delivery-hardening; số thứ tự migration giữa docs và code đang lệch nhau. Migration 010 (index mới) phụ thuộc đúng vào migration thêm cột `processing_started_at` đó, dù số thứ tự trong docs chưa khớp code.
 
 ### 6.2 Seed tối thiểu
 
