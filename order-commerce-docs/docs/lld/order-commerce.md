@@ -371,6 +371,67 @@ Phân biệt bắt buộc giữa hai event dễ nhầm:
 
 Với VNPAY hai event trùng thời điểm; với COD chúng cách nhau cả vòng đời giao hàng. Consumer nào cần "đơn sẵn sàng giao" mà dùng `order.paid` sẽ bỏ sót toàn bộ đơn COD.
 
+#### 6.1a Payload chi tiết — `order.confirmed` / `order.paid` / `order.cancelled` / `invoice.issued`
+
+Field `buyer` **đã chốt** cho các consumer cần recipient (đặc biệt Notification Service —
+xem `notification-docs/docs/lld/notification.md` §6.2): `buyer.user_id` bắt buộc, `buyer.email`
+optional (`null` cho phép ở event chỉ phát `IN_APP`, ví dụ `order.paid`). Field khác trong `payload`
+lấy tên đúng theo response `GET /orders/{orderId}` (§3.6) và bảng `invoices` (db.md §3.4).
+
+`order.confirmed`:
+
+```json
+{
+  "order_id": "order-01912f91",
+  "order_number": "TC-20260830-0001",
+  "checkout_group_id": "group-01912f90",
+  "buyer": { "user_id": "user-01912f10", "email": "buyer@example.com" },
+  "shop": { "shop_id": "shop-01912f31", "shop_name": "Anker Official" },
+  "payment_method": "VNPAY",
+  "confirmed_at": "2026-08-30T09:05:00Z"
+}
+```
+
+`order.paid` (chỉ phát `IN_APP` — xem bảng phân biệt ở trên — nên `buyer.email` có thể `null`):
+
+```json
+{
+  "order_id": "order-01912f91",
+  "buyer": { "user_id": "user-01912f10", "email": null },
+  "payment_reference": "payment-01912f95",
+  "paid_at": "2026-08-30T09:05:00Z"
+}
+```
+
+`order.cancelled`:
+
+```json
+{
+  "order_id": "order-01912f91",
+  "buyer": { "user_id": "user-01912f10", "email": "buyer@example.com" },
+  "reason": "Hết hàng",
+  "cancelled_at": "2026-08-30T10:00:00Z"
+}
+```
+
+> `compensation action` (nhắc ở bảng §6.1) chưa có schema field cụ thể — phụ thuộc seller
+> cancel/refund policy chưa chốt (xem §8 mục 7), nên chưa đưa vào ví dụ JSON để tránh set field
+> giả không đúng thực tế.
+
+`invoice.issued`:
+
+```json
+{
+  "invoice_id": "invoice-01912fb0",
+  "order_id": "order-01912f91",
+  "invoice_number": "INV-20260830-0001",
+  "buyer": { "user_id": "user-01912f10", "email": "buyer@example.com" },
+  "total_amount": 1094000,
+  "pdf_url": "https://cdn.taca.vn/invoices/invoice-01912fb0.pdf",
+  "issued_at": "2026-08-30T09:10:00Z"
+}
+```
+
 ### 6.2 Event lắng nghe
 
 | Nguồn | Event | Xử lý |

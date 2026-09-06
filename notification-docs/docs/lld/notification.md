@@ -180,6 +180,9 @@ Envelope command:
 
 Payload producer không gửi password/token/card; consumer phải reject field ngoài allowlist.
 
+> Field recipient trong payload domain event: xem `order-commerce.md` §6.1 — `buyer.user_id`
+> (bắt buộc) / `buyer.email` (optional với event chỉ phát `IN_APP`, ví dụ `order.paid`).
+
 ### 6.3 Reliability
 
 - Kafka commit sau MySQL persist; provider send retry độc lập với consumer offset.
