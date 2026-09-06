@@ -44,6 +44,7 @@ erDiagram
 | `recipient_hash` | char(64) | HMAC-SHA256 của recipient (filter admin, không lộ thô). |
 | `category` | enum | `ORDER`/`SHIPMENT`/`PAYMENT`/`REVIEW`/`CONVERSATION`/`SHOP`/`SECURITY`/`MARKETING`. |
 | `reference_type`/`reference_id` | enum/string | Deep-link reference (nullable). |
+| `processing_started_at` | Date | DATETIME(6), nullable. Lease cho atomic claim; sweeper chỉ reclaim khi lease đã quá `staleBefore`. |
 
 ### 3.2 `delivery_attempts`
 
@@ -65,7 +66,7 @@ erDiagram
 
 | Bảng | Index |
 |---|---|
-| `notifications` | unique `(recipient_user_id,dedupe_key,channel)`; `(recipient_user_id,created_at)`; `(recipient_user_id,read_status,created_at)`; `(status,scheduled_at)` |
+| `notifications` | unique `(recipient_user_id,dedupe_key,channel)`; `(recipient_user_id,created_at)`; `(recipient_user_id,read_status,created_at)`; `(status,scheduled_at)`; `(recipient_hash)`; `(status,processing_started_at)` (phục vụ `tryClaimProcessing`/`findPendingDelivery`) |
 | `delivery_attempts` | `(notification_id,attempt_no)`; `(status,started_at)` |
 | `notification_preferences` | unique `(user_id,channel,category)` |
 | `templates` | unique `(key,version,locale)`; `(key,status)` |
@@ -91,6 +92,9 @@ Channel `EMAIL/IN_APP`; status `QUEUED/PROCESSING/SENT/FAILED/SKIPPED/EXPIRED`; 
 | 007 | Tạo bảng `processed_events` (unique `event_id`, unique `dedupe_key`) | — |
 | 008 | Thêm index `(recipient_user_id,dedupe_key,channel)` unique, `(recipient_user_id,created_at)`, `(status,scheduled_at)` trên `notifications` | `notifications` |
 | 009 | Seed template v1 + fixture cho local/test (§6.2) | Tất cả bảng trên |
+| 010 | Thêm index `(status,processing_started_at)` trên `notifications`, phục vụ `tryClaimProcessing`/`findPendingDelivery` | 009 |
+
+> Lưu ý (ngoài phạm vi cập nhật lần này): trên code thực tế, cột `processing_started_at` được thêm ở migration `1750000000009-delivery-hardening.ts`, cùng đợt còn tạo bảng `delivery_outbox` và mở rộng enum `delivery_attempts.status` (`SKIPPED`, `RETRY_EXHAUSTED`) — các thay đổi này chưa được phản ánh ở bảng migration/db doc trên (dòng 009 ở đây đang mô tả seed, không phải delivery-hardening). Migration 010 (index mới) phụ thuộc đúng vào migration thêm cột `processing_started_at` đó, dù số thứ tự trong docs chưa khớp code.
 
 ### 6.2 Seed tối thiểu
 
