@@ -1,6 +1,6 @@
 # API Spec — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` và `docs/db/product-catalog.md` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/product-catalog.md` và `docs/db/product-catalog.md` · Cập nhật: `2026-09-17`
 > Base path nội bộ: `/api/v1` · Public traffic đi qua API Gateway · Content-Type: `application/json`
 
 ## 1. Quy ước API chung
@@ -97,12 +97,13 @@ Response `200`:
   "data": [{
     "product_id": "product-01912f31",
     "shop": { "shop_id": "shop-01912f30", "name": "Taca Shop", "slug": "taca-shop", "logo_url": null },
-    "primary_category_id": "cat-01912f20",
+    "primary_category_id": "category-01912f20",
     "tax_rate_bps": 1000,
     "title": "Áo khoác cotton",
     "slug": "ao-khoac-cotton",
     "price": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
     "cover_media": { "media_id": "media-01912f32", "url": "https://cdn.example/signed", "content_type": "image/webp" },
+    "rating_summary": { "avg": 4.6, "count": 128 },
     "stock_display": { "status": "IN_STOCK", "as_of": "2026-08-30T08:59:59Z" }
   }],
   "meta": { "page": 1, "size": 20, "total": 1, "has_next": false, "request_id": "req-01912f50" }
@@ -112,6 +113,8 @@ Response `200`:
 Ràng buộc: `min_price/max_price` là integer VND; public không được query draft/blocked/archived; stock display có thể `UNKNOWN`/`STALE` và không phải purchase guarantee. Với `product_ids`, product không tồn tại/không visible bị bỏ khỏi kết quả (không lỗi) — caller tự phát hiện ID nào biến mất.
 
 `tax_rate_bps` là **thuế suất VAT của sản phẩm**, đơn vị basis point (10% = `1000`). Product Catalog đã giải quyết xong việc thừa kế theo cây danh mục và trả ra giá trị cuối cùng — caller không phải leo cây. Order-Commerce snapshot giá trị này vào `order_items` tại lúc checkout để tách thuế ghi hoá đơn (`order-commerce-docs/docs/lld/order-commerce.md` §6.4). Giá trong `price` **đã bao gồm** VAT.
+
+`rating_summary` là cache **read-only** từ event `rating.aggregate.updated` (sở hữu bởi `rating-comment`); `avg: null, count: 0` nếu sản phẩm chưa có review nào.
 
 #### `GET /products/{productId}`
 
@@ -123,9 +126,10 @@ Response `200` trả `ProductDetail` gồm `product_id`, shop snapshot, title/de
     "product_id": "product-01912f31",
     "status": "ACTIVE",
     "title": "Áo khoác cotton",
-    "primary_category_id": "cat-01912f20",
+    "primary_category_id": "category-01912f20",
     "tax_rate_bps": 1000,
     "price": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
+    "rating_summary": { "avg": 4.6, "count": 128 },
     "attributes": [{ "key": "material", "label": "Chất liệu", "type": "ENUM", "values": ["cotton"] }],
     "skus": [{
       "sku_id": "sku-01912f33",
@@ -149,14 +153,14 @@ Response `200` trả `ProductDetail` gồm `product_id`, shop snapshot, title/de
 {
   "data": [
     {
-      "category_id": "cat-01912f20",
+      "category_id": "category-01912f20",
       "name": "Điện tử",
       "slug": "dien-tu",
-      "path": "/cat-01912f20",
+      "path": "/category-01912f20",
       "depth": 1,
       "tax_rate_bps": 1000,
       "children": [
-        { "category_id": "cat-01912f21", "name": "Điện thoại", "slug": "dien-thoai", "path": "/cat-01912f20/cat-01912f21", "depth": 2, "tax_rate_bps": null, "children": [] }
+        { "category_id": "category-01912f21", "name": "Điện thoại", "slug": "dien-thoai", "path": "/category-01912f20/category-01912f21", "depth": 2, "tax_rate_bps": null, "children": [] }
       ]
     }
   ],
@@ -168,7 +172,7 @@ Response `200` trả `ProductDetail` gồm `product_id`, shop snapshot, title/de
 
 ```json
 {
-  "data": { "category_id": "cat-01912f21", "name": "Điện thoại", "slug": "dien-thoai", "path": "/cat-01912f20/cat-01912f21", "depth": 2, "tax_rate_bps": null, "children": [] },
+  "data": { "category_id": "category-01912f21", "name": "Điện thoại", "slug": "dien-thoai", "path": "/category-01912f20/category-01912f21", "depth": 2, "tax_rate_bps": null, "children": [] },
   "meta": { "request_id": "req-01912f52" }
 }
 ```
@@ -213,7 +217,7 @@ Query: `page`, `size`, `status`, `q` (title/slug basic), `sort`. Trả tất c�
       "title": "Áo khoác cotton",
       "slug": "ao-khoac-cotton",
       "status": "DRAFT",
-      "primary_category_id": "cat-01912f20",
+      "primary_category_id": "category-01912f20",
       "price_summary": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
       "sku_count": 3,
       "cover_media": { "media_id": "media-01912f32", "url": "https://cdn.example/signed" },
@@ -264,7 +268,7 @@ Trả editor detail gồm product fields, definitions, SKU set, category assignm
     "skus": [
       { "sku_id": "sku-01912f33", "seller_sku": "AC-COTTON-01", "attributes": { "material": "cotton" }, "price_override": null, "status": "ACTIVE" }
     ],
-    "categories": { "primary_category_id": "cat-01912f20", "secondary_category_ids": [] },
+    "categories": { "primary_category_id": "category-01912f20", "secondary_category_ids": [] },
     "media": [{ "media_id": "media-01912f32", "url": "https://cdn.example/signed", "status": "READY", "is_cover": true }],
     "shop_projection": { "shop_id": "shop-01912f30", "status": "ACTIVE", "kyc_status": "APPROVED" },
     "block_reason": null
@@ -292,6 +296,8 @@ Request fields optional:
 
 Response `200`: product summary + new version. Không được đổi `product_id`, `shop_id`, audit history; archived/blocked theo state policy trả `PRODUCT_ARCHIVED`/`PRODUCT_BLOCKED`.
 
+`price_summary` gửi ở endpoint này chỉ có tác dụng khi product **chưa có SKU nào**. Khi product đã có SKU, giá trị `price_summary` này bị ghi đè ở lần `PUT .../skus` kế tiếp (application service tự tính lại từ SKU `ACTIVE`) — đây là hành vi đúng theo thiết kế, không phải lỗi.
+
 #### `PUT /seller/products/{productId}/skus`
 
 Request:
@@ -317,6 +323,8 @@ Request:
 Server tự canonicalize `variant_key`; duplicate hoặc sai type trả `PRODUCT_SKU_DUPLICATE`/`PRODUCT_ATTRIBUTE_INVALID`. Toàn request atomic, không partial write. `sku_id` đã được Inventory biết không hard-delete; chuyển lifecycle và phát event.
 
 `display_as` (`PLAIN`/`COLOR_SWATCH`/`IMAGE_THUMB`) và `value_meta` (`swatch_hex`, `swatch_media_id`) là **tùy chọn, chỉ hint render** cho Frontend Seller SKU builder ("Attribute type / Image | Color | Text"); không tham gia canonicalize `variant_key`, không bắt buộc khi publish. Bỏ trống = `PLAIN`.
+
+`price_override` **chỉ override `sale_price`** của SKU; `base_price` luôn kế thừa từ `products.price_summary.base_price`, không có field override riêng cho base. `skus[].price` trả về ở endpoint đọc (`GET /products/{productId}`, `GET /seller/products/{productId}`) là giá trị **đã resolve** (`sale_price = price_override ?? products.price_summary.sale_price`), không phải giá trị thô lưu trong `price_override`.
 
 #### `PUT /seller/products/{productId}/categories`
 
@@ -424,7 +432,7 @@ Admin list hỗ trợ `page`, `size`, `status`, `shop_id`, `category_id`, `q`, `
 ```json
 {
   "data": [
-    { "product_id": "product-01912f31", "title": "Áo khoác cotton", "shop_id": "shop-01912f30", "status": "ACTIVE", "category_id": "cat-01912f20", "updated_at": "2026-08-30T09:05:00Z" }
+    { "product_id": "product-01912f31", "title": "Áo khoác cotton", "shop_id": "shop-01912f30", "status": "ACTIVE", "category_id": "category-01912f20", "updated_at": "2026-08-30T09:05:00Z" }
   ],
   "meta": { "request_id": "req-01912f59", "page": 1, "size": 20, "total": 4210 }
 }
@@ -438,8 +446,8 @@ Detail trả seller/admin fields, audit summary, KYC/shop projection và invento
     "product_id": "product-01912f31",
     "status": "ACTIVE",
     "shop_projection": { "shop_id": "shop-01912f30", "status": "ACTIVE", "kyc_status": "APPROVED" },
-    "audit_summary": [{ "action": "PUBLISHED", "actor": "seller-usr-01912f10", "occurred_at": "2026-08-30T09:05:00Z" }],
-    "inventory_display": { "status": "IN_STOCK", "as_of": "2026-08-30T08:59:59Z" }
+    "audit_summary": [{ "action": "PUBLISH", "actor": "seller-usr-01912f10", "occurred_at": "2026-08-30T09:05:00Z" }],
+    "stock_display": { "status": "IN_STOCK", "as_of": "2026-08-30T08:59:59Z" }
   },
   "meta": { "request_id": "req-01912f60" }
 }
@@ -474,7 +482,7 @@ Query: `status`, `parent_id`, `page`, `size`; trả cả active/inactive/archive
 ```json
 {
   "data": [
-    { "category_id": "cat-01912f20", "name": "Điện tử", "slug": "dien-tu", "parent_id": null, "path": "/cat-01912f20", "depth": 1, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 1 }
+    { "category_id": "category-01912f20", "name": "Điện tử", "slug": "dien-tu", "parent_id": null, "path": "/category-01912f20", "depth": 1, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 1 }
   ],
   "meta": { "request_id": "req-01912f63", "page": 1, "size": 20, "total": 42 }
 }
@@ -485,7 +493,7 @@ Query: `status`, `parent_id`, `page`, `size`; trả cả active/inactive/archive
 Request: `{ "parent_id": null, "name": "Điện tử", "slug": "dien-tu", "sort_order": 10, "tax_rate_bps": 1000 }`.
 
 ```json
-{ "data": { "category_id": "cat-01912f20", "name": "Điện tử", "slug": "dien-tu", "parent_id": null, "path": "/cat-01912f20", "depth": 1, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 1 }, "meta": { "request_id": "req-01912f64" } }
+{ "data": { "category_id": "category-01912f20", "name": "Điện tử", "slug": "dien-tu", "parent_id": null, "path": "/category-01912f20", "depth": 1, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 1 }, "meta": { "request_id": "req-01912f64" } }
 ```
 
 Validate cycle/depth/slug/name. `tax_rate_bps` là thuế suất VAT của danh mục, đơn vị basis point (10% = `1000`), khoảng hợp lệ 0–10000 — xem `docs/db/product-catalog.md` §3.x. **Bắt buộc khi tạo category root** (không cha), vì thuế suất phải thừa kế được xuống category con; category con để trống thì thừa kế từ cha. Thiếu `tax_rate_bps` ở category root → `400 PRODUCT_CATEGORY_INVALID`.
@@ -495,7 +503,7 @@ Validate cycle/depth/slug/name. `tax_rate_bps` là thuế suất VAT của danh 
 Request: `{ "version": 1, "parent_id": "category-...", "name": "Điện tử gia dụng", "status": "ACTIVE", "tax_rate_bps": 1000 }`.
 
 ```json
-{ "data": { "category_id": "cat-01912f20", "name": "Điện tử gia dụng", "slug": "dien-tu-gia-dung", "parent_id": "category-01912f01", "path": "/category-01912f01/cat-01912f20", "depth": 2, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 2 }, "meta": { "request_id": "req-01912f65" } }
+{ "data": { "category_id": "category-01912f20", "name": "Điện tử gia dụng", "slug": "dien-tu-gia-dung", "parent_id": "category-01912f01", "path": "/category-01912f01/category-01912f20", "depth": 2, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 2 }, "meta": { "request_id": "req-01912f65" } }
 ```
 
 Move subtree phải cập nhật `path/depth` atomically; không vượt depth 5; collision trả `PRODUCT_SLUG_CONFLICT` hoặc `PRODUCT_CATEGORY_INVALID`.
@@ -507,7 +515,7 @@ Move subtree phải cập nhật `path/depth` atomically; không vượt depth 5
 Request: `{ "version": 2, "reason": "Taxonomy mới" }`.
 
 ```json
-{ "data": { "category_id": "cat-01912f20", "status": "ARCHIVED", "version": 3 }, "meta": { "request_id": "req-01912f66" } }
+{ "data": { "category_id": "category-01912f20", "status": "ARCHIVED", "version": 3 }, "meta": { "request_id": "req-01912f66" } }
 ```
 
 Không hard-delete; không nhận assignment mới; phải có migration policy nếu category đang được dùng.
@@ -557,6 +565,6 @@ Rate limit, trace ID, JWT invalid/expired và generic 401/403 có thể được
 | 5 | `price_override=null` fallback theo product price policy. | Cần chốt schema effective price nếu SKU có pricing độc lập. | Product + Order owner |
 | 6 | Media complete có thể trả `SCANNING` nếu virus scan async. | Ảnh hưởng publish readiness và frontend polling. | Security/DevOps |
 | 7 | Admin unblock baseline luôn về `INACTIVE`. | Nếu cần restore active một bước, phải thêm permission/endpoint explicit. | Product owner |
-| 8 | Shop/KYC event projection có đủ `shop_status`, `kyc_status`, `source_version`. | Ảnh hưởng publish gate và shop visibility. | Auth User owner |
-| 9 | `GET /products?product_ids=` (batch ≤100) dùng để hydrate thẻ sản phẩm cho Favorites (`auth-user`) và Cart (`order-commerce`); public shop **profile** `GET /shops/{id}` thuộc `auth-user`, Product Catalog chỉ giữ `GET /shops/{slug}/products`. | Nếu Shop hero cần một endpoint hợp nhất, cần BFF hoặc chuyển ownership. | Product + Auth User owner |
+| 8 | Payload event `shop.kyc.*` thật của Auth User **không có** field `kyc_status`/`source_version`/`logo_url` sẵn (khớp `auth-user-docs/docs/lld/auth-user.md` §6.2) — Product tự suy `kyc_status` từ `event_type` (`submitted`→`PENDING`, `approved`→`APPROVED`, `needs_info`→`NEEDS_INFO`, `rejected`→`REJECTED`, `expired`→`EXPIRED`) và dedupe bằng `event_id`+`occurred_at`. | Nếu Auth User đổi payload, `ShopProjectionService` suy sai `kyc_status`. | Auth User owner |
+| 9 | `GET /products?product_ids=` (batch ≤100) dùng để hydrate thẻ sản phẩm cho Favorites (`auth-user`) và Cart (`order-commerce`); public shop **profile** `GET /shops/{shopId}` thuộc `auth-user`, Product Catalog chỉ giữ `GET /shops/{shopId}/products` — cả hai khoá bằng `shop_id` UUID, không phải slug. | Nếu Shop hero cần một endpoint hợp nhất, cần BFF hoặc chuyển ownership. | Product + Auth User owner |
 | 10 | `display_as`/`value_meta` chỉ là hint render, không đổi `variant_key`; khớp chip "Attribute type Image/Color/Text" trong Penpot mà không thêm `AttributeType` mới. | Nếu cần ràng buộc swatch bắt buộc, thêm validate. | Product + Frontend |

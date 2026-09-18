@@ -1,6 +1,6 @@
 # Test Plan — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · `docs/api/product-catalog.md` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · `docs/api/product-catalog.md` · Cập nhật: `2026-09-17`
 > Phạm vi: Product/SPU, SKU/variant, dynamic attributes, category, media metadata, shop/KYC projection, inventory display projection, outbox và public/seller/admin API.
 
 ## 1. Chuẩn bị kiểm thử
@@ -25,6 +25,7 @@
 - Media `READY` cover, `UPLOADING`, `SCANNING`, `REJECTED`, checksum sai, vượt 12 ảnh/3 video.
 - Category root, child depth 5, parent inactive, parent cycle và assignment 1 primary + 2 secondary.
 - Outbox pending, retry lần 1–3, dead-letter, duplicate consumer event.
+- Rating aggregate event `avg`/`count` mới/cũ và product chưa có review nào (`rating_summary=null`).
 
 ### 1.3 Tiêu chí chung
 
@@ -70,8 +71,9 @@
 | PC-API-006 | `GET /products/{id}` | Inventory snapshot stale/unknown | `200`, metadata `STALE`/`UNKNOWN`, không synchronous deduction. |
 | PC-API-007 | `GET /categories` | Tree depth ≤5 | `200`, chỉ category public `ACTIVE`, children đúng thứ tự. |
 | PC-API-008 | `GET /categories/{id}` | Inactive/archived public | Không expose theo visibility policy; error/status ổn định. |
-| PC-API-009 | `GET /shops/{slug}/products` | Shop active/suspended | Listing đúng shop snapshot/visibility; không bypass suspended policy. |
+| PC-API-009 | `GET /shops/{shopId}/products` | Shop active/suspended | Listing đúng shop snapshot/visibility; không bypass suspended policy. |
 | PC-API-009b | `GET /products?product_ids=` | 100 ID (vài ID archived/không tồn tại), >100 ID | Trả đúng product `ACTIVE` visible, bỏ ID biến mất không lỗi; >100 ID → `400`. Dùng hydrate Favorites/Cart. |
+| PC-API-009c | `GET /products/{id}`, `GET /products` | Category root có `tax_rate_bps=1000`, category con để `null` | `tax_rate_bps` trả về đã resolve theo cây kế thừa. |
 
 ### 3.2 Seller product API
 
@@ -131,10 +133,11 @@
 | PC-INT-001 | Inventory | Event snapshot version 42 rồi 41 | Version 41 bị bỏ qua; projection vẫn 42. |
 | PC-INT-002 | Inventory | Duplicate `event_id` replay | Không double-write/không đổi quantity. |
 | PC-INT-003 | Inventory | Product endpoint bị gọi để reserve/deduct | Không tồn tại route; Product không mutate inventory. |
-| PC-INT-004 | Auth User | Shop/KYC approved/needs_info/suspended event | Snapshot upsert/dedupe; publish gate đúng. |
+| PC-INT-004 | Auth User | Shop/KYC approved/needs_info/`shop.status_changed=SUSPENDED` event với payload thật (không có `kyc_status`/`source_version`) | Snapshot upsert đúng; `kyc_status` được Product tự suy từ `event_type`; dedupe theo `event_id`+`occurred_at`; publish gate đúng. |
 | PC-INT-005 | Search | Product publish khi Kafka unavailable | Domain transaction giữ đúng; outbox retry/DLQ; không báo Search đã index. |
 | PC-INT-006 | Outbox | Retry 3 lần rồi fail | `attempt_count`, error redacted, dead-letter đúng; replay được. |
 | PC-INT-007 | MongoDB | Fail giữa domain/outbox/audit | Transaction rollback toàn bộ hoặc recovery rõ ràng; không orphan event. |
+| PC-INT-008 | Rating-Comment | `rating.aggregate.updated` version mới/cũ, duplicate `event_id` | Upsert `products.rating_summary`; bỏ qua event cũ; dedupe đúng; không có rating thì `avg=null, count=0`. |
 | PC-SEC-001 | IDOR | Seller đổi productId shop khác, object key khác | `403 PRODUCT_FORBIDDEN`; không đọc/sửa/upload chéo tenant. |
 | PC-SEC-002 | Input | HTML/script, oversized JSON, prototype-like key | Sanitize/reject, không XSS/NoSQL injection. |
 | PC-SEC-003 | Admin | Role thấp gọi block/category mutation | Deny + audit security event. |
@@ -152,8 +155,9 @@
 | `CategoryPolicy` | Depth 1–5, cycle detection, primary/secondary limits, inactive/archived assignment. |
 | `MediaPolicy` | Type/size/quota, one READY cover, object key tenant binding, checksum. |
 | `InventoryProjectionService` | Quantity non-negative, stock status threshold 5, stale after 60s, source version monotonic, dedupe. |
-| `ShopProjectionService` | Allowlist fields, source version, KYC transition projection, suspended status. |
-| `OutboxPublisher` | Retry 3/backoff 2s, redaction, DLQ, aggregate key, idempotent publish marker. |
+| `ShopProjectionService` | Allowlist fields (`shop.updated` không có `logo_url` sẵn → resolve `logo_object_key` thành URL), suy `kyc_status` từ `event_type` (payload KYC không có field này), dedupe theo `event_id`+`occurred_at` (không có `source_version` ở event KYC), suspended status. |
+| `RatingProjectionService` | Upsert `rating_summary`, dedupe theo `event_id`, giá trị mặc định khi chưa có review (`avg=null, count=0`). |
+| `OutboxPublisher` | Retry 3/backoff 2s, redaction, DLQ, aggregate key, idempotent publish marker, envelope có `version` cho consumer order. |
 | `AuthorizationPolicy` | Seller owner/staff scope, admin roles, step-up, public visibility. |
 | `PaginationMapper` | Default 20, max 100, page bounds, stable sort, no unbounded query. |
 
@@ -168,3 +172,4 @@
 | 5 | Search indexing eventual qua outbox/Kafka. | Cần thêm consumer contract test ở Search để xác nhận schema/version. | Search owner |
 | 6 | UI acceptance dựa trên Penpot flows hiện có; breakpoint/browser matrix chưa chốt. | Cần bổ sung visual regression matrix khi frontend chọn framework/browser support. | Frontend lead |
 | 7 | API error `401/403` có thể được Gateway normalize. | Cần contract test Gateway ↔ Product để tránh mất `PRODUCT_FORBIDDEN`/request ID. | API Gateway owner |
+| 8 | Các test case PC-API-009/PC-INT-004/PC-INT-008 và unit case `ShopProjectionService`/`RatingProjectionService` được cập nhật theo `docs/lld/product-catalog.md` §6.3/§6.5. | Nếu contract thật của Auth User/Rating-Comment khác, phải sửa lại test case và fixture tương ứng. | Product + Auth User + Rating owner |

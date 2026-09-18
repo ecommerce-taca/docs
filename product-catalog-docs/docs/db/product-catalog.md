@@ -1,6 +1,6 @@
 # Database — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` (đối chiếu với HLD `EcommercePlatform-v4(6).excalidraw` và Penpot `New File 1.penpot.zip`) · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/product-catalog.md` (đối chiếu với HLD `EcommercePlatform-v4(6).excalidraw` và Penpot `New File 1.penpot.zip`) · Cập nhật: `2026-09-17`
 > Baseline: MongoDB 8.x + Mongoose · database riêng `product_catalog`
 
 ## 1. Quy ước chung
@@ -78,6 +78,11 @@ Document mẫu rút gọn:
     "source_version": 8,
     "updated_at": "2026-08-30T08:59:00.000Z"
   },
+  "rating_summary": {
+    "avg": null,
+    "count": 0,
+    "updated_at": null
+  },
   "published_at": null,
   "unpublished_at": null,
   "archived_at": null,
@@ -98,9 +103,10 @@ Document mẫu rút gọn:
 | `description` | string | Có khi publish | Tối đa 100.000 ký tự; sanitize rich text/HTML allowlist. |
 | `brand` | string/null | Không | Tối đa 120 Unicode characters. |
 | `status` | enum | Có | `DRAFT`, `ACTIVE`, `INACTIVE`, `BLOCKED`, `ARCHIVED`. |
-| `price_summary` | object | Có khi publish | Integer VND; thể hiện giá đại diện/min price của SPU (tính từ SKU set); giá SKU là nguồn kiểm tra cuối khi checkout. |
+| `price_summary` | object | Có khi publish | Integer VND; thể hiện giá đại diện/min price của SPU (tính từ SKU set); giá SKU là nguồn kiểm tra cuối khi checkout. Khi tạo product chưa có SKU, seller nhập `price_summary` làm giá khởi tạo; ngay khi SKU set không rỗng, `price_summary` được application service **tự tính lại** (`base` = min `base_price` của SKU `ACTIVE`, `sale` = min `sale_price` tương ứng) mỗi lần `PUT /seller/products/{id}/skus`. |
 | `primary_category_id` | string/null | Có khi publish | Category phải `ACTIVE`. |
 | `shop_snapshot` | object | Có | Projection allowlist từ Auth User; không phải source of truth KYC. |
+| `rating_summary` | object/null | Không | `{avg: double\|null, count: long, updated_at: Date\|null}` — cache từ event `rating.aggregate.updated` (`rating.events.v1`, sở hữu bởi `rating-comment`); chỉ display, không phải source of truth rating. |
 | `version` | long | Có | Atomic compare-and-set. |
 
 Không nhúng `available_qty`, `reserved_qty` vào product aggregate. Stock display đi qua `inventory_projections` để tránh nhầm Product là inventory ledger.
@@ -117,12 +123,14 @@ Tách collection để giới hạn kích thước product document và hỗ tr�
 | `seller_sku` | string | Có | Unique trong shop, trim/normalize. |
 | `attributes` | object map | Có | Tối đa 50 key; type theo definitions. |
 | `variant_key` | string | Có | Canonical từ variant dimensions; unique trong product. |
-| `price_override` | long/null | Không | Integer VND trong range; fallback price policy phải chốt ở service. |
+| `price_override` | long/null | Không | Integer VND trong range; **chỉ override `sale_price`** của SKU so với `products.price_summary.base_price`/`sale_price` — `base_price` luôn kế thừa từ product, không có field override riêng cho base. |
 | `status` | enum | Có | `DRAFT`, `ACTIVE`, `INACTIVE`, `ARCHIVED`. |
 | `media_ids` | string[] | Không | Chỉ tham chiếu `product_media` cùng product. |
 | `version` | long | Có | Atomic compare-and-set. |
 
 `attributes` không được hard-code `color`/`size`. `variant_key` phải được tạo lại ở server, không tin chuỗi client gửi.
+
+`skus[].price` trả về ở API đọc (`docs/api/product-catalog.md` §3.1/§3.2) là giá **đã resolve**: `base_price = products.price_summary.base_price`, `sale_price = price_override ?? products.price_summary.sale_price`. Đây khác với field lưu trữ thô `price_override` ở trên — client không được tự suy `base_price` từ `price_override`.
 
 ### 3.3 `attribute_definitions`
 
@@ -156,7 +164,7 @@ Giới hạn product: tối đa 50 definitions. Category definition khi áp dụ
 | `depth` | int | Có | Root depth 1; tối đa 5. |
 | `status` | enum | Có | `ACTIVE`, `INACTIVE`, `ARCHIVED`. |
 | `sort_order` | int | Có | Không âm. |
-| `tax_rate_bps` | int/null | Y* | **Thuế suất VAT của danh mục**, đơn vị *basis point* (1% = 100 bps). VD 10% = `1000`, 5% = `500`, 0% = `0`. Khoảng hợp lệ 0–10000. `null` = thừa kế từ `parent_id`. *`Y*`: nullable cho category con, **bắt buộc non-null cho category root** (`parent_id IS NULL`) — validate ở application layer vì MySQL không check CHECK constraint điều kiện chéo cột dễ dàng. |
+| `tax_rate_bps` | int/null | Y* | **Thuế suất VAT của danh mục**, đơn vị *basis point* (1% = 100 bps). VD 10% = `1000`, 5% = `500`, 0% = `0`. Khoảng hợp lệ 0–10000. `null` = thừa kế từ `parent_id`. *`Y*`: nullable cho category con, **bắt buộc non-null cho category root** (`parent_id IS NULL`) — validate ở application layer vì MongoDB schema validator không dễ diễn đạt ràng buộc điều kiện chéo trường (conditional cross-field constraint) như CHECK constraint của RDBMS. |
 | `version` | long | Có | Atomic update. |
 
 Category inactive/archived không nhận assignment mới. Không hard-delete category đã có product reference.
@@ -352,3 +360,5 @@ Seed không chứa KYC documents, token thật hoặc media bytes thật.
 | 6 | Media virus scan chưa có provider; `SCANNING` có thể là trạng thái trung gian. | Ảnh hưởng điều kiện chuyển `READY` và publish. | Security/DevOps |
 | 7 | Outbox retention/DLQ retention chưa có thời hạn chính thức. | Ảnh hưởng disk sizing và replay window. | Platform owner |
 | 8 | MongoDB schema validator và Mongoose đều được triển khai. | Nếu chỉ dùng application validation, dữ liệu ngoài service có thể phá invariant. | Tech lead |
+| 9 | `price_summary` tự động tính lại từ SKU set (min base/sale của SKU `ACTIVE`) mỗi lần `PUT .../skus`; `price_override` chỉ override `sale_price`, không có override riêng cho `base_price`. | Nếu policy giá thật khác (VD override cả base), phải đổi schema `skus` và logic resolve giá ở API. | Product owner |
+| 10 | `rating_summary` là field mới bổ sung trên `products`, cache từ event `rating.aggregate.updated` của `rating-comment`; chỉ lưu `avg`/`count`, không lưu `distribution`. | Nếu PDP cần hiển thị distribution hoặc rating theo SKU, phải mở rộng field. | Product + Rating owner |
