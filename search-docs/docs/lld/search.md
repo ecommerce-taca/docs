@@ -183,7 +183,7 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 }
 ```
 
-(traceparent/request_id nằm ở Kafka header, không nằm trong payload — xem docs/00-conventions.md §7)
+(traceparent/request_id nằm ở Kafka header, không nằm trong payload)
 
 ### 6.3 Reliability
 

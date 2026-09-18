@@ -175,7 +175,7 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `PENDING_COD → SUCCESS` (capture
 | `wallet.events.v1` | `wallet.allocated` | order/shop/gross/commission/tax/net |
 | `wallet.events.v1` | `payout.succeeded/failed` | payout/shop/amount/status + `owner_user_id`, `owner_email` (seller) — recipient bắt buộc cho template EMAIL của Notification |
 
-> Field recipient (`buyer`/`owner`) bắt buộc có trong payload mọi event được Notification map sang template EMAIL (quyết định 2026-09-18, xem `docs/00-conventions.md` §7).
+> Field recipient (`buyer`/`owner`) bắt buộc có trong payload mọi event được Notification map sang template EMAIL (quyết định 2026-09-18).
 
 ### 6.2 Event lắng nghe
 

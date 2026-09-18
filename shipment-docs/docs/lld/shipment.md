@@ -147,7 +147,7 @@ Canonical transition: `NOT_CREATED → CREATED → PICKED_UP → IN_TRANSIT → 
 | `shipment.events.v1` | `shipment.failed` | shipment/order/reason/source + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
 | `shipment.events.v1` | `shipment.cancelled` | shipment/order/reason/source |
 
-> Field recipient (`buyer`) bắt buộc trong payload mọi event được Notification map sang template EMAIL (quyết định 2026-09-18, xem `docs/00-conventions.md` §7).
+> Field recipient (`buyer`) bắt buộc trong payload mọi event được Notification map sang template EMAIL (quyết định 2026-09-18).
 
 ### 6.2 Event lắng nghe
 
