@@ -237,7 +237,7 @@ PUT  → validate full_name, phone?, date_of_birth?
 | `date_of_birth` | Nullable; ngày lịch ISO-8601 `YYYY-MM-DD`; không nhận timestamp. |
 | Role/status | Không cho client sửa qua profile endpoint. |
 
-### 3.8 Address book — `GET/POST /api/v1/users/me/addresses`, `PUT/DELETE /api/v1/users/me/addresses/{id}`
+### 3.8 Address book — `GET/POST /api/v1/users/me/addresses`, `PUT/DELETE /api/v1/users/me/addresses/{addressId}`
 
 ```text
 1 Xác thực JWT và ownership (address.user_id == token.sub)

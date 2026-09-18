@@ -156,7 +156,7 @@ Response `201`:
 
 Mỗi shop-order **một** shipment; gọi trùng trả shipment cũ (`200`, không tạo mới). `cod_amount > 0` chỉ hợp lệ khi order dùng COD. Carrier timeout → **không** retry create một cách mù quáng: shipment vào `PENDING_RECONCILIATION`, job đối soát sẽ tra theo `Idempotency-Key`/`order_id`.
 
-`carrier` trong body này là carrier **seller đã chọn** ở §3.1a, do Order-Commerce truyền xuống nguyên văn khi seller bấm "Xác nhận & chuẩn bị" (`PATCH /seller/orders/{id}/fulfill` action=`SHIP` — xem `order-commerce-docs/docs/api/order-commerce.md` §3.7). Shipment **không** tự chọn carrier thay seller; carrier không nằm trong danh sách khả dụng của order đó (theo §3.1a tại thời điểm gọi) → `400 SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER`.
+`carrier` trong body này là carrier **seller đã chọn** ở §3.1a, do Order-Commerce truyền xuống nguyên văn khi seller bấm "Xác nhận & chuẩn bị" (`PATCH /seller/orders/{orderId}/fulfill` action=`SHIP` — xem `order-commerce-docs/docs/api/order-commerce.md` §3.7). Shipment **không** tự chọn carrier thay seller; carrier không nằm trong danh sách khả dụng của order đó (theo §3.1a tại thời điểm gọi) → `400 SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER`.
 
 ### 3.4 Cancel
 

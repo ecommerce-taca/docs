@@ -28,7 +28,7 @@
 
 | ID | Endpoint/case | Expected |
 |---|---|---|
-| R-API-01 | `GET /products/{id}/reviews` public/filter/pagination | `200`, only published, aggregate correct. |
+| R-API-01 | `GET /products/{productId}/reviews` public/filter/pagination | `200`, only published, aggregate correct. |
 | R-API-02 | Create delivered eligible review | `201 PUBLISHED`, verified true, aggregate/outbox. |
 | R-API-02a | Create review 6 tháng sau `DELIVERED` | `201` — không có hạn tạo review, chỉ cần đơn `DELIVERED`. |
 | R-API-03 | Create not delivered/wrong item/wrong buyer | `409 REVIEW_NOT_ELIGIBLE`, no write. |

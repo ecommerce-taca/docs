@@ -31,7 +31,7 @@
 |---|---|---|
 | O-API-01 | `GET /cart` buyer/empty | `200`, own cart; empty items hợp lệ. |
 | O-API-02 | `POST /cart/items` valid/invalid/other user | `201` hoặc `400/403`; không trust user_id body. |
-| O-API-03 | `PUT/DELETE /cart/items/{id}` | Update/delete own; wrong scope not found/forbidden. |
+| O-API-03 | `PUT/DELETE /cart/items/{itemId}` | Update/delete own; wrong scope not found/forbidden. |
 | O-API-04 | `GET /vouchers/validate` valid/expired/wrong scope | `200 valid=false` hoặc correct voucher error; preview không redeem. |
 | O-API-04a | `GET /vouchers` không JWT | `200`, danh sách voucher `ACTIVE`; `eligible=null`; không lộ voucher `DRAFT`/`ARCHIVED`. |
 | O-API-04b | `GET /vouchers?cart_id=` có JWT | `eligible`/`discount_amount` tính đúng theo giỏ; voucher hết lượt trả `eligible=false` + `ineligible_reason=USAGE_LIMIT_REACHED`. |
@@ -45,7 +45,7 @@
 | O-API-09 | `POST /checkout` same idempotency key same payload | Same response/no duplicate. |
 | O-API-10 | Same key different payload | `409 ORDER_IDEMPOTENCY_CONFLICT`. |
 | O-API-11 | `GET /orders`, detail/status | Buyer only; snapshot immutable; no other buyer data. |
-| O-API-12 | `PATCH /orders/{id}/cancel` before shipping | `200 CANCELLED`, Inventory release command/event. |
+| O-API-12 | `PATCH /orders/{orderId}/cancel` before shipping | `200 CANCELLED`, Inventory release command/event. |
 | O-API-13 | Cancel shipped/delivered/wrong version | `409 ORDER_CANCEL_NOT_ALLOWED/ORDER_STATE_INVALID`. |
 | O-API-14 | Invoice pending/issued | `409 ORDER_INVOICE_NOT_READY` or issued metadata. |
 | O-API-15 | Seller list/detail own/other shop | Correct shop scope; no cross-tenant leak. |
@@ -55,7 +55,7 @@
 | O-API-19 | `POST/PUT/DELETE /admin/vouchers` với/không `VOUCHER_MANAGE` | Có quyền → tạo/sửa platform voucher; không quyền → `403`. `scope` bị ép `PLATFORM`. |
 | O-API-20 | Body voucher gửi kèm field audience/segment | Field lạ bị bỏ qua/`400`; v1 không hỗ trợ targeting. |
 | O-API-21 | `POST /checkout` `payment_method=COD` | `201` với `status=CONFIRMED`, `payment_status=PENDING_COD`, `payment_next_action.type=NONE`, `reservation_expires_at=null`. **Không** được trả `PENDING_PAYMENT`. |
-| O-API-22 | `GET /orders/{id}/status` đơn COD vừa đặt | Timeline bắt đầu bằng `CONFIRMED`, **không** có entry `PENDING_PAYMENT`. |
+| O-API-22 | `GET /orders/{orderId}/status` đơn COD vừa đặt | Timeline bắt đầu bằng `CONFIRMED`, **không** có entry `PENDING_PAYMENT`. |
 
 ### 3.1 Event/saga/reliability
 

@@ -469,7 +469,7 @@ Response `201`: `{ "data": { "reservation_id", "status": "RESERVED", "expires_at
 
 Thuế tính **theo danh mục**, mà danh mục do Product Catalog sở hữu. Order-Commerce không tự suy ra thuế suất và không lưu bảng thuế riêng.
 
-Thuế suất đi kèm ngay trong response `GET /products?product_ids=` / `GET /products/{id}` mà Checkout **đã gọi sẵn** để re-read giá — không thêm lượt gọi mạng nào:
+Thuế suất đi kèm ngay trong response `GET /products?product_ids=` / `GET /products/{productId}` mà Checkout **đã gọi sẵn** để re-read giá — không thêm lượt gọi mạng nào:
 
 ```json
 {

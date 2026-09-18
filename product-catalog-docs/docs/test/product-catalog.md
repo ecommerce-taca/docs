@@ -66,14 +66,14 @@
 | PC-API-001 | `GET /products` | Public listing mặc định | `200`, chỉ `ACTIVE`, pagination default 20. |
 | PC-API-002 | `GET /products` | `size=101`, price âm/decimal | `400 PRODUCT_INVALID_INPUT` hoặc validation tương ứng; không query unbounded. |
 | PC-API-003 | `GET /products` | category/shop/status filter | Kết quả đúng index/scope; public không override status để lấy draft. |
-| PC-API-004 | `GET /products/{id}` | Active detail có nhiều SKU | `200`, dynamic attrs, price VND, media READY, stock per SKU. |
-| PC-API-005 | `GET /products/{id}` | Draft/blocked/archived/nonexistent | `404 PRODUCT_NOT_FOUND`; không leak existence theo public policy. |
-| PC-API-006 | `GET /products/{id}` | Inventory snapshot stale/unknown | `200`, metadata `STALE`/`UNKNOWN`, không synchronous deduction. |
+| PC-API-004 | `GET /products/{productId}` | Active detail có nhiều SKU | `200`, dynamic attrs, price VND, media READY, stock per SKU. |
+| PC-API-005 | `GET /products/{productId}` | Draft/blocked/archived/nonexistent | `404 PRODUCT_NOT_FOUND`; không leak existence theo public policy. |
+| PC-API-006 | `GET /products/{productId}` | Inventory snapshot stale/unknown | `200`, metadata `STALE`/`UNKNOWN`, không synchronous deduction. |
 | PC-API-007 | `GET /categories` | Tree depth ≤5 | `200`, chỉ category public `ACTIVE`, children đúng thứ tự. |
-| PC-API-008 | `GET /categories/{id}` | Inactive/archived public | Không expose theo visibility policy; error/status ổn định. |
+| PC-API-008 | `GET /categories/{categoryId}` | Inactive/archived public | Không expose theo visibility policy; error/status ổn định. |
 | PC-API-009 | `GET /shops/{shopId}/products` | Shop active/suspended | Listing đúng shop snapshot/visibility; không bypass suspended policy. |
 | PC-API-009b | `GET /products?product_ids=` | 100 ID (vài ID archived/không tồn tại), >100 ID | Trả đúng product `ACTIVE` visible, bỏ ID biến mất không lỗi; >100 ID → `400`. Dùng hydrate Favorites/Cart. |
-| PC-API-009c | `GET /products/{id}`, `GET /products` | Category root có `tax_rate_bps=1000`, category con để `null` | `tax_rate_bps` trả về đã resolve theo cây kế thừa. |
+| PC-API-009c | `GET /products/{productId}`, `GET /products` | Category root có `tax_rate_bps=1000`, category con để `null` | `tax_rate_bps` trả về đã resolve theo cây kế thừa. |
 
 ### 3.2 Seller product API
 
@@ -83,48 +83,48 @@
 | PC-API-011 | `POST /seller/products` | Anonymous/buyer/other shop + body shop_id giả | `401/403 PRODUCT_FORBIDDEN`; scope lấy từ auth context. |
 | PC-API-012 | `POST /seller/products` | Title/slug/price invalid hoặc slug trùng | `400` validation hoặc `409 PRODUCT_SLUG_CONFLICT`, no partial document. |
 | PC-API-013 | `GET /seller/products` | Seller list | Chỉ product của shop; pagination/status filter đúng. |
-| PC-API-014 | `GET /seller/products/{id}` | Owner đọc draft/blocked/archived | `200` theo seller policy, có version/status/reason. |
-| PC-API-015 | `GET /seller/products/{id}` | Seller khác shop | `403 PRODUCT_FORBIDDEN` hoặc not-found policy, không leak. |
-| PC-API-016 | `PATCH /seller/products/{id}` | Update draft hợp lệ | Version tăng 1, fields đúng, `product.updated` outbox. |
-| PC-API-017 | `PATCH /seller/products/{id}` | Wrong version/concurrent tabs | `409 PRODUCT_VERSION_CONFLICT`, document giữ nguyên. |
-| PC-API-018 | `PATCH /seller/products/{id}` | Đổi `shop_id`/product_id/archived | Từ chối immutable/state với code phù hợp. |
-| PC-API-019 | `PUT /seller/products/{id}/skus` | Typed attributes + canonicalization | Variant key server-generated, SKU saved atomically. |
-| PC-API-019b | `PUT /seller/products/{id}/skus` | `display_as=COLOR_SWATCH`/`IMAGE_THUMB` + `value_meta` | Lưu như hint; `variant_key` không đổi so với khi bỏ `display_as`; publish không bắt buộc `value_meta`. |
-| PC-API-020 | `PUT /seller/products/{id}/skus` | Enum ngoài allowlist/sai NUMBER/unknown key | `400 PRODUCT_ATTRIBUTE_INVALID`, no partial SKU write. |
-| PC-API-021 | `PUT /seller/products/{id}/skus` | Duplicate variant_key/seller_sku | `409 PRODUCT_SKU_DUPLICATE`; duplicate detection intra-request + DB. |
-| PC-API-022 | `PUT /seller/products/{id}/skus` | >1.000 SKU hoặc >50 attrs | `409 PRODUCT_SKU_LIMIT_EXCEEDED`/`400 PRODUCT_ATTRIBUTE_INVALID`. |
-| PC-API-023 | `PUT /seller/products/{id}/categories` | 1 primary + 2 secondary active | `200`, replace atomic, event emitted. |
-| PC-API-024 | `PUT /seller/products/{id}/categories` | 0/>1 primary, >2 secondary, duplicate | `400 PRODUCT_CATEGORY_INVALID`/`PRODUCT_CATEGORY_REQUIRED`, no partial assignment. |
-| PC-API-025 | `PUT /seller/products/{id}/categories` | Inactive/archived category | `400 PRODUCT_CATEGORY_INVALID`, no assignment. |
-| PC-API-026 | `POST /seller/products/{id}/publish` | All readiness + KYC approved | `200 ACTIVE`, version increment, `product.published` outbox. |
-| PC-API-027 | `POST /seller/products/{id}/publish` | KYC needs info/rejected/expired | `403 PRODUCT_KYC_REQUIRED`. |
-| PC-API-028 | `POST /seller/products/{id}/publish` | Shop suspended | `403 PRODUCT_SHOP_SUSPENDED`. |
-| PC-API-029 | `POST /seller/products/{id}/publish` | Missing title/description/category/SKU/price/cover | Correct field error, no state change. |
-| PC-API-030 | `POST /seller/products/{id}/publish` | Stock projection quantity 0 | Publish succeeds if other policy passes; display is `OUT_OF_STOCK`. |
-| PC-API-031 | `POST /seller/products/{id}/unpublish` | Active with valid version | `200 INACTIVE`, event emitted, no SKU/media delete. |
-| PC-API-032 | `POST /seller/products/{id}/unpublish` | Draft/blocked/archived | `409 PRODUCT_STATE_INVALID`/`PRODUCT_BLOCKED`/`PRODUCT_ARCHIVED`. |
-| PC-API-033 | `POST /seller/products/{id}/archive` | Valid lifecycle + reason | `200 ARCHIVED`, soft lifecycle + audit/event. |
-| PC-API-034 | `POST /seller/products/{id}/archive` | Missing reason/wrong version | Validation/version conflict; no destructive partial action. |
-| PC-API-035 | `POST /seller/products/{id}/media/upload-url` | Valid image/video and quota remaining | `201`, private server-generated key, signed URL TTL 10 min. |
-| PC-API-036 | `POST /seller/products/{id}/media/upload-url` | Wrong type/size/13th image/4th video | `400 PRODUCT_MEDIA_INVALID` hoặc `409 PRODUCT_MEDIA_LIMIT_EXCEEDED`. |
-| PC-API-037 | `POST /seller/products/{id}/media/complete` | HEAD/checksum/type hợp lệ | `200 READY`, metadata persisted, no media bytes in MongoDB. |
-| PC-API-038 | `POST /seller/products/{id}/media/complete` | Object key khác product/checksum sai | `400 PRODUCT_MEDIA_INVALID`, media không READY. |
+| PC-API-014 | `GET /seller/products/{productId}` | Owner đọc draft/blocked/archived | `200` theo seller policy, có version/status/reason. |
+| PC-API-015 | `GET /seller/products/{productId}` | Seller khác shop | `403 PRODUCT_FORBIDDEN` hoặc not-found policy, không leak. |
+| PC-API-016 | `PATCH /seller/products/{productId}` | Update draft hợp lệ | Version tăng 1, fields đúng, `product.updated` outbox. |
+| PC-API-017 | `PATCH /seller/products/{productId}` | Wrong version/concurrent tabs | `409 PRODUCT_VERSION_CONFLICT`, document giữ nguyên. |
+| PC-API-018 | `PATCH /seller/products/{productId}` | Đổi `shop_id`/product_id/archived | Từ chối immutable/state với code phù hợp. |
+| PC-API-019 | `PUT /seller/products/{productId}/skus` | Typed attributes + canonicalization | Variant key server-generated, SKU saved atomically. |
+| PC-API-019b | `PUT /seller/products/{productId}/skus` | `display_as=COLOR_SWATCH`/`IMAGE_THUMB` + `value_meta` | Lưu như hint; `variant_key` không đổi so với khi bỏ `display_as`; publish không bắt buộc `value_meta`. |
+| PC-API-020 | `PUT /seller/products/{productId}/skus` | Enum ngoài allowlist/sai NUMBER/unknown key | `400 PRODUCT_ATTRIBUTE_INVALID`, no partial SKU write. |
+| PC-API-021 | `PUT /seller/products/{productId}/skus` | Duplicate variant_key/seller_sku | `409 PRODUCT_SKU_DUPLICATE`; duplicate detection intra-request + DB. |
+| PC-API-022 | `PUT /seller/products/{productId}/skus` | >1.000 SKU hoặc >50 attrs | `409 PRODUCT_SKU_LIMIT_EXCEEDED`/`400 PRODUCT_ATTRIBUTE_INVALID`. |
+| PC-API-023 | `PUT /seller/products/{productId}/categories` | 1 primary + 2 secondary active | `200`, replace atomic, event emitted. |
+| PC-API-024 | `PUT /seller/products/{productId}/categories` | 0/>1 primary, >2 secondary, duplicate | `400 PRODUCT_CATEGORY_INVALID`/`PRODUCT_CATEGORY_REQUIRED`, no partial assignment. |
+| PC-API-025 | `PUT /seller/products/{productId}/categories` | Inactive/archived category | `400 PRODUCT_CATEGORY_INVALID`, no assignment. |
+| PC-API-026 | `POST /seller/products/{productId}/publish` | All readiness + KYC approved | `200 ACTIVE`, version increment, `product.published` outbox. |
+| PC-API-027 | `POST /seller/products/{productId}/publish` | KYC needs info/rejected/expired | `403 PRODUCT_KYC_REQUIRED`. |
+| PC-API-028 | `POST /seller/products/{productId}/publish` | Shop suspended | `403 PRODUCT_SHOP_SUSPENDED`. |
+| PC-API-029 | `POST /seller/products/{productId}/publish` | Missing title/description/category/SKU/price/cover | Correct field error, no state change. |
+| PC-API-030 | `POST /seller/products/{productId}/publish` | Stock projection quantity 0 | Publish succeeds if other policy passes; display is `OUT_OF_STOCK`. |
+| PC-API-031 | `POST /seller/products/{productId}/unpublish` | Active with valid version | `200 INACTIVE`, event emitted, no SKU/media delete. |
+| PC-API-032 | `POST /seller/products/{productId}/unpublish` | Draft/blocked/archived | `409 PRODUCT_STATE_INVALID`/`PRODUCT_BLOCKED`/`PRODUCT_ARCHIVED`. |
+| PC-API-033 | `POST /seller/products/{productId}/archive` | Valid lifecycle + reason | `200 ARCHIVED`, soft lifecycle + audit/event. |
+| PC-API-034 | `POST /seller/products/{productId}/archive` | Missing reason/wrong version | Validation/version conflict; no destructive partial action. |
+| PC-API-035 | `POST /seller/products/{productId}/media/upload-url` | Valid image/video and quota remaining | `201`, private server-generated key, signed URL TTL 10 min. |
+| PC-API-036 | `POST /seller/products/{productId}/media/upload-url` | Wrong type/size/13th image/4th video | `400 PRODUCT_MEDIA_INVALID` hoặc `409 PRODUCT_MEDIA_LIMIT_EXCEEDED`. |
+| PC-API-037 | `POST /seller/products/{productId}/media/complete` | HEAD/checksum/type hợp lệ | `200 READY`, metadata persisted, no media bytes in MongoDB. |
+| PC-API-038 | `POST /seller/products/{productId}/media/complete` | Object key khác product/checksum sai | `400 PRODUCT_MEDIA_INVALID`, media không READY. |
 
 ### 3.3 Admin catalog API
 
 | ID | Endpoint | Kiểm thử | Kỳ vọng |
 |---|---|---|---|
 | PC-API-039 | `GET /admin/catalog/products` | Admin filter status/shop/category | `200`, xem được mọi lifecycle theo permission. |
-| PC-API-040 | `GET /admin/catalog/products/{id}` | Admin detail | Có audit/shop-KYC/inventory display; không secret. |
-| PC-API-041 | `POST /admin/catalog/products/{id}/block` | Admin + reason + step-up | `200 BLOCKED`, audit + event, public ẩn. |
-| PC-API-042 | `POST /admin/catalog/products/{id}/block` | Seller/no reason/no 2FA | `403 PRODUCT_FORBIDDEN` hoặc validation; không block. |
-| PC-API-043 | `POST /admin/catalog/products/{id}/unblock` | Blocked product | `200 INACTIVE`, audit; không tự active baseline. |
-| PC-API-044 | `POST /admin/catalog/products/{id}/unblock` | Non-blocked/wrong version | `409 PRODUCT_STATE_INVALID`/`PRODUCT_VERSION_CONFLICT`. |
+| PC-API-040 | `GET /admin/catalog/products/{productId}` | Admin detail | Có audit/shop-KYC/inventory display; không secret. |
+| PC-API-041 | `POST /admin/catalog/products/{productId}/block` | Admin + reason + step-up | `200 BLOCKED`, audit + event, public ẩn. |
+| PC-API-042 | `POST /admin/catalog/products/{productId}/block` | Seller/no reason/no 2FA | `403 PRODUCT_FORBIDDEN` hoặc validation; không block. |
+| PC-API-043 | `POST /admin/catalog/products/{productId}/unblock` | Blocked product | `200 INACTIVE`, audit; không tự active baseline. |
+| PC-API-044 | `POST /admin/catalog/products/{productId}/unblock` | Non-blocked/wrong version | `409 PRODUCT_STATE_INVALID`/`PRODUCT_VERSION_CONFLICT`. |
 | PC-API-045 | `GET /admin/catalog/categories` | Filter all category states | Kết quả đúng permission/pagination. |
 | PC-API-046 | `POST /admin/catalog/categories` | Root/child valid | `201`, path/depth/version đúng, event emitted. |
 | PC-API-047 | `POST /admin/catalog/categories` | >depth 5/cycle/slug collision | `409 CATEGORY_DEPTH_EXCEEDED`/`CATEGORY_CYCLE_DETECTED`/slug conflict. |
-| PC-API-048 | `PATCH /admin/catalog/categories/{id}` | Move subtree within depth | `200`, path/depth descendants update atomic. |
-| PC-API-049 | `POST /admin/catalog/categories/{id}/archive` | Category referenced by product | Soft archive only; assignment mới bị chặn; không delete reference. |
+| PC-API-048 | `PATCH /admin/catalog/categories/{categoryId}` | Move subtree within depth | `200`, path/depth descendants update atomic. |
+| PC-API-049 | `POST /admin/catalog/categories/{categoryId}/archive` | Category referenced by product | Soft archive only; assignment mới bị chặn; không delete reference. |
 
 ### 3.4 Integration, security và reliability
 

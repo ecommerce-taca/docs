@@ -106,7 +106,7 @@ Một buyer chỉ review **một lần cho mỗi `(order_id, sku_id)`** — trù
 
 ### 3.3 Update/delete
 
-`PATCH /reviews/{id}` body `{version,rating,comment,media_ids[]}`; chỉ owner, trong edit window 30 ngày baseline; aggregate recompute.
+`PATCH /reviews/{reviewId}` body `{version,rating,comment,media_ids[]}`; chỉ owner, trong edit window 30 ngày baseline; aggregate recompute.
 
 ```json
 {
@@ -123,7 +123,7 @@ Một buyer chỉ review **một lần cho mỗi `(order_id, sku_id)`** — trù
 }
 ```
 
-`DELETE /reviews/{id}` body `{version,reason?}`; soft delete, aggregate recompute, không xóa audit. Response `200`:
+`DELETE /reviews/{reviewId}` body `{version,reason?}`; soft delete, aggregate recompute, không xóa audit. Response `200`:
 
 ```json
 { "data": { "review_id": "rv-01912fd2", "status": "DELETED", "aggregate": { "avg": 4.6, "count": 128, "distribution": { "1": 2, "2": 3, "3": 8, "4": 30, "5": 85 } } }, "meta": { "request_id": "01912fd5-7a1b-7c12-9c55-8b1c34a6d921" } }
@@ -162,7 +162,7 @@ Verify object HEAD/checksum/type/size trước khi set `READY`; sai metadata tr�
 
 ### 3.5 Seller reply
 
-`POST /seller/reviews/{id}/reply` body `{content}`; seller phải own shop của product, max 2.000 chars, một reply/review baseline (gọi lại khi đã có reply → `409 REVIEW_REPLY_ALREADY_EXISTS`, dùng `PATCH` để sửa). Response `201`:
+`POST /seller/reviews/{reviewId}/reply` body `{content}`; seller phải own shop của product, max 2.000 chars, một reply/review baseline (gọi lại khi đã có reply → `409 REVIEW_REPLY_ALREADY_EXISTS`, dùng `PATCH` để sửa). Response `201`:
 
 ```json
 {
@@ -174,7 +174,7 @@ Verify object HEAD/checksum/type/size trước khi set `READY`; sai metadata tr�
 }
 ```
 
-`PATCH /seller/reviews/{id}/reply` body `{content,version}`; response cùng hình dạng với `version`/`replied_at` cập nhật. Seller không sửa được `rating`/`comment` của buyer. `DELETE /seller/reviews/{id}/reply` body `{version}` → `200 { "data": { "review_id": "rv-01912fd2", "seller_reply": null }, "meta": {...} }` (soft delete, không xoá audit).
+`PATCH /seller/reviews/{reviewId}/reply` body `{content,version}`; response cùng hình dạng với `version`/`replied_at` cập nhật. Seller không sửa được `rating`/`comment` của buyer. `DELETE /seller/reviews/{reviewId}/reply` body `{version}` → `200 { "data": { "review_id": "rv-01912fd2", "seller_reply": null }, "meta": {...} }` (soft delete, không xoá audit).
 
 ### 3.6 Health
 

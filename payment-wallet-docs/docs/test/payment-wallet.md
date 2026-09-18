@@ -32,7 +32,7 @@
 | P-API-02 | `POST /payments` COD valid | `201 PENDING_COD`, no provider call. |
 | P-API-03 | Amount/method/order mismatch | `400/409 PAYMENT_AMOUNT_MISMATCH`; no payment. |
 | P-API-04 | Same idempotency payload/different payload | Same result / `409 PAYMENT_IDEMPOTENCY_CONFLICT`. |
-| P-API-05 | `GET /payments/{id}` own/other scope | Correct data or `403 PAYMENT_FORBIDDEN`; no secret. |
+| P-API-05 | `GET /payments/{paymentId}` own/other scope | Correct data or `403 PAYMENT_FORBIDDEN`; no secret. |
 | P-API-06 | Webhook valid success | `200`, payment success, balanced ledger/outbox once. |
 | P-API-07 | Webhook wrong signature/amount/old timestamp | `400 PAYMENT_WEBHOOK_INVALID`; no state change. |
 | P-API-08 | Duplicate provider event | Idempotent ACK; no duplicate ledger/allocation. |

@@ -103,7 +103,7 @@ Document mẫu rút gọn:
 | `description` | string | Có khi publish | Tối đa 100.000 ký tự; sanitize rich text/HTML allowlist. |
 | `brand` | string/null | Không | Tối đa 120 Unicode characters. |
 | `status` | enum | Có | `DRAFT`, `ACTIVE`, `INACTIVE`, `BLOCKED`, `ARCHIVED`. |
-| `price_summary` | object | Có khi publish | Integer VND; thể hiện giá đại diện/min price của SPU (tính từ SKU set); giá SKU là nguồn kiểm tra cuối khi checkout. Khi tạo product chưa có SKU, seller nhập `price_summary` làm giá khởi tạo; ngay khi SKU set không rỗng, `price_summary` được application service **tự tính lại** (`base` = min `base_price` của SKU `ACTIVE`, `sale` = min `sale_price` tương ứng) mỗi lần `PUT /seller/products/{id}/skus`. |
+| `price_summary` | object | Có khi publish | Integer VND; thể hiện giá đại diện/min price của SPU (tính từ SKU set); giá SKU là nguồn kiểm tra cuối khi checkout. Khi tạo product chưa có SKU, seller nhập `price_summary` làm giá khởi tạo; ngay khi SKU set không rỗng, `price_summary` được application service **tự tính lại** (`base` = min `base_price` của SKU `ACTIVE`, `sale` = min `sale_price` tương ứng) mỗi lần `PUT /seller/products/{productId}/skus`. |
 | `primary_category_id` | string/null | Có khi publish | Category phải `ACTIVE`. |
 | `shop_snapshot` | object | Có | Projection allowlist từ Auth User; không phải source of truth KYC. |
 | `rating_summary` | object/null | Không | `{avg: double\|null, count: long, updated_at: Date\|null}` — cache từ event `rating.aggregate.updated` (`rating.events.v1`, sở hữu bởi `rating-comment`); chỉ display, không phải source of truth rating. |

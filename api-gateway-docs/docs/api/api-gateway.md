@@ -64,8 +64,8 @@
 | 12 | `ANY /api/v1/admin/vouchers/**` | `order-commerce` | Admin permission-gated | 5s | Không retry write |
 | 13 | `ANY /api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | `inventory` | Seller/admin role-gated (`/internal/**` không expose) | 5s | GET tối đa 1 lần |
 | 14 | `ANY /api/v1/payments/**` (webhook không JWT), `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `GET /api/v1/seller/revenue`, `GET /api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated/seller/admin; `/payments/webhook` public+signature | 10s | Không retry write |
-| 15 | `GET /api/v1/orders/{id}/shipment`, `GET /api/v1/seller/orders/{id}/shipment`, `GET /api/v1/seller/orders/{id}/shipment/carriers`, `POST /api/v1/webhooks/shipping/{carrier}` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
-| 16 | `GET/POST /api/v1/products/{id}/reviews`, `ANY /api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; write authenticated | 5s | GET tối đa 1 lần |
+| 15 | `GET /api/v1/orders/{orderId}/shipment`, `GET /api/v1/seller/orders/{orderId}/shipment`, `GET /api/v1/seller/orders/{orderId}/shipment/carriers`, `POST /api/v1/webhooks/shipping/{carrier}` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
+| 16 | `GET/POST /api/v1/products/{productId}/reviews`, `ANY /api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; write authenticated | 5s | GET tối đa 1 lần |
 | 17 | `ANY /api/v1/notifications/**` | `notification` | Authenticated | 5s | GET tối đa 1 lần |
 | 17a | `ANY /api/v1/admin/notifications/**` | `notification` | Admin permission-gated | 5s | Không retry write |
 | 18 | `ANY /api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**` | `message` | Authenticated/admin theo endpoint | 5s | GET tối đa 1 lần |
@@ -109,7 +109,7 @@ Gateway chỉ thực hiện coarse gate trong bảng; service đích kiểm tra 
 | 13 | `ANY` | `/api/v1/inventory/**` | Proxy inventory | Seller/admin | Upstream pass-through/mapped error |
 | 14 | `ANY` | `/api/v1/payments/**`, `/api/v1/wallet/**`, `/api/v1/payouts/**`, `/api/v1/refunds/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | Proxy payment/wallet + admin finance | Authenticated/admin (`FINANCE_OPS` cho `/admin/**`) | Upstream pass-through/mapped error |
 | 15 | `ANY` | `/api/v1/shipments/**` | Proxy shipment | Buyer/seller/admin | Upstream pass-through/mapped error |
-| 16 | `ANY` | `/api/v1/products/{id}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | Proxy rating/comment | Public GET/auth write | Upstream pass-through/mapped error |
+| 16 | `ANY` | `/api/v1/products/{productId}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | Proxy rating/comment | Public GET/auth write | Upstream pass-through/mapped error |
 | 17 | `ANY` | `/api/v1/notifications/**` | Proxy notification center | Authenticated | Upstream pass-through/mapped error |
 | 17a | `ANY` | `/api/v1/admin/notifications/**` | Proxy notification delivery/retry diagnostics | Admin permission | Upstream pass-through/mapped error |
 | 18 | `ANY` | `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**` | Proxy messaging (gồm conversation `type=SUPPORT`) | Authenticated/admin | Upstream pass-through/mapped error |

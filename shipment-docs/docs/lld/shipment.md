@@ -151,7 +151,7 @@ Canonical transition: `NOT_CREATED → CREATED → PICKED_UP → IN_TRANSIT → 
 
 | Nguồn | Event | Xử lý |
 |---|---|---|
-| Order-Commerce | `order.cancelled` | Hủy/đồng bộ trạng thái shipment khi order bị hủy trước khi carrier pickup; không đổi order state trực tiếp. **Không dùng để tạo shipment** — shipment được tạo qua REST đồng bộ `POST /internal/shipments` (`docs/api/shipment.md` §3.3), do Order-Commerce gọi khi seller bấm "SHIP" ở `PATCH /seller/orders/{id}/fulfill` (`order-commerce-docs/docs/api/order-commerce.md` §3.7a), không phải khi nhận event `order.created`. |
+| Order-Commerce | `order.cancelled` | Hủy/đồng bộ trạng thái shipment khi order bị hủy trước khi carrier pickup; không đổi order state trực tiếp. **Không dùng để tạo shipment** — shipment được tạo qua REST đồng bộ `POST /internal/shipments` (`docs/api/shipment.md` §3.3), do Order-Commerce gọi khi seller bấm "SHIP" ở `PATCH /seller/orders/{orderId}/fulfill` (`order-commerce-docs/docs/api/order-commerce.md` §3.7a), không phải khi nhận event `order.created`. |
 | Payment-Wallet | Không cần payment event trong baseline | Shipment không capture payment. |
 
 ### 6.3 Mock contract — carrier webhook

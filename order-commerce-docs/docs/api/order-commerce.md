@@ -356,10 +356,10 @@ Với COD, Inventory `commit` được gọi ngay trong luồng checkout (không
 ### 3.6 Buyer order endpoints
 
 - `GET /orders`: query `status?`, `page`, `size` (max 100); chỉ buyer own orders.
-- `GET /orders/{id}`: trả snapshot; **không** query lại giá Product.
-- `GET /orders/{id}/status`: status + timeline từ Order/Shipment events.
-- `PATCH /orders/{id}/cancel` headers `Idempotency-Key`, body `{reason, version}`; chỉ trước shipping, release Inventory/refund compensation theo payment state.
-- `GET /orders/{id}/invoice`: `200` nếu issued; `409 ORDER_INVOICE_NOT_READY` nếu pending.
+- `GET /orders/{orderId}`: trả snapshot; **không** query lại giá Product.
+- `GET /orders/{orderId}/status`: status + timeline từ Order/Shipment events.
+- `PATCH /orders/{orderId}/cancel` headers `Idempotency-Key`, body `{reason, version}`; chỉ trước shipping, release Inventory/refund compensation theo payment state.
+- `GET /orders/{orderId}/invoice`: `200` nếu issued; `409 ORDER_INVOICE_NOT_READY` nếu pending.
 
 `GET /orders/{orderId}` response:
 
@@ -495,7 +495,7 @@ Với đơn COD, `payment.status` đi `PENDING_COD → SUCCESS` tại thời đi
 
 `GET /seller/orders/{orderId}` — cùng shape chi tiết với `GET /orders/{orderId}` phía buyer (§3.6) nhưng ẩn `buyer_name`/`phone` đầy đủ (chỉ `buyer_name_masked`), thêm `seller_note` nếu có.
 
-`POST /seller/orders/{id}/cancel` body `{reason,version}`. Response `200`:
+`POST /seller/orders/{orderId}/cancel` body `{reason,version}`. Response `200`:
 
 ```json
 { "data": { "order_id": "order-01912f91", "status": "CANCELLED", "reason": "SELLER_REQUEST", "version": 5 }, "meta": { "request_id": "01912fc2-7a1b-7c12-9c55-8b1c34a6d921" } }
@@ -522,7 +522,7 @@ Query giống `GET /seller/orders` (`status?`, `from?`, `to?`) cộng `format` (
 
 Cùng convention với `product-catalog-docs/docs/api/product-catalog.md` §`GET /seller/products/export`: signed URL, không stream qua Gateway body. Cột export: `order_number, status, payment_method, payment_status, buyer_name_masked, subtotal, discount, shipping_fee, tax, grand_total, placed_at`. Vượt `ORDER_EXPORT_MAX_ROWS` (10.000) → `400 ORDER_EXPORT_TOO_LARGE`, seller lọc hẹp hơn bằng `from`/`to`.
 
-### 3.7a `PATCH /seller/orders/{id}/fulfill` — accept 1 đơn
+### 3.7a `PATCH /seller/orders/{orderId}/fulfill` — accept 1 đơn
 
 Body action `ACCEPT`:
 

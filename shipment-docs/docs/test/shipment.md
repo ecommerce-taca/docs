@@ -27,7 +27,7 @@
 
 | ID | Endpoint/case | Expected |
 |---|---|---|
-| SH-API-01 | `GET /orders/{id}/shipment` own/other buyer | Own `200`; other denied/not found. |
+| SH-API-01 | `GET /orders/{orderId}/shipment` own/other buyer | Own `200`; other denied/not found. |
 | SH-API-02 | Seller tracking own/other shop | Correct shop scope. |
 | SH-API-03 | Internal quote valid/invalid | `200` fee or `400 SHIPMENT_INVALID_INPUT`. |
 | SH-API-04 | Create GHN/MOCK valid | `201 CREATED`, tracking/external ID, event/outbox. |

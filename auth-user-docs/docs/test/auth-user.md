@@ -142,11 +142,11 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-PROFILE-10 | `POST /users/me/addresses` | Address valid đầu tiên | 201 | `is_default=true` | Transaction. |
 | IT-PROFILE-11 | `POST /users/me/addresses` | Field empty/over max | 400 | `PROFILE_INVALID` | Assert field detail. |
 | IT-PROFILE-12 | `POST /users/me/addresses` | Address thứ 21 | 409 | `ADDRESS_LIMIT_REACHED` | Không ghi record. |
-| IT-PROFILE-13 | `PUT /users/me/addresses/{id}` | Address của user khác | 404 | `ADDRESS_NOT_FOUND` | IDOR protection. |
-| IT-PROFILE-14 | `PUT /users/me/addresses/{id}` | Set default | 200 | Chỉ một default | Row lock/concurrency. |
-| IT-PROFILE-15 | `DELETE /users/me/addresses/{id}` | Address sống | 204 | Soft delete; gán fallback default | Không hard delete. |
-| IT-PROFILE-16 | `DELETE /users/me/addresses/{id}` | Address không thuộc user | 404 | `ADDRESS_NOT_FOUND` | Không lộ resource. |
-| IT-PROFILE-17 | `DELETE /users/me/addresses/{id}` | Xóa default address khi còn address khác | 204 | Address còn lại gần nhất thành default | Soft delete. |
+| IT-PROFILE-13 | `PUT /users/me/addresses/{addressId}` | Address của user khác | 404 | `ADDRESS_NOT_FOUND` | IDOR protection. |
+| IT-PROFILE-14 | `PUT /users/me/addresses/{addressId}` | Set default | 200 | Chỉ một default | Row lock/concurrency. |
+| IT-PROFILE-15 | `DELETE /users/me/addresses/{addressId}` | Address sống | 204 | Soft delete; gán fallback default | Không hard delete. |
+| IT-PROFILE-16 | `DELETE /users/me/addresses/{addressId}` | Address không thuộc user | 404 | `ADDRESS_NOT_FOUND` | Không lộ resource. |
+| IT-PROFILE-17 | `DELETE /users/me/addresses/{addressId}` | Xóa default address khi còn address khác | 204 | Address còn lại gần nhất thành default | Soft delete. |
 
 ### 3.3 Seller onboarding và KYC
 
@@ -187,12 +187,12 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-ADMIN-06 | `POST /admin/shops/{shopId}/kyc/review` | NEEDS_INFO reason 9/10/1000/1001 | 400 | `KYC_DECISION_INVALID` | Boundary. |
 | IT-ADMIN-07 | `POST /admin/shops/{shopId}/kyc/review` | REJECTED thiếu step-up | 428 | `RBAC_MFA_REQUIRED` | Không đổi state. |
 | IT-ADMIN-08 | `POST /admin/shops/{shopId}/kyc/review` | Case đã terminal | 409 | `KYC_DECISION_INVALID` | Không double decision. |
-| IT-ADMIN-09 | `GET /admin/users/{id}/roles` | ROLE_READ | 200 | Assignments + permissions | Scoped data. |
-| IT-ADMIN-10 | `PATCH /admin/users/{id}/roles` | GRANT valid shop role | 200 | Role active + event | Unique assignment. |
-| IT-ADMIN-11 | `PATCH /admin/users/{id}/roles` | Self grant/SUPER_ADMIN escalation | 403 | `RBAC_PERMISSION_DENIED` | Không tự nâng quyền. |
-| IT-ADMIN-12 | `PATCH /admin/users/{id}/roles` | REVOKE missing assignment | 409 | `RBAC_ASSIGNMENT_NOT_FOUND` | Không mutation. |
-| IT-ADMIN-13 | `PATCH /admin/users/{id}/status` | SUSPENDED + MFA | 200 | User suspended; refresh sessions revoked; push Redis key | Audit/event + fast revocation. |
-| IT-ADMIN-14 | `PATCH /admin/users/{id}/status` | Suspend thiếu reason/MFA | 400/428 | Error | Không đổi status. |
+| IT-ADMIN-09 | `GET /admin/users/{userId}/roles` | ROLE_READ | 200 | Assignments + permissions | Scoped data. |
+| IT-ADMIN-10 | `PATCH /admin/users/{userId}/roles` | GRANT valid shop role | 200 | Role active + event | Unique assignment. |
+| IT-ADMIN-11 | `PATCH /admin/users/{userId}/roles` | Self grant/SUPER_ADMIN escalation | 403 | `RBAC_PERMISSION_DENIED` | Không tự nâng quyền. |
+| IT-ADMIN-12 | `PATCH /admin/users/{userId}/roles` | REVOKE missing assignment | 409 | `RBAC_ASSIGNMENT_NOT_FOUND` | Không mutation. |
+| IT-ADMIN-13 | `PATCH /admin/users/{userId}/status` | SUSPENDED + MFA | 200 | User suspended; refresh sessions revoked; push Redis key | Audit/event + fast revocation. |
+| IT-ADMIN-14 | `PATCH /admin/users/{userId}/status` | Suspend thiếu reason/MFA | 400/428 | Error | Không đổi status. |
 | IT-ADMIN-15 | `GET /admin/audit-logs` | Filter 31 ngày/page size | 200 | Masked audit list | Không raw PII/secret. |
 | IT-ADMIN-16 | `GET /admin/audit-logs` | Range >31 ngày/sort lạ | 400 | `AUTH_INVALID_INPUT` | Query bounded. |
 
