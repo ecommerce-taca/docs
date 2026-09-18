@@ -1,6 +1,6 @@
 # LLD — API Gateway Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
+> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
 > Tech stack đã chốt: **Kong Gateway 3.x OSS** (DB-less declarative, quản lý bằng decK trong Git) · plugin built-in + 5 custom Lua plugin (`taca-*`) · REST/HTTP · Redis cho distributed rate limit · JWT RS256/JWKS · internal REST qua domain/IP nội bộ
 >
 > **Lưu ý migration:** v1 trước đây thiết kế Gateway tự viết bằng Node.js + NestJS. Toàn bộ **contract đối ngoại giữ nguyên** (route family, error envelope, mã lỗi, header context, rate-limit baseline, WebSocket handshake) — chỉ thay đổi cơ chế thực thi. Xem §2.1 để biết yêu cầu nào do plugin built-in đáp ứng và yêu cầu nào bắt buộc phải viết custom plugin.
@@ -222,8 +222,8 @@ So với bản NestJS, thứ tự nghiệp vụ giữ nguyên; khác biệt là 
 | `/api/v1/auth/**` | `auth-user` | Public tùy endpoint; signout/2FA protected | 5s | Chỉ GET public nếu có |
 | `/api/v1/users/**` (gồm `/users/me/favorites/**`), `/api/v1/addresses/**` | `auth-user` | Authenticated | 5s | Không retry mutation |
 | `/api/v1/seller/onboarding/**`, `/api/v1/seller/shop`, `/api/v1/admin/users/**`, `/api/v1/admin/shops/**` | `auth-user` | Role-gated | 5s | Không retry mutation |
-| `/api/v1/shops/{id}`, `/api/v1/shops/{id}/follow` | `auth-user` | GET public (profile); follow authenticated | 5s | GET tối đa 1 lần |
-| `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/seller/products/**`, `/api/v1/admin/catalog/**`, `/api/v1/shops/{id}/products` | `product-catalog` | GET public; seller/admin mutation role-gated | GET 5s, mutation 5s | GET tối đa 1 lần |
+| `/api/v1/shops/{shopId}`, `/api/v1/shops/{shopId}/follow` | `auth-user` | GET public (profile); follow authenticated | 5s | GET tối đa 1 lần |
+| `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/seller/products/**`, `/api/v1/admin/catalog/**`, `/api/v1/shops/{shopId}/products` | `product-catalog` | GET public; seller/admin mutation role-gated | GET 5s, mutation 5s | GET tối đa 1 lần |
 | `/api/v1/search/**` | `search` | GET public | 5s | GET tối đa 1 lần |
 | `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**`, `/api/v1/seller/vouchers/**`, `/api/v1/seller/orders/**`, `/api/v1/admin/vouchers/**` | `order-commerce` | Authenticated; seller/admin route theo endpoint | 5s; checkout 10s | Chỉ GET; mutation dùng idempotency ở service |
 | `/api/v1/inventory/**`, `/api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | `inventory` | Seller/admin role-gated; `/internal/**` không expose public | 5s | GET tối đa 1 lần |
@@ -231,6 +231,7 @@ So với bản NestJS, thứ tự nghiệp vụ giữ nguyên; khác biệt là 
 | `/api/v1/orders/{id}/shipment`, `/api/v1/seller/orders/{id}/shipment`, `/api/v1/seller/orders/{id}/shipment/carriers`, `/api/v1/webhooks/shipping/**` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
 | `/api/v1/products/{id}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; create/update/reply authenticated | 5s | GET tối đa 1 lần |
 | `/api/v1/notifications/**` | `notification` | Authenticated | 5s | GET tối đa 1 lần |
+| `/api/v1/admin/notifications/**` | `notification` | Admin permission-gated | 5s | Không retry mutation |
 | `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**` | `message` | Authenticated; conversation `type=SUPPORT` gate bằng participant/support scope | 5s | GET tối đa 1 lần |
 | `/ws/messages` (HTTP `Upgrade: websocket`) | `message` | Authenticated (JWT ở handshake) | handshake `WS_HANDSHAKE_TIMEOUT`; sau đó idle theo `WS_IDLE_TIMEOUT` | Không retry; không buffer frame |
 
@@ -797,7 +798,7 @@ Readiness body không được chứa secret, internal IP công khai ra client h
 | 6 | CORS allowlist thật cho các ứng dụng Micro-Frontends (`mfe-shell`, `mfe-buyer`, `mfe-seller`, `mfe-admin`) chưa được cung cấp. | Nếu cấu hình sai, frontend bị chặn hoặc vô tình mở public origin. | Frontend/DevOps |
 | 7 | Internal service có được truy cập trực tiếp bằng IP hay bắt buộc mTLS/network policy chưa chốt. | Nếu header context bị tin tuyệt đối, client có thể bypass qua đường nội bộ. | Security/DevOps |
 | 8 | Message v1 dùng REST **và** WebSocket `/ws/messages`; Gateway validate JWT ở handshake, proxy TCP upgrade, không buffer/không retry/không tự reconnect. SSE không dùng trong v1. Subprotocol handshake (`Sec-WebSocket-Protocol`) cần Message Service xác nhận format token. | Nếu Message Service đổi handshake/subprotocol hoặc thêm SSE, phải cập nhật `ws-proxy` contract. | Product + frontend + Message owner |
-| 9 | Route ownership đã chốt: `/api/v1/shops/{id}` + `/api/v1/shops/{id}/follow` → `auth-user`; `/api/v1/shops/{id}/products` → `product-catalog`; `/api/v1/vouchers/**` (buyer validate) + `/api/v1/seller/vouchers/**` + `/api/v1/admin/vouchers/**` → `order-commerce`; `/api/v1/seller/wallet/**` + `/api/v1/seller/payouts/**` + `/api/v1/seller/revenue` + `/api/v1/admin/fees/**` + `/api/v1/admin/taxes/**` + `/api/v1/admin/settlements/**` + `/api/v1/admin/finance/**` → `payment-wallet`; `/api/v1/admin/catalog/**` → `product-catalog`; `/api/v1/admin/users/**` + `/api/v1/admin/shops/**` → `auth-user`; `/api/v1/notifications/**` → `notification`. | Route nhầm upstream gây duplicate API hoặc sai source of truth. | Backend leads |
+| 9 | Route ownership đã chốt: `/api/v1/shops/{shopId}` + `/api/v1/shops/{shopId}/follow` → `auth-user`; `/api/v1/shops/{shopId}/products` → `product-catalog`; `/api/v1/vouchers/**` (buyer validate) + `/api/v1/seller/vouchers/**` + `/api/v1/admin/vouchers/**` → `order-commerce`; `/api/v1/seller/wallet/**` + `/api/v1/seller/payouts/**` + `/api/v1/seller/revenue` + `/api/v1/admin/fees/**` + `/api/v1/admin/taxes/**` + `/api/v1/admin/settlements/**` + `/api/v1/admin/finance/**` → `payment-wallet`; `/api/v1/admin/catalog/**` → `product-catalog`; `/api/v1/admin/users/**` + `/api/v1/admin/shops/**` → `auth-user`; `/api/v1/notifications/**` + `/api/v1/admin/notifications/**` → `notification`. | Route nhầm upstream gây duplicate API hoặc sai source of truth. | Backend leads |
 | 13 | Phạm vi Admin/back-office đã chốt (xem `System_Overview.md` §6.3): v1 **không thêm microservice**; mỗi màn admin đi qua `/api/v1/admin/**` trên service sở hữu dữ liệu. `dispute` và `campaign` là service riêng ở v1.1 — khi có, Gateway thêm route family mới `/api/v1/admin/disputes/**` và `/api/v1/admin/campaigns/**`. | Nếu sau này tách service admin gộp, phải thiết kế lại route + auth model. | Architecture owner |
 | 10 | Observability backend/exporter và retention chưa được chỉ định; LLD chỉ chuẩn hóa adapter/field. | Ảnh hưởng dashboard, alert, trace sampling và chi phí lưu log. | Platform/DevOps |
 | 11 | V1 không cache business response và không tự phát business event. | Nếu cần CDN/cache hoặc audit event qua Kafka, cần thêm module và contract. | Architecture owner |

@@ -1,6 +1,6 @@
 # API — Auth User Service
 
-> Nguồn: `docs/lld/auth-user.md` · `docs/db/auth-user.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/auth-user.md` · `docs/db/auth-user.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
 > Base path: `/api/v1` · External access: qua `api-gateway` · Internal service owner: `auth-user`
 
 ## 1. Quy ước chung
@@ -1376,5 +1376,5 @@ Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — t
 | 6 | `GET /admin/audit-logs`, `/admin/users/{id}/status` và một số role read endpoint được bổ sung từ admin screens/HLD dù chưa có endpoint cụ thể trong HLD. | Nếu v1 không có admin API này, loại khỏi implementation scope/task. | Product owner |
 | 7 | Pagination dùng page/size; nếu dataset admin lớn, cần chuyển cursor pagination ở API version sau. | Ảnh hưởng query/index và UI table state. | Backend lead |
 | 8 | API error envelope thống nhất `{error:{code,message,details,trace_id}}`; Gateway có thể bọc thêm request metadata. | Nếu các module MFE đã có envelope khác, cần adapter ở Gateway. | Backend leads |
-| 9 | Favorites/Follow (`/users/me/favorites/**`, `/shops/{id}/follow`, `/users/me/following`) và public shop profile (`GET /shops/{id}`) được bổ sung từ Frontend Design, đặt tại `auth-user`. Favorites chỉ lưu `product_id`; frontend/BFF hydrate qua Product Catalog. | Nếu tách service `engagement` sau này, đổi base path và Gateway route. | Product owner |
-| 10 | `GET /shops/{id}` chỉ trả identity + `is_verified` + `follower_count`; `rating_avg`/`product_count` do Product Catalog phục vụ. | Frontend phải gọi 2 nguồn cho Shop hero; hoặc dựng BFF/endpoint tổng hợp. | Product owner + Frontend |
+| 9 | Favorites/Follow (`/users/me/favorites/**`, `/shops/{shopId}/follow`, `/users/me/following`) và public shop profile (`GET /shops/{shopId}`) được bổ sung từ Frontend Design, đặt tại `auth-user`. Favorites chỉ lưu `product_id`; frontend/BFF hydrate qua Product Catalog. | Nếu tách service `engagement` sau này, đổi base path và Gateway route. | Product owner |
+| 10 | `GET /shops/{shopId}` chỉ trả identity + `is_verified` + `follower_count`; `rating_avg`/`product_count` do Product Catalog phục vụ. | Frontend phải gọi 2 nguồn cho Shop hero; hoặc dựng BFF/endpoint tổng hợp. | Product owner + Frontend |

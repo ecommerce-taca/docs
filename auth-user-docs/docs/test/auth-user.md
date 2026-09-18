@@ -1,6 +1,6 @@
 # Test plan — Auth User Service
 
-> Nguồn: `docs/api/auth-user.md` · `docs/lld/auth-user.md` · `docs/db/auth-user.md` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/api/auth-user.md` · `docs/lld/auth-user.md` · `docs/db/auth-user.md` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
 
 ## 1. Chuẩn bị
 
@@ -181,12 +181,12 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 |---|---|---|---:|---|---|
 | IT-ADMIN-01 | `GET /admin/shops/kyc` | RISK_MANAGER + status=PENDING | 200 | Paginated queue | Index/query bounded. |
 | IT-ADMIN-02 | `GET /admin/shops/kyc` | CATALOG_ADMIN không KYC_READ | 403 | `RBAC_PERMISSION_DENIED` | Role boundary. |
-| IT-ADMIN-03 | `GET /admin/shops/{id}/kyc` | KYC_READ | 200 | Metadata + signed URL | URL TTL 10m, no bytes. |
-| IT-ADMIN-04 | `GET /admin/shops/{id}/kyc` | Shop không tồn tại | 404 | `SHOP_NOT_FOUND` | Không lộ tenant. |
-| IT-ADMIN-05 | `POST /admin/shops/{id}/kyc/review` | APPROVED + valid case | 200 | Shop/KYC APPROVED | Outbox/audit atomic. |
-| IT-ADMIN-06 | `POST /admin/shops/{id}/kyc/review` | NEEDS_INFO reason 9/10/1000/1001 | 400 | `KYC_DECISION_INVALID` | Boundary. |
-| IT-ADMIN-07 | `POST /admin/shops/{id}/kyc/review` | REJECTED thiếu step-up | 428 | `RBAC_MFA_REQUIRED` | Không đổi state. |
-| IT-ADMIN-08 | `POST /admin/shops/{id}/kyc/review` | Case đã terminal | 409 | `KYC_DECISION_INVALID` | Không double decision. |
+| IT-ADMIN-03 | `GET /admin/shops/{shopId}/kyc` | KYC_READ | 200 | Metadata + signed URL | URL TTL 10m, no bytes. |
+| IT-ADMIN-04 | `GET /admin/shops/{shopId}/kyc` | Shop không tồn tại | 404 | `SHOP_NOT_FOUND` | Không lộ tenant. |
+| IT-ADMIN-05 | `POST /admin/shops/{shopId}/kyc/review` | APPROVED + valid case | 200 | Shop/KYC APPROVED | Outbox/audit atomic. |
+| IT-ADMIN-06 | `POST /admin/shops/{shopId}/kyc/review` | NEEDS_INFO reason 9/10/1000/1001 | 400 | `KYC_DECISION_INVALID` | Boundary. |
+| IT-ADMIN-07 | `POST /admin/shops/{shopId}/kyc/review` | REJECTED thiếu step-up | 428 | `RBAC_MFA_REQUIRED` | Không đổi state. |
+| IT-ADMIN-08 | `POST /admin/shops/{shopId}/kyc/review` | Case đã terminal | 409 | `KYC_DECISION_INVALID` | Không double decision. |
 | IT-ADMIN-09 | `GET /admin/users/{id}/roles` | ROLE_READ | 200 | Assignments + permissions | Scoped data. |
 | IT-ADMIN-10 | `PATCH /admin/users/{id}/roles` | GRANT valid shop role | 200 | Role active + event | Unique assignment. |
 | IT-ADMIN-11 | `PATCH /admin/users/{id}/roles` | Self grant/SUPER_ADMIN escalation | 403 | `RBAC_PERMISSION_DENIED` | Không tự nâng quyền. |
@@ -326,4 +326,4 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | 4 | Seller Staff invitation UI chưa đầy đủ trong Penpot; test scope chỉ cover assignment/status cơ bản. | Nếu mở full staff lifecycle, thêm invite/accept/revoke test. | Product owner |
 | 5 | Checkout-active session được mock bằng flag/service fixture vì Order Service chưa có trong test repository. | E2E address deletion cần chạy lại khi Order contract hoàn tất. | Order owner |
 | 6 | Favorites/Follow bổ sung từ Frontend Design (không có trong HLD), đặt tại `auth-user`; favorites chỉ lưu `product_id`, thẻ sản phẩm hydrate qua Product Catalog trong E2E. | Nếu tách service `engagement`, di chuyển bộ test IT-FAV/IT-FOLLOW. | Product owner |
-| 7 | `GET /shops/{id}` chỉ trả identity + `is_verified` + `follower_count`; rating/product count từ Product Catalog. | E2E Shop hero cần cả hai nguồn; test contract ghép ở tầng frontend/BFF. | Frontend + Product owner |
+| 7 | `GET /shops/{shopId}` chỉ trả identity + `is_verified` + `follower_count`; rating/product count từ Product Catalog. | E2E Shop hero cần cả hai nguồn; test contract ghép ở tầng frontend/BFF. | Frontend + Product owner |

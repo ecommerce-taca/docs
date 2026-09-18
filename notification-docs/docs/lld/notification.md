@@ -1,6 +1,6 @@
 # LLD — Notification Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
+> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
 > Tech stack đã chốt: Node.js + NestJS · MySQL/TypeORM · Kafka consumer · Email + In-app · SMTP/Mock adapter
 
 ## 1. Phạm vi
@@ -136,6 +136,8 @@ Retryable provider failure không mark `SENT`; duplicate completed event trả i
 | Order-Commerce | `order.confirmed`, `order.paid`, `invoice.issued`, `order.cancelled` | Order/invoice/cancel Email + In-app. |
 | Shipment | `shipment.delivered`, `shipment.failed` | Review prompt/tracking update. |
 | Payment-Wallet | `payment.succeeded/failed`, `payout.succeeded/failed` | Payment/wallet notification. |
+| Message | Command `MESSAGE_RECEIVED` (`notification.commands.v1`) | In-app/push new message alert. |
+| Rating-Comment | Command `REVIEW_REQUESTED` (`notification.commands.v1`, optional) | Review request sau khi order delivered. |
 
 ### 6.2 Contract — notification command
 

@@ -42,7 +42,7 @@ Product Catalog
 - `shop_id`, `sku_id`, `category_id` và `user_id` từ service khác là reference ID, không phải cross-service FK.
 - Product có thể hiển thị sản phẩm `ACTIVE` với stock bằng 0; trạng thái stock chỉ ảnh hưởng khả năng mua ở Cart/Checkout, không tự làm Product trừ stock.
 - Nếu Inventory không phát event hoặc projection bị stale, Product phải đánh dấu snapshot stale; không được suy diễn rằng còn hàng để reserve.
-- `GET /products?product_ids=` là điểm hydrate thẻ sản phẩm cho các danh sách chỉ giữ reference ở service khác (Favorites/Wishlist ở `auth-user`, Cart ở `order-commerce`). Public shop **profile** (`GET /api/v1/shops/{id}`) thuộc `auth-user`; Product Catalog chỉ phục vụ `GET /api/v1/shops/{shopId}/products` (khoá bằng `shop_id` UUID, không phải slug) và có thể trả `rating_avg`/`product_count` của shop từ projection cho Shop hero.
+- `GET /products?product_ids=` là điểm hydrate thẻ sản phẩm cho các danh sách chỉ giữ reference ở service khác (Favorites/Wishlist ở `auth-user`, Cart ở `order-commerce`). Public shop **profile** (`GET /api/v1/shops/{shopId}`) thuộc `auth-user`; Product Catalog chỉ phục vụ `GET /api/v1/shops/{shopId}/products` (khoá bằng `shop_id` UUID, không phải slug) và có thể trả `rating_avg`/`product_count` của shop từ projection cho Shop hero.
 
 ### 1.3 Mapping với HLD và Penpot
 
