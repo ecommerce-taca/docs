@@ -251,10 +251,10 @@ COD:    [checkout] ────────────────────�
 | `→ PENDING_PAYMENT` | Checkout (VNPAY) | Order tạo với phương thức trả trước; reservation `RESERVED`, chưa commit. |
 | `→ CONFIRMED` | Checkout (COD) | Order tạo với `method=COD`; commit reservation ngay; payment projection `PENDING_COD`. |
 | `PENDING_PAYMENT → CONFIRMED` | Payment event | `payment.succeeded` từ Payment-Wallet; commit reservation; payment projection `SUCCESS`. |
-| `PENDING_PAYMENT → CANCELLED` | System/buyer timeout | **Chỉ áp dụng cho đơn trả trước.** Release reservation; `PAYMENT_TIMEOUT`. Đơn COD không bao giờ ở trạng thái này nên không bị job này chạm tới. |
+| `PENDING_PAYMENT → CANCELLED` | System/buyer timeout hoặc `payment.expired` | **Chỉ áp dụng cho đơn trả trước.** Release reservation; `PAYMENT_TIMEOUT`. Đơn COD không bao giờ ở trạng thái này nên không bị job này chạm tới. |
 | `CONFIRMED → PROCESSING` | Seller/system | Seller accept đơn (hàng đợi "Chờ xác nhận" gồm **cả** đơn VNPAY đã trả và đơn COD). |
 | `PROCESSING → SHIPPED` | Seller/Shipment | Shipment created/tracking valid. |
-| `SHIPPED → DELIVERED` | Shipment event | Carrier confirms delivered. Với COD, đây là điểm kích hoạt capture tiền ở Payment-Wallet — **không** đổi `OrderStatus` thêm lần nữa. |
+| `SHIPPED → DELIVERED` | Shipment event (`shipment.delivered`) | Carrier confirms delivered. Với COD, đây là điểm kích hoạt capture tiền ở Payment-Wallet — **không** đổi `OrderStatus` thêm lần nữa. |
 | `CONFIRMED/PROCESSING → CANCELLED` | Buyer/seller/system theo policy | Buyer chỉ cancel trước shipping. VNPAY: release reservation đã commit + refund. COD: release/hoàn kho, không refund vì chưa thu tiền. |
 | `CANCELLED/DELIVERED` | Không reopen | Tạo refund/return workflow ở Payment/Support nếu cần. |
 
@@ -337,7 +337,7 @@ Mọi lần tính lại đều ghi audit kèm `grand_total` trước/sau để �
 |---|---|
 | `CartStatus` | `ACTIVE`, `EXPIRED`, `CHECKED_OUT`. |
 | `OrderStatus` | `PENDING_PAYMENT`, `CONFIRMED`, `PROCESSING`, `SHIPPED`, `DELIVERED`, `CANCELLED`. Trạng thái fulfillment; `PENDING_PAYMENT` chỉ dùng cho phương thức trả trước (VNPAY). |
-| `PaymentStatusProjection` | `PENDING`, `PENDING_COD`, `SUCCESS`, `FAILED`, `REFUNDED`. |
+| `PaymentStatusProjection` | `PENDING`, `PENDING_COD`, `SUCCESS`, `FAILED`, `EXPIRED`, `REFUNDED`, `PARTIALLY_REFUNDED`. `EXPIRED` → order ở `PENDING_PAYMENT` chuyển sang `CANCELLED` (xem `payment.expired` ở §6.2). `PARTIALLY_REFUNDED` → order giữ nguyên `OrderStatus` hiện tại, chỉ cập nhật số tiền đã hoàn, không tự đổi order status. |
 | `VoucherStatus` | `DRAFT`, `ACTIVE`, `INACTIVE`, `EXPIRED`, `ARCHIVED`. |
 | `DiscountType` | `PERCENT`, `FIXED`, `FREESHIP`. `FREESHIP` chỉ áp lên phí ship; `PERCENT`/`FIXED` chỉ áp lên tiền hàng. |
 | `VoucherScope` | `PLATFORM`, `SHOP`, `FREESHIP`. Vừa là phạm vi áp dụng vừa là **slot cộng dồn**: mỗi checkout tối đa 1 mã mỗi scope (`SHOP` là 1 mã **mỗi shop**). |
@@ -437,8 +437,10 @@ lấy tên đúng theo response `GET /orders/{orderId}` (§3.6) và bảng `invo
 | Nguồn | Event | Xử lý |
 |---|---|---|
 | Payment-Wallet | `payment.succeeded`, `payment.failed`, `payment.refunded` | Update payment projection, transition order, commit/release Inventory. |
+| Payment-Wallet | `payment.expired` | Order ở `PENDING_PAYMENT` chuyển sang `CANCELLED` (payment_status projection = `EXPIRED`); không hoàn kho nếu Inventory tự xử lý expire riêng qua `inventory.reservation.expired`. |
 | Inventory | `inventory.reservation.created`, `inventory.reservation.committed`, `inventory.reservation.released`, `inventory.reservation.expired` | Reconcile order intent/reservation; không tự sửa quantity. Tên event lấy đúng catalog của Inventory — **không có** `reservation.confirmed`/`reservation.rejected`/`stock_committed`: reserve thành công/thất bại là kết quả **đồng bộ** của `POST /internal/inventory/reservations`, event chỉ dùng để reconcile khi mất response. |
 | Shipment | `shipment.created`, `shipment.status_changed` | Update shipment projection/order status. |
+| Shipment | `shipment.delivered` | Order chuyển `SHIPPED → DELIVERED`; cập nhật `delivered_at`. |
 | Auth User | `user.status_changed` (mock policy) | Chặn hành động account mới nếu suspended; không đổi order history. |
 
 ### 6.3 Contract — Inventory reserve request

@@ -606,7 +606,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `user.events.v1` | `user.status_changed` | `user_id`, `old_status`, `new_status`, `reason` | Lock/suspend/restore/delete | `user_id` |
 | `user.events.v1` | `user.role_changed` | `user_id`, `role`, `shop_id`, `action` | Grant/revoke role | `user_id` |
 | `shop.events.v1` | `shop.created` | `shop_id`, `owner_user_id`, `status` | Register seller thành công | `shop_id` |
-| `shop.events.v1` | `shop.updated` | `shop_id`, changed fields trong allowlist snapshot (`name`, `slug`, `logo_media_id`, `description`), `updated_at`, `version` | Seller cập nhật shop profile | `shop_id` |
+| `shop.events.v1` | `shop.updated` | `shop_id`, changed fields trong allowlist snapshot (`name`, `slug`, `logo_object_key`, `description`), `updated_at`, `version` | Seller cập nhật shop profile | `shop_id` |
 | `shop.events.v1` | `shop.status_changed` | `shop_id`, `old_status`, `new_status`, `reason`, `changed_at` | Shop chuyển `DRAFT/ACTIVE/SUSPENDED/CLOSED` (gồm admin suspend/restore) | `shop_id` |
 | `shop.events.v1` | `shop.kyc.submitted` | `shop_id`, `kyc_case_id`, document types | Submit KYC | `shop_id` |
 | `shop.events.v1` | `shop.kyc.approved` | `shop_id`, `kyc_case_id`, `approved_at` | Admin approve | `shop_id` |

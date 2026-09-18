@@ -202,14 +202,14 @@ Request headers được kiểm:
 |---|---|
 | `Origin` | Bắt buộc và phải nằm trong `CORS_ALLOWED_ORIGINS`. |
 | `Access-Control-Request-Method` | Method phải được route policy cho phép. |
-| `Access-Control-Request-Headers` | Chỉ allowlist `Authorization`, `Content-Type`, `X-Request-ID`, `Idempotency-Key` và headers đã chốt. |
+| `Access-Control-Request-Headers` | Chỉ allowlist `Authorization`, `Content-Type`, `X-Request-ID`, `Idempotency-Key`, `X-MFA-Step-Up` và headers đã chốt. |
 
 Response headers baseline:
 
 ```http
 Access-Control-Allow-Origin: https://buyer.example
 Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
-Access-Control-Allow-Headers: Authorization,Content-Type,X-Request-ID,Idempotency-Key
+Access-Control-Allow-Headers: Authorization,Content-Type,X-Request-ID,Idempotency-Key,X-MFA-Step-Up
 Access-Control-Max-Age: 600
 Vary: Origin
 ```

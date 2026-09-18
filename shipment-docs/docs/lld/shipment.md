@@ -128,11 +128,13 @@ Unknown/out-of-order status được lưu diagnostic nhưng không làm state l�
 | Enum | Giá trị |
 |---|---|
 | `Carrier` | `GHN`, `SPX`, `J&T`, `MOCK`. Seller chọn tay 1 trong 3 carrier thật khi chuẩn bị hàng (`GET /seller/orders/{orderId}/shipment/carriers`); `MOCK` chỉ dùng test/staging, không hiển thị cho seller. |
-| `ShipmentStatus` | `CREATED`, `PICKED_UP`, `IN_TRANSIT`, `DELIVERED`, `FAILED`, `CANCELLED`, `PENDING_RECONCILIATION`. |
+| `ShipmentStatus` | `NOT_CREATED`, `CREATED`, `PICKED_UP`, `IN_TRANSIT`, `DELIVERED`, `FAILED`, `CANCELLED`, `PENDING_RECONCILIATION`. |
 | `CarrierEventStatus` | `RECEIVED`, `APPLIED`, `IGNORED_OLD`, `REJECTED`. |
 | `QuoteStatus` | `VALID`, `EXPIRED`, `FAILED`. |
 
-Canonical transition: `CREATED → PICKED_UP → IN_TRANSIT → DELIVERED`; failure/cancel theo carrier evidence và policy. Không client tự set `DELIVERED`.
+`NOT_CREATED` là giá trị hiển thị khi order chưa có shipment record nào (order chưa tới bước seller bấm "SHIP") — không phải giá trị lưu trong bảng `shipments`, chỉ dùng ở tầng response API (`shipment.status`) khi chưa tồn tại record.
+
+Canonical transition: `NOT_CREATED → CREATED → PICKED_UP → IN_TRANSIT → DELIVERED`; failure/cancel theo carrier evidence và policy. Không client tự set `DELIVERED`.
 
 ## 6. Event phát ra / lắng nghe
 
@@ -149,7 +151,7 @@ Canonical transition: `CREATED → PICKED_UP → IN_TRANSIT → DELIVERED`; fail
 
 | Nguồn | Event | Xử lý |
 |---|---|---|
-| Order-Commerce | `order.created`, `order.cancelled` | Create/cancel shipment workflow; không đổi order state trực tiếp. |
+| Order-Commerce | `order.cancelled` | Hủy/đồng bộ trạng thái shipment khi order bị hủy trước khi carrier pickup; không đổi order state trực tiếp. **Không dùng để tạo shipment** — shipment được tạo qua REST đồng bộ `POST /internal/shipments` (`docs/api/shipment.md` §3.3), do Order-Commerce gọi khi seller bấm "SHIP" ở `PATCH /seller/orders/{id}/fulfill` (`order-commerce-docs/docs/api/order-commerce.md` §3.7a), không phải khi nhận event `order.created`. |
 | Payment-Wallet | Không cần payment event trong baseline | Shipment không capture payment. |
 
 ### 6.3 Mock contract — carrier webhook
@@ -178,6 +180,7 @@ Canonical transition: `CREATED → PICKED_UP → IN_TRANSIT → DELIVERED`; fail
 | `SHIPMENT_ALREADY_EXISTS` | 409 | Shop-order đã có shipment. |
 | `SHIPMENT_CARRIER_UNAVAILABLE` | 503 | GHN/MOCK adapter unavailable. |
 | `SHIPMENT_CARRIER_TIMEOUT` | 504 | Carrier timeout. |
+| `SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` | 400 | Carrier không phủ khu vực/không khả dụng cho order này tại thời điểm tạo shipment. |
 | `SHIPMENT_WEBHOOK_INVALID` | 400 | Signature/payload sai. |
 | `SHIPMENT_WEBHOOK_REPLAYED` | 200/409 | Event đã xử lý. |
 | `SHIPMENT_TRACKING_CONFLICT` | 409 | Tracking code collision. |

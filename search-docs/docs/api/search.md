@@ -138,7 +138,7 @@ Query optional `index`, `consumer_group`. Response `200`:
 }
 ```
 
-`reindex_state` một trong `IDLE`/`REQUESTED`/`RUNNING`/`FAILED` — khớp state của job trả từ §3.6. Không trả raw event/query.
+`reindex_state` phản ánh `state` của job reindex gần nhất, dùng đúng enum `reindex_jobs.state` ở `docs/db/search.md` §3.3: `REQUESTED`/`RUNNING`/`VALIDATING`/`SWAPPED`/`FAILED`/`CANCELLED`, cộng thêm giá trị ảo `IDLE` khi chưa từng có job reindex nào (không phải giá trị lưu trong `reindex_jobs.state`, chỉ dùng ở response này). Không trả raw event/query.
 
 ### 3.5 `POST /admin/search/reindex`
 
@@ -173,7 +173,7 @@ Response `200`:
 }
 ```
 
-`state` ∈ `REQUESTED`/`RUNNING`/`SUCCEEDED`/`FAILED`. `error_code` chỉ có giá trị khi `state=FAILED`, dùng allowlist đã redact (không raw exception). Job không tồn tại: `404 SEARCH_REINDEX_NOT_FOUND`.
+`state` ∈ `REQUESTED`/`RUNNING`/`VALIDATING`/`SWAPPED`/`FAILED`/`CANCELLED` (khớp `reindex_jobs.state` ở `docs/db/search.md` §3.3). `error_code` chỉ có giá trị khi `state=FAILED`, dùng allowlist đã redact (không raw exception). Job không tồn tại: `404 SEARCH_REINDEX_NOT_FOUND`.
 
 ## 4. Mã lỗi chung
 

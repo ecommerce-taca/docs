@@ -52,7 +52,7 @@ Webhook log giữ carrier/external ID/payload hash/signature result/status/times
 
 ## 5. Enum và rules
 
-`ShipmentStatus`: `CREATED/PICKED_UP/IN_TRANSIT/DELIVERED/FAILED/CANCELLED/PENDING_RECONCILIATION`; `Carrier`: `GHN/SPX/J&T/MOCK` (seller chọn tay 1 trong 3 carrier thật); tracking code unique; delivered không do client set.
+`ShipmentStatus`: `NOT_CREATED/CREATED/PICKED_UP/IN_TRANSIT/DELIVERED/FAILED/CANCELLED/PENDING_RECONCILIATION` — `NOT_CREATED` là giá trị ảo khi order chưa có shipment record, không lưu trong bảng `shipments`, chỉ dùng ở response API; `Carrier`: `GHN/SPX/J&T/MOCK` (seller chọn tay 1 trong 3 carrier thật); tracking code unique; delivered không do client set.
 
 ## 6. Migration và seed
 
