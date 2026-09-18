@@ -1,6 +1,6 @@
 # Test Plan — Search Service
 
-> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · `docs/api/search.md` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · `docs/api/search.md` · Cập nhật: `2026-09-18`
 
 ## 1. Chuẩn bị
 
@@ -68,6 +68,6 @@ All API cases, visibility/state transitions, event idempotency, security/redacti
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
 | 1 | Exact Elasticsearch/analyzer/relevance benchmark chưa chốt. | Cần bổ sung golden query set. | Search owner |
-| 2 | Event source dùng CDC (Debezium/Kafka). | Ảnh hưởng replay/recovery test. | Platform owner |
+| 2 | Event source dùng Kafka outbox domain event, không phải CDC/Debezium — khớp `product-catalog-docs` §6.1–6.2. | Ảnh hưởng replay/recovery test. | Platform owner |
 | 3 | Rating aggregate contract là mock. | Disable rating tests/feature nếu chưa có event thật. | Rating owner |
 | 4 | Browser matrix/Penpot visual regression chưa chốt. | Bổ sung test matrix khi frontend chốt. | Frontend lead |

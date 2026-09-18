@@ -1,6 +1,6 @@
 # Database — Search Service
 
-> Nguồn: `docs/lld/search.md` · HLD `EcommercePlatform-v4(6).excalidraw` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/search.md` · HLD `EcommercePlatform-v4(6).excalidraw` · Cập nhật: `2026-09-18`
 > Baseline: Elasticsearch 8.x · index riêng, không dùng database Product làm query store
 
 ## 1. Quy ước chung
@@ -9,7 +9,7 @@
 |---|---|---|
 | Storage | Elasticsearch index + alias | Không tạo relational FK/cross-service join. |
 | Document ID | `product_id` string | Không dùng document ID ngẫu nhiên cho product index. |
-| Source | Product/CDC event (Debezium/Kafka) | Search document là projection, có `source_version`, `source_event_id`. |
+| Source | Product Kafka outbox domain event (không phải CDC/Debezium) | Search document là projection, có `source_version`, `source_event_id`. |
 | Time | ISO-8601 UTC trong document | Không lưu local time. |
 | Price | `long` integer VND | Không float/decimal trong query range. |
 | Visibility | `PUBLISHED`/`HIDDEN`/`DELETED` | Product `ACTIVE` map thành `PUBLISHED`. |
@@ -114,7 +114,7 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 |---:|---|---|
 | 001 | Tạo index mới `products-v{mapping_version+1}` với explicit mapping/settings (không dynamic mapping không kiểm soát) | Mapping version hiện tại |
 | 002 | Validate analyzer tiếng Việt, `attributes` flattened, `suggest` completion, `price` numeric range trên index rỗng bằng test document | 001 |
-| 003 | Backfill: replay toàn bộ event từ Kafka (hoặc CDC snapshot) theo checkpoint vào index mới, ghi tiến trình vào `reindex_jobs` | 001, 002 |
+| 003 | Backfill: replay toàn bộ event từ Kafka (hoặc Product export snapshot) theo checkpoint vào index mới, ghi tiến trình vào `reindex_jobs` | 001, 002 |
 | 004 | Chạy count/sample/version comparison giữa index cũ và mới; query smoke test (search cơ bản + facet + suggest) | 003 |
 | 005 | Atomic alias swap `products-read` → index mới | 004 đạt |
 | 006 | Giữ index cũ theo retention (không xoá ngay) — rollback bằng swap alias ngược nếu phát hiện lỗi sau swap | 005 |
@@ -122,7 +122,7 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 
 ### 6.2 Seed tối thiểu cho local/test
 
-**Bắt buộc seed bằng event fixture** (giả lập `product.created`/`sku.created`/`category.created` qua consumer), **không** viết trực tiếp vào index bằng tay — để test luôn đi qua đúng pipeline CDC như production.
+**Bắt buộc seed bằng event fixture** (giả lập `product.created`/`sku.created`/`category.created` qua consumer), **không** viết trực tiếp vào index bằng tay — để test luôn đi qua đúng pipeline Kafka outbox domain event như production.
 
 | Seed (qua event) | Giá trị |
 |---|---|

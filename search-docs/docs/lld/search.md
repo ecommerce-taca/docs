@@ -1,7 +1,7 @@
 # LLD — Search Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
-> Tech stack đã chốt: Node.js + NestJS · Elasticsearch · Kafka consumer (CDC via Debezium) từ Product Catalog · REST qua API Gateway
+> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
+> Tech stack đã chốt: Node.js + NestJS · Elasticsearch · Kafka consumer (domain event từ outbox của Product Catalog, không phải CDC) · REST qua API Gateway
 
 ## 1. Phạm vi
 
@@ -11,7 +11,7 @@
 |---|---|
 | Trách nhiệm chính | Full-text product search, autocomplete, category/shop/brand/price filter, facet, sort và index lifecycle. |
 | Nguồn dữ liệu | Elasticsearch là read index; Product Catalog là source of truth cho product content/lifecycle/price. |
-| Đồng bộ | Consume CDC events (Debezium/Kafka) từ Product Catalog; hỗ trợ replay/reindex. |
+| Đồng bộ | Consume Kafka outbox domain event (`product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`) từ Product Catalog, không phải CDC/change-stream MongoDB; hỗ trợ replay/reindex. |
 | Không thuộc service | Product CRUD, stock deduction/reservation, order/cart/voucher, review aggregate source, KYC, payment. |
 | Public visibility | Chỉ index product đã `ACTIVE`/published; status index dùng `PUBLISHED` là projection từ Product `ACTIVE`. |
 | Được gọi bởi | `mfe-buyer`, `mfe-seller`, `mfe-admin` qua API Gateway; internal reindex/health qua ops policy. |
@@ -19,7 +19,7 @@
 ### 1.2 Boundary
 
 ```text
-Product Catalog ──CDC (Debezium/Kafka)──► Search Consumer ──► Elasticsearch products index
+Product Catalog ──Kafka outbox domain event──► Search Consumer ──► Elasticsearch products index
 mfe-buyer/mfe-seller/mfe-admin ──API Gateway──► Search REST API
 Inventory ──(không gọi trực tiếp Search)──► Product stock projection ──event──► Search
 ```
@@ -33,7 +33,7 @@ Inventory ──(không gọi trực tiếp Search)──► Product stock proje
 
 | Nguồn | Requirement | Quyết định |
 |---|---|---|
-| HLD Search | Elasticsearch product index, CDC/event từ Product | Dùng CDC qua Debezium/Kafka; không đọc database Product. |
+| HLD Search | Elasticsearch product index, domain event từ Product | Dùng Kafka outbox domain event, không phải CDC/change-stream; không đọc database Product. |
 | mfe-buyer (Home/Search/Category) | Search keyword, category, price | REST query có full-text, filter, facet, sort, pagination. |
 | Product detail/card | `title`, `shopId`, `categoryPath`, `brand`, `price`, `ratingAvg`, `attributes` | Index document denormalized; URL/detail lấy Product API. |
 | mfe-seller/mfe-admin | Reindex/index diagnostics | Route admin/internal riêng, không expose index management cho buyer. |
@@ -207,7 +207,7 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
 | 1 | Backend Search là NestJS, engine là Elasticsearch theo lựa chọn A. | Ảnh hưởng client SDK, deployment và query DSL adapter. | Tech lead |
-| 2 | Product event được đồng bộ qua CDC (Debezium/Kafka). | Ảnh hưởng replay, ordering và source export khi rebuild index. | Platform/Search owner |
+| 2 | Product event được đồng bộ qua Kafka outbox domain event (topic `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`), không phải CDC/change-stream MongoDB — đã đồng bộ với `product-catalog-docs/docs/lld/product-catalog.md` §1.1/§6.1–6.2 (2026-09-18). | Ảnh hưởng replay, ordering và source export khi rebuild index. | Platform/Search owner |
 | 3 | Product `ACTIVE` map thành Search `PUBLISHED`. | Nếu business dùng tên state khác, phải đổi mapping/API filter. | Product owner |
 | 4 | `rating.aggregate.updated` do `rating-comment` phát (đã có trong bộ 11 service); Search consume để cập nhật `rating_avg`/`rating_count` phục vụ sort/facet `rating_desc`. Chỉ cần chốt tên topic + schema registry giữa hai service. | Nếu topic/schema lệch, `rating_desc` sort trả kết quả cũ/thiếu. | Search + Rating owner |
 | 5 | Elasticsearch version, analyzer tiếng Việt, synonym và shard/replica chưa chốt. | Ảnh hưởng relevance, storage và query latency. | Search/DevOps |
