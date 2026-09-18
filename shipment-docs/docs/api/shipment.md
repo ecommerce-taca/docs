@@ -8,7 +8,8 @@
 | Mục | Quy định |
 |---|---|
 | Auth | Buyer/seller/admin JWT qua Gateway; internal Order service token/mTLS. |
-| Request ID/trace | `X-Request-ID`, W3C `traceparent`/`tracestate`; webhook tự tạo ID nếu thiếu. |
+| Request ID/trace | `X-Request-ID`, W3C `traceparent`/`tracestate` (do Gateway/service propagate, client không gửi); webhook tự tạo ID nếu thiếu. |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
 | Timestamp | ISO-8601 UTC. |
 | Idempotency | Create/cancel/webhook external event bắt buộc dedupe. |
 | Response/error | `{data,meta}` / `{error:{code,message,details,trace_id}}`. |
@@ -156,7 +157,7 @@ Response `201`:
 
 Mỗi shop-order **một** shipment; gọi trùng trả shipment cũ (`200`, không tạo mới). `cod_amount > 0` chỉ hợp lệ khi order dùng COD. Carrier timeout → **không** retry create một cách mù quáng: shipment vào `PENDING_RECONCILIATION`, job đối soát sẽ tra theo `Idempotency-Key`/`order_id`.
 
-`carrier` trong body này là carrier **seller đã chọn** ở §3.1a, do Order-Commerce truyền xuống nguyên văn khi seller bấm "Xác nhận & chuẩn bị" (`PATCH /seller/orders/{orderId}/fulfill` action=`SHIP` — xem `order-commerce-docs/docs/api/order-commerce.md` §3.7). Shipment **không** tự chọn carrier thay seller; carrier không nằm trong danh sách khả dụng của order đó (theo §3.1a tại thời điểm gọi) → `400 SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER`.
+`carrier` trong body này là carrier **seller đã chọn** ở §3.1a, do Order-Commerce truyền xuống nguyên văn khi seller bấm "Xác nhận & chuẩn bị" (`PATCH /seller/orders/{orderId}/fulfill` action=`SHIP` — xem `order-commerce-docs/docs/api/order-commerce.md` §3.7a). Shipment **không** tự chọn carrier thay seller; carrier không nằm trong danh sách khả dụng của order đó (theo §3.1a tại thời điểm gọi) → `400 SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER`.
 
 ### 3.4 Cancel
 

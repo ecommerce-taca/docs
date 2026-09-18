@@ -9,8 +9,10 @@
 |---|---|
 | Auth | Public read anonymous; create/update buyer JWT; seller reply seller scope. |
 | Eligibility | Server verify delivered order item; client không set `is_verified_purchase`. |
-| Request ID/trace | `X-Request-ID`, W3C `traceparent`/`tracestate`; error `trace_id`. |
+| Request ID/trace | `X-Request-ID`, W3C `traceparent`/`tracestate` (do Gateway/service propagate, client không gửi); error `trace_id`. |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
 | Time | ISO-8601 UTC; page 1/size 20/max100. |
+| Pagination | `page` từ 1, `size` mặc định 20 tối đa 100; meta trả `request_id,page,size,total,total_pages`. |
 | Response/error | `{data,meta}` / `{error:{code,message,details,trace_id}}`. |
 | Log | JSON field chuẩn; không log comment raw, media signed URL, token, PII. |
 
@@ -66,7 +68,7 @@ Query `rating?` (1–5), `with_media?` (bool), `page`, `size` (max 100), `sort` 
       }
     ]
   },
-  "meta": { "request_id": "01912fd1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 128 }
+  "meta": { "request_id": "01912fd1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 128, "total_pages": 7 }
 }
 ```
 
@@ -100,7 +102,7 @@ Query `rating?` (1–5), `with_media?` (bool), `page`, `size` (max 100), `sort` 
 }
 ```
 
-Một buyer chỉ review **một lần cho mỗi `(order_id, sku_id)`** — trùng trả `409 REVIEW_ALREADY_EXISTS`. Order chưa `DELIVERED` → `409 REVIEW_NOT_ELIGIBLE`. Review **published ngay**, không có hàng đợi duyệt. Sau khi ghi, service phát `rating.aggregate.updated` để Product Catalog và Search cập nhật (§6 LLD).
+Một buyer chỉ review **một lần cho mỗi `(order_id, product_id)`** (khớp unique index `(order_id, product_id, buyer_user_id)` ở `docs/db/rating-comment.md`) — trùng trả `409 REVIEW_ALREADY_EXISTS`. Order chưa `DELIVERED` → `409 REVIEW_NOT_ELIGIBLE`. Review **published ngay**, không có hàng đợi duyệt. Sau khi ghi, service phát `rating.aggregate.updated` để Product Catalog và Search cập nhật (§6 LLD).
 
 **Không có hạn tạo review** — khác với sửa review (edit window 30 ngày, §3.3). Chỉ cần order item đã `DELIVERED` là buyer tạo được review bất cứ lúc nào, kể cả nhiều tháng sau. Badge "Chờ đánh giá" trên Penpot phản ánh việc *chưa* review, **không** có nghĩa "sắp hết hạn" — không có job hết hạn nào chạy trên trạng thái này.
 

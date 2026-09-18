@@ -9,11 +9,13 @@
 |---|---|
 | Auth | Internal service token/mTLS cho Order; seller/admin JWT + shop scope qua Gateway. |
 | Request ID | `X-Request-ID` tối đa 64; Gateway/service tạo nếu internal job. |
-| Trace | W3C `traceparent`/`tracestate` REST/Kafka; response/error có `trace_id`. |
+| Trace | W3C `traceparent`/`tracestate` REST/Kafka; response/error có `trace_id` (do Gateway/service propagate, client không gửi). |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
 | Timestamp | ISO-8601 UTC; quantity integer. |
 | Idempotency | `Idempotency-Key` bắt buộc reserve/commit/release/adjust; giữ 24h. |
 | Atomicity | Mỗi command có transaction + optimistic lock; multi-SKU request all-or-nothing. |
 | Response | `{data,meta:{request_id}}`; error chung `{error:{code,message,details,trace_id}}`. |
+| Pagination | `page` từ 1, `size` mặc định 20 tối đa 100; meta trả `request_id,page,size,total,total_pages`. |
 | Log | JSON chuẩn auth-user/Gateway; không log token/full order/address/payment. |
 | Accuracy | Không trả “đã giữ hàng” nếu transaction chưa commit; không partial success. |
 
@@ -23,8 +25,8 @@
 |---:|---|---|---|
 | 1 | `GET /internal/inventory/availability` | Order/internal | Đọc availability, không reserve. |
 | 2 | `POST /internal/inventory/reservations` | Order/internal | Atomic reserve nhiều SKU. |
-| 3 | `POST /internal/inventory/reservations/{id}/commit` | Order/Payment internal | Commit reservation. |
-| 4 | `POST /internal/inventory/reservations/{id}/release` | Order/Payment internal | Release reservation. |
+| 3 | `POST /internal/inventory/reservations/{reservationId}/commit` | Order/Payment internal | Commit reservation. |
+| 4 | `POST /internal/inventory/reservations/{reservationId}/release` | Order/Payment internal | Release reservation. |
 | 5 | `GET /seller/inventory` | Seller/staff | Xem stock shop. |
 | 6 | `PATCH /seller/inventory/{skuId}/adjust` | Seller | Điều chỉnh available bằng delta. |
 | 7 | `GET /admin/inventory/reconciliation` | Admin | Reconcile balance/ledger. |
@@ -57,21 +59,21 @@ Response `201` gồm `reservation_id`, status `RESERVED`, expires_at và items. 
 
 ### 3.3 Commit/release
 
-`POST /internal/inventory/reservations/{id}/commit` body `{order_id,reason?}`. Response `200`:
+`POST /internal/inventory/reservations/{reservationId}/commit` body `{order_id,reason?}`. Response `200`:
 
 ```json
-{ "data": { "reservation_id": "res-01912fa1", "status": "COMMITTED", "order_id": "order-01912f91", "committed_at": "2026-08-30T09:05:00Z" }, "meta": { "request_id": "01912fa2" } }
+{ "data": { "reservation_id": "reservation-01912fa1", "status": "COMMITTED", "order_id": "order-01912f91", "committed_at": "2026-08-30T09:05:00Z" }, "meta": { "request_id": "01912fa2" } }
 ```
 
 `RESERVED → COMMITTED`, giảm reserved, append movement.
 
-`POST /internal/inventory/reservations/{id}/release` body `{reason}`. Response `200`:
+`POST /internal/inventory/reservations/{reservationId}/release` body `{reason}`. Response `200`:
 
 ```json
-{ "data": { "reservation_id": "res-01912fa1", "status": "RELEASED", "reason": "ORDER_CANCELLED", "released_at": "2026-08-30T09:05:00Z" }, "meta": { "request_id": "01912fa3" } }
+{ "data": { "reservation_id": "reservation-01912fa1", "status": "RELEASED", "reason": "ORDER_CANCELLED", "released_at": "2026-08-30T09:05:00Z" }, "meta": { "request_id": "01912fa3" } }
 ```
 
-`RESERVED → RELEASED`, trả available, append movement. Gọi lại cùng command sau trạng thái hoàn tất trả idempotent result (cùng response); commit reservation released/expired trả `409 INVENTORY_RESERVATION_STATE_INVALID`.
+`RESERVED → RELEASED`: trả available (`qty_reserved -= q`, `qty_available += q`), append movement release. Release cũng áp dụng cho reservation đã `COMMITTED` (Order huỷ đơn VNPAY sau confirm): chỉ `qty_available += q` (restock), **không** chạm `qty_reserved` vì COMMIT đã trừ, movement `release_committed`, status `RELEASED`. Gọi lại cùng command sau trạng thái hoàn tất trả idempotent result (cùng response); commit/release reservation `RELEASED` trả `409 INVENTORY_RESERVATION_STATE_INVALID`; reservation `EXPIRED` trả `409 INVENTORY_RESERVATION_EXPIRED`.
 
 ### 3.4 `GET /seller/inventory`
 
@@ -92,7 +94,7 @@ Query `sku_id?`, `product_id?`, `status?`, `page`, `size`; seller chỉ thấy s
       "updated_at": "2026-08-30T09:00:00Z"
     }
   ],
-  "meta": { "request_id": "01912fb5-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 84 }
+  "meta": { "request_id": "01912fb5-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 84, "total_pages": 5 }
 }
 ```
 
@@ -132,7 +134,7 @@ Query `sku_id?`, `shop_id?`, `from?`, `to?`, `status?` (`MATCHED`|`MISMATCH`), `
       "as_of": "2026-08-30T09:00:00Z"
     }
   ],
-  "meta": { "request_id": "01912fb6-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 3 }
+  "meta": { "request_id": "01912fb6-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 3, "total_pages": 1 }
 }
 ```
 
@@ -170,4 +172,4 @@ Query `sku_id?`, `shop_id?`, `from?`, `to?`, `status?` (`MATCHED`|`MISMATCH`), `
 | 2 | Reserve TTL 15 phút, all-or-nothing nhiều SKU. | Ảnh hưởng checkout UX/abandoned stock. | Order owner |
 | 3 | Seller adjustment là signed delta; absolute target/cycle count chưa chốt. | Ảnh hưởng audit/reconciliation. | Seller owner |
 | 4 | Multi-warehouse chưa có trong v1. | Nếu thêm kho cần allocation/location API. | Architecture |
-| 5 | Payment event/Order command dùng saga; exact source of commit chưa chốt. | Ảnh hưởng duplicate commit/release. | Payment/Order owner |
+| 5 | Đã chốt (2026-09-18): Order-Commerce là bên gọi commit/release qua API command; Inventory không consume payment event. | Ảnh hưởng duplicate commit/release. | Payment/Order owner |

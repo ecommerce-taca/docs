@@ -111,7 +111,6 @@ Unknown/out-of-order status được lưu diagnostic nhưng không làm state l�
 
 | Tên | Giá trị baseline | Ghi chú |
 |---|---:|---|
-| `PAGE_SIZE_DEFAULT` | 20 | Max 100. |
 | `CARRIER_REQUEST_TIMEOUT` | 5s | GHN/SPX/J&T/MOCK call. |
 | `CARRIER_QUOTE_TTL` | 30 phút | `GET /seller/orders/{orderId}/shipment/carriers` — hết hạn không chặn tạo shipment. |
 | `CARRIER_RETRY_MAX` | 1 | Chỉ retry safe quote; create dùng idempotency/reconcile. |
@@ -129,12 +128,12 @@ Unknown/out-of-order status được lưu diagnostic nhưng không làm state l�
 |---|---|
 | `Carrier` | `GHN`, `SPX`, `J&T`, `MOCK`. Seller chọn tay 1 trong 3 carrier thật khi chuẩn bị hàng (`GET /seller/orders/{orderId}/shipment/carriers`); `MOCK` chỉ dùng test/staging, không hiển thị cho seller. |
 | `ShipmentStatus` | `NOT_CREATED`, `CREATED`, `PICKED_UP`, `IN_TRANSIT`, `DELIVERED`, `FAILED`, `CANCELLED`, `PENDING_RECONCILIATION`. |
-| `CarrierEventStatus` | `RECEIVED`, `APPLIED`, `IGNORED_OLD`, `REJECTED`. |
-| `QuoteStatus` | `VALID`, `EXPIRED`, `FAILED`. |
+| `CarrierEventStatus` | `RECEIVED`, `APPLIED`, `IGNORED_OLD`, `REJECTED` (chỉ lưu nội bộ bảng carrier_event_log/quotes, không phơi ra API). |
+| `QuoteStatus` | `VALID`, `EXPIRED`, `FAILED` (chỉ lưu nội bộ bảng carrier_event_log/quotes, không phơi ra API). |
 
-`NOT_CREATED` là giá trị hiển thị khi order chưa có shipment record nào (order chưa tới bước seller bấm "SHIP") — không phải giá trị lưu trong bảng `shipments`, chỉ dùng ở tầng response API (`shipment.status`) khi chưa tồn tại record.
+`NOT_CREATED` là giá trị hiển thị khi order chưa có shipment record nào (order chưa tới bước seller bấm "SHIP") — không phải giá trị lưu trong bảng `shipments`, chỉ dùng ở response của service gọi Shipment (hiện tại: order-commerce `GET /orders/{orderId}` trả `shipment.status = NOT_CREATED` khi chưa có record); bản thân Shipment API không trả giá trị này — chưa có record thì trả `404 SHIPMENT_NOT_FOUND`.
 
-Canonical transition: `NOT_CREATED → CREATED → PICKED_UP → IN_TRANSIT → DELIVERED`; failure/cancel theo carrier evidence và policy. Không client tự set `DELIVERED`.
+Canonical transition: `NOT_CREATED → CREATED → PICKED_UP → IN_TRANSIT → DELIVERED`; failure/cancel theo carrier evidence và policy. Không client tự set `DELIVERED`. Riêng `PENDING_RECONCILIATION`: sau khi đối soát theo `Idempotency-Key`/`order_id`, job chuyển về `CREATED` (carrier đã nhận) hoặc `CANCELLED` (carrier chưa nhận) — không phải trạng thái cuối.
 
 ## 6. Event phát ra / lắng nghe
 
@@ -144,8 +143,11 @@ Canonical transition: `NOT_CREATED → CREATED → PICKED_UP → IN_TRANSIT → 
 |---|---|---|
 | `shipment.events.v1` | `shipment.created` | shipment/order/shop/carrier/tracking |
 | `shipment.events.v1` | `shipment.status_changed` | old/new status, source, occurred_at |
-| `shipment.events.v1` | `shipment.delivered` | shipment/order/delivered_at |
-| `shipment.events.v1` | `shipment.failed/cancelled` | shipment/reason/source |
+| `shipment.events.v1` | `shipment.delivered` | shipment/order/delivered_at + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
+| `shipment.events.v1` | `shipment.failed` | shipment/order/reason/source + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
+| `shipment.events.v1` | `shipment.cancelled` | shipment/order/reason/source |
+
+> Field recipient (`buyer`) bắt buộc trong payload mọi event được Notification map sang template EMAIL (quyết định 2026-09-18, xem `docs/00-conventions.md` §7).
 
 ### 6.2 Event lắng nghe
 

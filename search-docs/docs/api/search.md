@@ -9,12 +9,13 @@
 |---|---|
 | Public auth | Anonymous được search; vẫn qua Gateway CORS/rate-limit. |
 | Request ID | `X-Request-ID` tối đa 64 ký tự; Gateway tạo/propagate. |
-| Trace | W3C `traceparent`/`tracestate` qua REST; Kafka headers với event. |
+| Trace | W3C `traceparent`/`tracestate` qua REST; Kafka headers với event (do Gateway/service propagate, client không gửi). |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
 | Timestamp | ISO-8601 UTC. |
 | Pagination | `page=1`, `size=20`, max 100. |
 | Query | Keyword max 200; suggest prefix max 100; field/sort/facet allowlist. |
 | Money | Integer VND; range không float. |
-| Response | `{data,meta}`; `meta` có `request_id`, `index_as_of`, optional lag. |
+| Response | `{data,meta}`; `meta` có `request_id`, `index_as_of`, `facets` (endpoint search), optional lag. |
 | Error | `{error:{code,message,details,trace_id}}`, không stack trace/DSL/token. |
 | Log | JSON field chuẩn: `timestamp,level,service,env,version,event,trace_id,span_id,request_id,route,method,status_code,duration_ms`. |
 | Redaction | Không log raw query nếu có PII, Authorization, full event payload, user ID làm metric label. |
@@ -26,8 +27,9 @@
 | 1 | `GET /products/search` | Public | Full-text/filter/facet/sort product. |
 | 2 | `GET /search/suggest` | Public | Autocomplete. |
 | 3 | `GET /search/health` | Internal/ops | Index/consumer readiness. |
+| 3a | `GET /health/live` | Internal/ops | Liveness process-only (Gateway active healthcheck gọi). |
 | 4 | `GET /admin/search/status` | `SEARCH_ADMIN` | Consumer lag/index status. |
-| 5 | `POST /admin/search/reindex` | `SEARCH_ADMIN` + step-up | Start versioned reindex. |
+| 5 | `POST /admin/search/reindex` | `SEARCH_ADMIN` + step-up (header `X-MFA-Step-Up`) | Start versioned reindex. |
 | 6 | `GET /admin/search/reindex/{jobId}` | `SEARCH_ADMIN` | Reindex job status. |
 
 Search không có endpoint CRUD product, stock reserve/deduct hoặc arbitrary Elasticsearch query.
@@ -49,35 +51,36 @@ Response `200`:
     "shop": {"shop_id": "shop-01912f30", "name": "Taca Shop"},
     "price": {"amount": 249000, "currency": "VND"},
     "cover_url": "https://cdn.example/signed",
-    "rating_avg": 4.5,
-    "stock_display": "IN_STOCK"
+    "rating_avg": 4.5
   }],
-  "facets": {
-    "category": [
-      { "category_id": "cat-01912f21", "name": "Điện thoại", "count": 128 },
-      { "category_id": "cat-01912f22", "name": "Laptop", "count": 64 }
-    ],
-    "brand": [
-      { "value": "Apple", "count": 42 },
-      { "value": "Samsung", "count": 30 }
-    ],
-    "price": [
-      { "min": 0, "max": 5000000, "count": 80 },
-      { "min": 5000000, "max": 20000000, "count": 45 },
-      { "min": 20000000, "max": null, "count": 6 }
-    ],
-    "attributes": {
-      "capacity_liter": [
-        { "value": "256GB", "count": 30 },
-        { "value": "512GB", "count": 18 }
+  "meta": {
+    "facets": {
+      "category": [
+        { "category_id": "category-01912f21", "name": "Điện thoại", "count": 128 },
+        { "category_id": "category-01912f22", "name": "Laptop", "count": 64 }
       ],
-      "color": [
-        { "value": "Titan đen", "count": 22 },
-        { "value": "Titan tự nhiên", "count": 15 }
-      ]
-    }
-  },
-  "meta": {"page": 1, "size": 20, "total": 1, "total_pages": 1, "request_id": "01912f90", "index_as_of": "2026-08-30T09:00:00Z"}
+      "brand": [
+        { "value": "Apple", "count": 42 },
+        { "value": "Samsung", "count": 30 }
+      ],
+      "price": [
+        { "min": 0, "max": 5000000, "count": 80 },
+        { "min": 5000000, "max": 20000000, "count": 45 },
+        { "min": 20000000, "max": null, "count": 6 }
+      ],
+      "attributes": {
+        "capacity_liter": [
+          { "value": "256GB", "count": 30 },
+          { "value": "512GB", "count": 18 }
+        ],
+        "color": [
+          { "value": "Titan đen", "count": 22 },
+          { "value": "Titan tự nhiên", "count": 15 }
+        ]
+      }
+    },
+    "page": 1, "size": 20, "total": 1, "total_pages": 1, "request_id": "01912f90", "index_as_of": "2026-08-30T09:00:00Z"
+  }
 }
 ```
 
@@ -130,7 +133,7 @@ Query optional `index`, `consumer_group`. Response `200`:
     "mapping_version": 1,
     "document_count": 48213,
     "last_event_at": "2026-08-30T08:59:58Z",
-    "consumer_lag": { "products.events.v1": 0, "sku.events.v1": 2 },
+    "consumer_lag": { "product.events.v1": 0, "sku.events.v1": 2 },
     "dlq_count": 0,
     "reindex_state": "IDLE"
   },
@@ -194,8 +197,8 @@ Response `200`:
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
-| 1 | Public search path là `/products/search`, Gateway có thể map từ `/search`. | Ảnh hưởng route registry và `mfe-buyer`. | API Gateway owner |
+| 1 | Public search path là `/products/search`; Gateway đã chốt map cả `/products/search` (exact) lẫn `/search/**` về search — xem `api-gateway-docs/docs/lld/api-gateway.md` §2.3. (Đã chốt 2026-09-18.) | Ảnh hưởng route registry và `mfe-buyer`. | API Gateway owner |
 | 2 | `PUBLISHED` là projection của Product `ACTIVE`. | Nếu Product đổi lifecycle, mapping/filter phải đổi. | Product owner |
-| 3 | `stock_display` chỉ là display field, không phải Inventory guarantee. | Tránh checkout dùng Search làm source stock. | Order/Inventory owner |
+| 3 | Search không trả stock — không consume event stock; khả năng mua do Cart/Checkout kiểm tra. | Tránh checkout dùng Search làm source stock. | Order/Inventory owner |
 | 4 | `sort=rating_desc` dùng `rating_avg` đồng bộ từ `rating.aggregate.updated` của `rating-comment`; chỉ cần chốt tên topic + schema registry. | Nếu chưa chốt topic, `rating_desc` trả `rating_avg` cũ/thiếu cho tới khi đồng bộ. | Search + Rating owner |
 | 5 | Exact analyzer/synonym/relevance chưa chốt. | Cần benchmark query tiếng Việt trước go-live. | Search owner |

@@ -170,6 +170,8 @@ V1 create eligible → published; delete → deleted; review không chuyển qua
 | `REVIEW_ALREADY_EXISTS` | 409 | Đã review order-product. |
 | `REVIEW_EDIT_EXPIRED` | 409 | Quá edit window. |
 | `REVIEW_MEDIA_INVALID` | 400 | Media/checksum/type sai. |
+| `REVIEW_REPLY_ALREADY_EXISTS` | 409 | Review đã có reply; dùng `PATCH` để sửa. |
+| `REVIEW_REPLY_NOT_FOUND` | 404 | Chưa có reply để sửa/xoá. |
 | `REVIEW_MEDIA_LIMIT_EXCEEDED` | 409 | Vượt 6 file/review. |
 | `REVIEW_VERSION_CONFLICT` | 409 | Concurrent update. |
 | `REVIEW_DEPENDENCY_UNAVAILABLE` | 503 | Order/Mongo/Kafka/S3 unavailable. |

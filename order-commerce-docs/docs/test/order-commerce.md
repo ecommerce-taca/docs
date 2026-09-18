@@ -113,8 +113,8 @@ Mọi case dưới đây là **số cụ thể**, không phải mô tả. Cài �
 | O-COD-05 | Sau `DELIVERED`, Payment phát `payment.succeeded` | `payment_status` `PENDING_COD → SUCCESS`; `OrderStatus` **giữ nguyên** `DELIVERED`, không transition thêm. |
 | O-COD-06 | Thứ tự event `order.confirmed` vs `order.paid` cho COD | `order.confirmed` phát tại checkout; `order.paid` phát sau `DELIVERED`. Khoảng cách hai event = cả vòng đời giao hàng. |
 | O-COD-07 | Notification nhận `order.confirmed` của đơn COD | Email `order-success-v1` + hoá đơn gửi **ngay lúc đặt đơn**, không chờ giao hàng. |
-| O-COD-08 | Huỷ đơn COD trước khi giao | Kho hoàn lại, **không** phát sinh refund (chưa từng thu tiền), `payment_status → FAILED/CANCELLED` theo policy. |
-| O-COD-09 | `shipment.failed` cho đơn COD | Không post ledger, không allocation, không payout cho seller. |
+| O-COD-08 | Huỷ đơn COD trước khi giao | Kho hoàn lại, **không** phát sinh refund (chưa từng thu tiền), `payment_status → FAILED` theo policy. |
+| O-COD-09 | `shipment.failed` cho đơn COD | OrderStatus giữ `SHIPPED`, ghi timeline; không post ledger, không allocation, không payout. |
 | O-COD-10 | So sánh hai nhánh cùng giỏ hàng | VNPAY và COD ra cùng `grand_total`; chỉ khác `status`, `payment_status` và thời điểm capture. |
 
 ## 4. Unit test

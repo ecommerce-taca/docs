@@ -60,7 +60,7 @@ Ngoài request path:
 | Penpot — Seller | Dashboard, product SPU/SKU, order, voucher, finance, settings, onboarding. | Route seller yêu cầu JWT + role/scope; quyền publish/withdraw do product/payment service kiểm tra theo KYC event. |
 | Penpot — Admin | KYC, catalog, finance, voucher, user/role, settings; nhiều admin role và 2FA. V1 **không** có microservice admin: mỗi màn route qua `/api/v1/admin/**` tới service sở hữu dữ liệu (§2.3, §8 #9). Dispute và Campaign là service v1.1 (`System_Overview.md` §6.3). | Gateway gate role/permission sơ bộ; service sở hữu enforce RBAC chi tiết và step-up 2FA ở mutation nhạy cảm. |
 | Penpot — Messaging | Buyer ↔ seller và support escalation. | V1 expose REST conversation/message route **và** WebSocket `/ws/messages` cho realtime. Gateway validate JWT ở handshake, kiểm rate limit/connection cap rồi proxy TCP upgrade tới Message Service; không buffer/không retry message. SSE không dùng trong v1. |
-| Penpot — States | Loading, empty, error, offline và retry. | Gateway trả error envelope ổn định, status rõ ràng, `traceId` để frontend hiển thị/retry phù hợp. |
+| Penpot — States | Loading, empty, error, offline và retry. | Gateway trả error envelope ổn định, status rõ ràng, `trace_id` để frontend hiển thị/retry phù hợp. |
 
 ## 2. Cấu trúc bên trong
 
@@ -126,7 +126,7 @@ Bảng này là **hợp đồng migration**: mỗi dòng là một yêu cầu đ
 | `taca-jwt` | `access` | Lấy Bearer từ header / `Sec-WebSocket-Protocol` / query `access_token`; verify RS256 bằng JWKS cache trong `lua_shared_dict`; kiểm claim §2.4; kiểm marker `revoked_user:{sub}` trong Redis; set actor header. | Chỉ chấp nhận `alg=RS256`; không fallback `none`/HS256/key từ client. Refresh JWKS **một lần có lock** (`resty.lock`) khi gặp `kid` lạ. JWKS quá `JWT_JWKS_MAX_STALE` → `503`, không bypass. |
 | `taca-rbac` | `access` (sau `taca-jwt`) | So `roles`/`permissions` trong actor context với `required_roles`/`required_any_permission` khai báo trên từng Route → `403 GATEWAY_PERMISSION_DENIED`. | Chỉ coarse gate. Không đọc body, không suy luận ownership từ `shop_id` trong path/body. Không tự quyết định 2FA. |
 | `taca-ws-guard` | `access` + `log` | Chỉ gắn trên Route `/ws/messages`. `access`: `INCR ws:v1:conn:{user_hash}`, vượt `WS_MAX_CONNECTIONS_PER_USER` → `429`. `log`: `DECR` khi connection đóng. | Không parse/không sửa WebSocket frame. Không tự reconnect. Redis lỗi → fail-closed theo policy handshake. |
-| `taca-error-envelope` | `header_filter` + `body_filter` | Dựa vào `kong.response.get_source()`: `exit`/`error` (lỗi do Kong/plugin sinh) → thay body bằng envelope chuẩn; `service` + 4xx → giữ nguyên business code đã allowlist, bổ sung `trace_id` nếu thiếu; `service` + 5xx → thay bằng `GATEWAY_UPSTREAM_UNAVAILABLE`/`GATEWAY_UPSTREAM_BAD_RESPONSE`. | Không bao giờ pass-through body 5xx của upstream. Không trả stack trace, internal host, SQL, secret. Bảng ánh xạ lỗi native của Kong ở §2.1.6. |
+| `taca-error-envelope` | `header_filter` + `body_filter` | Dựa vào `kong.response.get_source()`: `exit`/`error` (lỗi do Kong/plugin sinh) → thay body bằng envelope chuẩn; `service` + 4xx → giữ nguyên business code đã allowlist, bổ sung `trace_id` nếu thiếu; `service` + 5xx → giữ nguyên business code nếu thuộc allowlist 5xx đã chốt (`docs/api/api-gateway.md` §4.1), các 5xx còn lại thay bằng `GATEWAY_UPSTREAM_UNAVAILABLE`/`GATEWAY_UPSTREAM_BAD_RESPONSE`. | Không bao giờ pass-through body 5xx của upstream. Không trả stack trace, internal host, SQL, secret. Bảng ánh xạ lỗi native của Kong ở §2.1.6. |
 
 Mọi plugin đọc cấu hình từ `schema.lua` (khai báo trong decK), **không** hard-code giá trị môi trường; thiếu field bắt buộc thì `deck validate` fail trước khi sync.
 
@@ -220,14 +220,14 @@ So với bản NestJS, thứ tự nghiệp vụ giữ nguyên; khác biệt là 
 | Route family | Upstream | Exposure mặc định | Timeout | Retry |
 |---|---|---|---:|---|
 | `/api/v1/auth/**` | `auth-user` | Public tùy endpoint; signout/2FA protected | 5s | Chỉ GET public nếu có |
-| `/api/v1/users/**` (gồm `/users/me/favorites/**`), `/api/v1/addresses/**` | `auth-user` | Authenticated | 5s | Không retry mutation |
-| `/api/v1/seller/onboarding/**`, `/api/v1/seller/shop`, `/api/v1/admin/users/**`, `/api/v1/admin/shops/**` | `auth-user` | Role-gated | 5s | Không retry mutation |
-| `/api/v1/shops/{shopId}`, `/api/v1/shops/{shopId}/follow` | `auth-user` | GET public (profile); follow authenticated | 5s | GET tối đa 1 lần |
+| `/api/v1/users/**` (gồm `/users/me/favorites/**`, `/users/me/following`) | `auth-user` | Authenticated | 5s | Không retry mutation |
+| `/api/v1/seller/onboarding/**`, `/api/v1/seller/shop`, `/api/v1/admin/users/**`, `/api/v1/admin/shops/**`, `/api/v1/admin/audit-logs` | `auth-user` | Role-gated | 5s | Không retry mutation |
+| `/api/v1/shops/{shopId}`, `/api/v1/shops/{shopId}/followers/count`, `/api/v1/shops/{shopId}/follow` | `auth-user` | GET public (profile/followers count); follow authenticated | 5s | GET tối đa 1 lần |
 | `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/seller/products/**`, `/api/v1/admin/catalog/**`, `/api/v1/shops/{shopId}/products` | `product-catalog` | GET public; seller/admin mutation role-gated | GET 5s, mutation 5s | GET tối đa 1 lần |
-| `/api/v1/search/**` | `search` | GET public | 5s | GET tối đa 1 lần |
+| `/api/v1/products/search` (exact — ưu tiên trước `/api/v1/products/**`), `/api/v1/search/**`, `/api/v1/admin/search/**` | `search` | GET public; admin role-gated | 5s | GET tối đa 1 lần |
 | `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**`, `/api/v1/seller/vouchers/**`, `/api/v1/seller/orders/**`, `/api/v1/admin/vouchers/**` | `order-commerce` | Authenticated; seller/admin route theo endpoint | 5s; checkout 10s | Chỉ GET; mutation dùng idempotency ở service |
 | `/api/v1/inventory/**`, `/api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | `inventory` | Seller/admin role-gated; `/internal/**` không expose public | 5s | GET tối đa 1 lần |
-| `/api/v1/payments/**`, `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `/api/v1/seller/revenue`, `/api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated hoặc admin/seller role; `/payments/webhook` không JWT | 10s | Không retry mutation |
+| `/api/v1/payments/**`, `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `/api/v1/seller/revenue`, `/api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated hoặc admin/seller role; `/payments/webhook` không JWT; `POST /payments` + `POST /payments/{paymentId}/refunds` là internal — service tự chặn caller ngoài Order-Commerce/Admin bằng actor scope | 10s | Không retry mutation |
 | `/api/v1/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment/carriers`, `/api/v1/webhooks/shipping/**` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
 | `/api/v1/products/{productId}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; create/update/reply authenticated | 5s | GET tối đa 1 lần |
 | `/api/v1/notifications/**` | `notification` | Authenticated | 5s | GET tối đa 1 lần |
@@ -239,7 +239,7 @@ Quy tắc route:
 
 - Các endpoint public cụ thể phải khai báo rõ trong route policy; không mặc định toàn bộ `GET` là public.
 - `/health/live`, `/health/ready` và `/metrics` là endpoint vận hành, không expose qua public API prefix nếu chưa có ingress policy riêng.
-- Internal service không được expose route quản trị database, actuator/debug hoặc endpoint bypass authorization. Các route `/internal/**` của Inventory/Shipment/Payment chỉ gọi service-to-service, không map ra public API prefix.
+- Internal service không được expose route quản trị database, actuator/debug hoặc endpoint bypass authorization. Các route `/internal/**` của Inventory/Shipment chỉ gọi service-to-service, không map ra public API prefix. Payment-Wallet **không dùng prefix `/internal/**`**: các endpoint nội bộ của nó (`POST /payments`, `POST /payments/{paymentId}/refunds`) được chặn bằng actor-scope check trong chính service (chỉ Order-Commerce/Admin), vì Gateway không phân biệt được chúng với call hợp lệ.
 - `POST /checkout`, `POST /payments`, `POST /orders` và action tương tự không được tự retry ở Gateway; idempotency key và duplicate protection thuộc service sở hữu nghiệp vụ.
 - `/ws/messages` là path WebSocket duy nhất được phép `Upgrade` trong v1; mọi path `/ws/**` khác trả `404`. Handshake bắt buộc JWT hợp lệ; token hết hạn giữa phiên xử lý theo `WS_IDLE_TIMEOUT`/policy, Gateway không tự refresh.
 - `/api/v1/admin/**`: Gateway chỉ **coarse-gate** theo role admin (có bất kỳ admin role nào); permission chi tiết (`VOUCHER_MANAGE`, `CATALOG_ADMIN`, `FINANCE_OPS`, `RISK_MANAGER`…) và step-up 2FA do **service sở hữu dữ liệu** enforce. V1 không có microservice admin riêng: mỗi nhánh `/admin/**` route thẳng tới service chủ tương ứng (xem §8 #9, `System_Overview.md` §6.3). Admin Dashboard là tầng đọc tổng hợp (`mfe-admin` compose read-API hoặc BFF mỏng), Gateway không có endpoint dashboard riêng.
@@ -317,7 +317,7 @@ Trong Kong, việc set/strip các header trên chia cho đúng hai plugin:
 - Trong Kong, mỗi biến trở thành một **Upstream** (`name: up-auth-user`) có `targets`, và các Service `svc-auth-user-read`/`svc-auth-user-write` trỏ `host` vào tên Upstream đó. Không đặt hostname trực tiếp lên Service — làm vậy mất healthcheck và load balancing.
 - decK thay biến môi trường khi render (`${AUTH_USER_BASE_URL}` trong `kong.yaml`, giá trị lấy từ `env/<môi trường>.yaml` hoặc `--set`); giá trị thật **không** commit vào Git.
 - `deck validate` + `deck gateway diff` chạy trong CI trước khi `sync`: config sai scheme, thiếu host/port, `retries` khác 0 trên Service write, hoặc Route thiếu `taca-rbac` trên nhánh `/admin/**` đều phải fail pipeline. Đây là bản thay thế cho "fail-fast khi startup" của bản NestJS.
-- Internal REST response phải có `X-Request-ID` hoặc `traceId` để Gateway map log; chi tiết mock contract ở mục 6.
+- Internal REST response phải có `X-Request-ID` hoặc `trace_id` để Gateway map log; chi tiết mock contract ở mục 6.
 
 ## 3. Luồng xử lý
 
@@ -417,8 +417,8 @@ Request → route policy
 
 | Tình huống | Gateway xử lý | HTTP trả client |
 |---|---|---:|
-| Upstream trả 4xx có error envelope hợp lệ | Giữ code/status/message an toàn; gắn `traceId` nếu thiếu | Giữ status upstream |
-| Upstream trả 5xx | Không expose nội dung nội bộ; log sanitized; áp circuit counter | `502` hoặc `503` |
+| Upstream trả 4xx có error envelope hợp lệ | Giữ code/status/message an toàn; gắn `trace_id` nếu thiếu | Giữ status upstream |
+| Upstream trả 5xx | Business code thuộc allowlist 5xx (§4.1 api.md) → giữ nguyên kèm `trace_id`; còn lại không expose nội dung nội bộ; log sanitized; áp circuit counter | Giữ status upstream (allowlist) hoặc `502`/`503` |
 | Connect timeout | Không retry mutation; metric timeout | `504` |
 | Read timeout | Map error chuẩn; circuit counter | `504` |
 | Circuit OPEN | Không gọi upstream | `503` |
@@ -441,7 +441,7 @@ Log start/end với method, route template, status, latency, upstream, outcome
 - Không log request body mặc định.
 - Redact `Authorization`, refresh token, OTP, password, TOTP secret, KYC data, bank data và message attachment metadata nhạy cảm.
 - IP và user ID chỉ dùng ở mức cần thiết cho security/audit; policy retention cụ thể thuộc vận hành.
-- Error response luôn có `traceId`; frontend dùng để hiển thị lỗi hoặc gửi support.
+- Error response luôn có `trace_id`; frontend dùng để hiển thị lỗi hoặc gửi support.
 
 ### 3.8 Upload và message attachment
 
@@ -463,7 +463,7 @@ Log start/end với method, route template, status, latency, upstream, outcome
 6. Mở TCP tunnel tới MESSAGE_BASE_URL, forward Upgrade request kèm actor headers
 7. Sau khi upgrade: Gateway chỉ relay byte frame, không parse, không sửa, không buffer quá TCP window
 8. Đóng socket khi: client/upstream đóng, quá WS_IDLE_TIMEOUT không có frame,
-   Message Service báo lỗi, hoặc user bị revoke (theo Redis revoked_user_id của Gateway)
+   Message Service báo lỗi, hoặc user bị revoke (theo Redis revoked_user:{user_id} của Gateway)
 ```
 
 Ràng buộc:
@@ -472,7 +472,7 @@ Ràng buộc:
 - Không retry handshake và không tự reconnect socket; client tự reconnect và gọi `conversation.sync` qua REST.
 - Handshake fail dùng cùng error envelope HTTP (`GATEWAY_AUTH_REQUIRED`, `GATEWAY_TOKEN_EXPIRED`, `GATEWAY_RATE_LIMITED`, `GATEWAY_UPSTREAM_UNAVAILABLE`).
 - Circuit breaker cho `message` upstream áp cho cả REST và WS handshake; khi OPEN, handshake trả `503` ngay.
-- Không log message frame; chỉ log sự kiện `ws.handshake`, `ws.open`, `ws.close` với `traceId`, `requestId`, `outcome`, `duration_ms` và connection count.
+- Không log message frame; chỉ log sự kiện `ws.handshake`, `ws.open`, `ws.close` với `trace_id`, `request_id`, `outcome`, `duration_ms` và connection count.
 
 Cách Kong hiện thực luồng trên:
 
@@ -607,7 +607,7 @@ Ba khác biệt so với circuit breaker tự viết, **phải biết trước k
 
 1. Passive healthcheck của Kong đếm **lỗi liên tiếp**, không đếm theo cửa sổ trượt `30s`. Traffic xen kẽ thành công/thất bại có thể không bao giờ chạm ngưỡng. Nếu cần ngữ nghĩa cửa sổ, phải dựa vào active healthcheck với `interval` ngắn.
 2. Trạng thái healthcheck là **per-node**, không chia sẻ giữa các node Kong (§3.5).
-3. Active healthcheck gọi `/health/live` của service — nghĩa là **mọi service upstream bắt buộc phải có endpoint đó** và endpoint phải nhẹ, không phụ thuộc database. Điều này đã đúng với 10 service hiện tại (`/health/live` process-only), nhưng giờ trở thành ràng buộc cứng chứ không còn là khuyến nghị.
+3. Active healthcheck gọi `/health/live` của service — nghĩa là **mọi service upstream bắt buộc phải có endpoint đó** và endpoint phải nhẹ, không phụ thuộc database. Điều này đã đúng với 10/11 service hiện tại (`/health/live` process-only); `auth-user` docs chưa khai endpoint health do đang freeze (xem `docs/00-conventions.md` §Ngoại lệ) — phải bổ sung khi hết freeze. Giờ là ràng buộc cứng, không còn là khuyến nghị.
 
 ### 5.3 `JwksAvailability`
 

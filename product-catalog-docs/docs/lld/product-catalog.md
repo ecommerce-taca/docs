@@ -13,10 +13,10 @@
 | Nguồn dữ liệu chính | MongoDB database riêng của `product-catalog`; không tạo cross-service foreign key. MongoDB chỉ lưu product/catalog state và các projection phục vụ đọc. |
 | Tồn kho | `inventory` là source of truth duy nhất cho available/reserved/committed stock và thao tác trừ/reserve. Product không được decrement, reserve hoặc kết luận stock cuối cùng cho checkout. |
 | Giá | `product-catalog` là source of truth cho `base_price`/`sale_price` hiển thị. Order-Commerce đọc giá qua API/event và lưu price snapshot khi checkout/order; voucher/discount rule thuộc Order-Commerce. |
-| Publish | Seller có thể tạo/cập nhật draft không cần product approval/censor. Publish yêu cầu shop đã `KYC_APPROVED`; không có trạng thái `PENDING_APPROVAL`. |
+| Publish | Seller có thể tạo/cập nhật draft không cần product approval/censor. Publish yêu cầu shop có `kyc_status = APPROVED` (enum `KycStatus` của auth-user); không có trạng thái `PENDING_APPROVAL`. |
 | Inventory display | Product giữ read-only inventory projection từ event của Inventory để hiển thị `Còn hàng/Hết hàng` hoặc số lượng snapshot. Projection có thể eventual consistent và không dùng để trừ stock. |
 | Search | Search đồng bộ dữ liệu qua Kafka outbox domain event (`product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`), không phải CDC/change-stream MongoDB; search sở hữu search index. Product không đọc/ghi trực tiếp Elasticsearch. |
-| Rating hiển thị | `rating-comment` là source of truth cho review/rating. Product chỉ cache `rating_avg`/`rating_count` từ event `rating.aggregate.updated` để hiển thị PDP/Shop hero; không tự tính rating. |
+| Rating hiển thị | `rating-comment` là source of truth cho review/rating. Product chỉ cache `rating_summary` (`avg`/`count`) từ event `rating.aggregate.updated` để hiển thị PDP/Shop hero; không tự tính rating. |
 | Không thuộc service | User/profile/KYC decision, inventory deduction/reservation, cart/checkout/order, voucher calculation, payment, shipment, review, message và search index. |
 | Được gọi bởi | Các ứng dụng Micro-Frontends (`mfe-buyer`, `mfe-seller`, `mfe-admin`, `mfe-catalog` qua `mfe-shell`) thông qua API Gateway; Order/Inventory/Search dùng REST/event contract, không đọc MongoDB trực tiếp. |
 
@@ -118,7 +118,7 @@ Chi tiết field type, validator, index và migration nằm ở `docs/db/product
 | Shop identity/KYC | Auth User | Lưu snapshot để đọc/gate; không quyết định KYC. |
 | Available/reserved stock | Inventory | Chỉ consume snapshot; không reserve/deduct. |
 | Search index | Search | Nguồn dữ liệu được đồng bộ qua Kafka outbox domain event; Product không ghi Elasticsearch. |
-| Rating/review | Rating-Comment | Product chỉ cache `rating_avg`/`rating_count` từ event; không tự tính hay lưu review. |
+| Rating/review | Rating-Comment | Product chỉ cache `rating_summary` (`avg`/`count`) từ event; không tự tính hay lưu review. |
 | Voucher/discount | Order-Commerce | Product trả giá niêm yết; không tính voucher. |
 | Order price | Order-Commerce | Product cung cấp giá hiện tại; Order snapshot giá tại checkout. |
 
@@ -520,7 +520,7 @@ Chuyển trạng thái:
 |---|---|---|---|---|
 | `product.events.v1` | `product.created` | `product_id`, `shop_id`, `slug`, `primary_category_id`, status, title, categories, version | Tạo SPU commit | `product_id` |
 | `product.events.v1` | `product.updated` | changed fields, version, price summary, shop snapshot | Product mutation commit | `product_id` |
-| `product.events.v1` | `product.published` | `product_id`, `shop_id`, `title`, `slug`, `brand`, `primary_category_id`, `attributes` (descriptive, không chỉ variant dimension), `media[]` (`url`/`alt`), `price` (`base`/`sale`/`currency`), `tax_rate_bps`, active SKU IDs, `published_at`, `version` | Publish thành công | `product_id` |
+| `product.events.v1` | `product.published` | `product_id`, `shop_id`, `title`, `slug`, `brand`, `primary_category_id`, `category_path` (mảng tên/slug đường dẫn danh mục từ gốc, phục vụ facet của Search), `visibility_status` (`PUBLISHED` — map từ Product `ACTIVE`), `attributes` (descriptive, không chỉ variant dimension), `media[]` (`url`/`alt`), `price` (`base`/`sale`/`currency`), `tax_rate_bps`, active SKU IDs, `published_at`, `version` | Publish thành công | `product_id` |
 | `product.events.v1` | `product.unpublished` | `product_id`, reason, version | Seller/admin unpublish | `product_id` |
 | `product.events.v1` | `product.blocked` | `product_id`, reason, actor, blocked_at | Admin block | `product_id` |
 | `product.events.v1` | `product.unblocked` | `product_id`, `next_status` (`ACTIVE` → hiện lại doc ở Search, `INACTIVE` → giữ ẩn), actor | Admin unblock | `product_id` |
@@ -534,6 +534,8 @@ Chuyển trạng thái:
 | `catalog.events.v1` | `product.media_updated` | media IDs, cover, version | Media ready/order changed | `product_id` |
 | `catalog.events.v1` | `product.shop_snapshot_updated` | product_id, shop_id, changed snapshot fields | Shop event projection update | `product_id` |
 
+> Map giá cho Search index: Search lấy `price.sale` làm scalar `long` VND cho range/sort; `base`/`currency` để hiển thị. `category_path` và `visibility_status` sinh ra từ phía Product khi publish để Search không phải join thêm.
+
 Consumers phải xử lý idempotent theo `event_id`, kiểm tra `schema_version` và không đọc Product MongoDB trực tiếp.
 
 ### 6.3 Event lắng nghe
@@ -541,8 +543,8 @@ Consumers phải xử lý idempotent theo `event_id`, kiểm tra `schema_version
 | Nguồn | Event | Xử lý |
 |---|---|---|
 | Auth User | `shop.created` — payload thật `shop_id`, `owner_user_id`, `status` | Tạo shop snapshot để seller/product read. |
-| Auth User | `shop.updated` — payload thật chỉ có `shop_id` + changed fields allowlist (`name`, `slug`, `logo_object_key`, `description`) + `updated_at`/`version` | Cập nhật name/slug/logo/business display snapshot; không có `logo_url` sẵn, Product tự resolve `logo_object_key` thành URL hiển thị. |
-| Auth User | `shop.status_changed` — payload thật `shop_id`, `old_status`, `new_status` (`DRAFT`/`ACTIVE`/`SUSPENDED`/`CLOSED`), `reason`, `changed_at` | Cập nhật shop status; không tự đổi product content. |
+| Auth User | `shop.updated` — payload thật chỉ có `shop_id` + changed fields allowlist (`name`, `slug`, `logo_object_key`, `description`) + `updated_at`/`version` | Cập nhật name/slug/logo/business display snapshot; không có `logo_url` sẵn, Product tự resolve `logo_object_key` thành URL hiển thị (cơ chế: gọi `GET /shops/{shopId}` của auth-user lấy `logo_url` đã resolve, hoặc dựng từ CDN prefix theo object key; **không** gọi presign nội bộ của auth-user — endpoint đó cấm service khác dùng). |
+| Auth User | `shop.status_changed` — payload thật `shop_id`, `old_status`, `new_status` (`DRAFT`/`ACTIVE`/`SUSPENDED`/`DELETED` — enum `ShopStatus` ở `auth-user-docs/docs/db/auth-user.md` §5; doc auth-user lld §6.2 hiện ghi `CLOSED` là lỗi, đang freeze chưa sửa), `reason`, `changed_at` | Cập nhật shop status; không tự đổi product content. |
 | Auth User | `shop.kyc.submitted`/`approved`/`needs_info`/`rejected`/`expired` — payload không mang field `kyc_status` | Cập nhật KYC gate projection; Product tự suy `kyc_status` từ `event_type`; chặn publish/resume nếu không APPROVED. Không có event `shop.kyc.suspended` — đình chỉ shop đến qua `shop.status_changed`. |
 | Inventory | `inventory.stock_snapshot.updated` | Upsert read-only SKU/product stock projection. |
 | Rating-Comment | `rating.aggregate.updated` (`rating.events.v1`) | Upsert `products.rating_summary.{avg,count}` cache cho PDP/Shop hero; payload `product_id`, `avg`, `count`, `distribution`. |
@@ -669,6 +671,6 @@ Ràng buộc:
 | 16 | `display_as` (`PLAIN`/`COLOR_SWATCH`/`IMAGE_THUMB`) chỉ là hint render cho Frontend Seller SKU builder; không ảnh hưởng `variant_key`. | Nếu cần swatch bắt buộc theo value, thêm validate riêng. | Product + Frontend |
 | 17 | `GET /products?product_ids=` (batch ≤100) là contract hydrate thẻ sản phẩm cho Favorites (`auth-user`) và Cart (`order-commerce`). | Nếu payload thẻ cần field khác, mở rộng response `ProductCard`. | Product + Frontend |
 | 18 | Đổi mô tả đồng bộ Search từ CDC/Debezium sang Kafka outbox domain event (`product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`); `search-docs` §1.1/tech stack hiện vẫn còn nhắc "CDC (Debezium/Kafka)" dù event contract thật ở §6 của chính doc đó đã dùng đúng các topic domain event này. | Nếu Search vẫn dùng CDC/change-stream thật, phải đổi lại mô tả và event `version` field. | Search owner |
-| 19 | Payload `product.published`/`product.created`/`sku.*` mở rộng thêm field (attributes, media, tax_rate_bps, shop_id...) là giả định theo nhu cầu hiển thị của Search/PDP, chưa có xác nhận chính thức từ Search/Inventory. | Nếu payload thật hẹp hơn, Search phải tự query bổ sung hoặc Product phải điều chỉnh event schema. | Product + Search + Inventory owner |
+| 19 | Payload `product.published` đã chốt với Search (2026-09-18): gồm `category_path`, `visibility_status`, map giá `price.sale` → scalar long; `product.created`/`sku.*` vẫn là giả định, chưa có xác nhận chính thức từ Search/Inventory. | Nếu payload thật hẹp hơn, Search phải tự query bổ sung hoặc Product phải điều chỉnh event schema. | Product + Search + Inventory owner |
 | 20 | Payload event KYC/shop thật (không có `kyc_status`/`source_version`/`logo_url`) lấy từ `auth-user-docs/docs/lld/auth-user.md` §6.2 tại thời điểm viết; nếu Auth User đổi contract phải cập nhật lại theo. | Nếu Auth User đổi payload, `ShopProjectionService` suy sai `kyc_status`. | Auth-user owner |
 | 21 | `rating_summary` cache (avg/count) trên Product lấy từ event `rating.aggregate.updated` do `rating-comment` sở hữu; Product không lưu `distribution`. | Nếu PDP cần hiển thị distribution, phải mở rộng cache field. | Product + Rating owner |

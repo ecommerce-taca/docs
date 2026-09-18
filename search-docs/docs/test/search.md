@@ -69,5 +69,5 @@ All API cases, visibility/state transitions, event idempotency, security/redacti
 |---|---|---|---|
 | 1 | Exact Elasticsearch/analyzer/relevance benchmark chưa chốt. | Cần bổ sung golden query set. | Search owner |
 | 2 | Event source dùng Kafka outbox domain event, không phải CDC/Debezium — khớp `product-catalog-docs` §6.1–6.2. | Ảnh hưởng replay/recovery test. | Platform owner |
-| 3 | Rating aggregate contract là mock. | Disable rating tests/feature nếu chưa có event thật. | Rating owner |
+| 3 | Rating aggregate contract đã chốt (2026-09-18): topic `rating.events.v1`, payload `product_id`/`avg`/`count`/`distribution` — khớp `rating-comment` lld §6 và product-catalog §6.3. | Nếu chưa có event thật lúc chạy test, dùng fixture theo payload đã chốt. | Rating owner |
 | 4 | Browser matrix/Penpot visual regression chưa chốt. | Bổ sung test matrix khi frontend chốt. | Frontend lead |

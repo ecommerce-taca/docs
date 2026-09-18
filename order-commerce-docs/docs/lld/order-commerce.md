@@ -255,6 +255,7 @@ COD:    [checkout] ────────────────────�
 | `CONFIRMED → PROCESSING` | Seller/system | Seller accept đơn (hàng đợi "Chờ xác nhận" gồm **cả** đơn VNPAY đã trả và đơn COD). |
 | `PROCESSING → SHIPPED` | Seller/Shipment | Shipment created/tracking valid. |
 | `SHIPPED → DELIVERED` | Shipment event (`shipment.delivered`) | Carrier confirms delivered. Với COD, đây là điểm kích hoạt capture tiền ở Payment-Wallet — **không** đổi `OrderStatus` thêm lần nữa. |
+| `SHIPPED` (giữ nguyên) | Shipment event (`shipment.failed`) | Carrier báo giao thất bại: order giữ `SHIPPED`, ghi timeline; refund/return do Payment/Support workflow xử lý (không tự huỷ/hiển thị mới). |
 | `CONFIRMED/PROCESSING → CANCELLED` | Buyer/seller/system theo policy | Buyer chỉ cancel trước shipping. VNPAY: release reservation đã commit + refund. COD: release/hoàn kho, không refund vì chưa thu tiền. |
 | `CANCELLED/DELIVERED` | Không reopen | Tạo refund/return workflow ở Payment/Support nếu cần. |
 
@@ -357,7 +358,7 @@ Order state là source of truth của Order-Commerce; payment/shipment/inventory
 | `order.events.v1` | `order.paid` | order, payment reference, paid_at |
 | `order.events.v1` | `order.processing` | order, shop |
 | `order.events.v1` | `order.shipped` | order, shipment reference |
-| `order.events.v1` | `order.delivered` | order, delivered_at |
+| `order.events.v1` | `order.delivered` | order snapshot + `buyer` (`user_id`, `email`) + `items[]` (`product_id`, `sku_id`) + `delivered_at` — `buyer`/`items[]` là bắt buộc để Rating-Comment dựng eligibility |
 | `order.events.v1` | `order.cancelled` | order, reason, compensation action |
 | `invoice.events.v1` | `invoice.issued` | invoice/order/number/total/pdf reference |
 | `voucher.events.v1` | `voucher.redeemed/released` | voucher/order/user/scope |
@@ -371,10 +372,10 @@ Phân biệt bắt buộc giữa hai event dễ nhầm:
 
 Với VNPAY hai event trùng thời điểm; với COD chúng cách nhau cả vòng đời giao hàng. Consumer nào cần "đơn sẵn sàng giao" mà dùng `order.paid` sẽ bỏ sót toàn bộ đơn COD.
 
-#### 6.1a Payload chi tiết — `order.confirmed` / `order.paid` / `order.cancelled` / `invoice.issued`
+#### 6.1a Payload chi tiết — `order.confirmed` / `order.paid` / `order.cancelled` / `invoice.issued` / `order.delivered`
 
 Field `buyer` **đã chốt** cho các consumer cần recipient (đặc biệt Notification Service —
-xem `notification-docs/docs/lld/notification.md` §6.2): `buyer.user_id` bắt buộc, `buyer.email`
+xem `notification-docs/docs/lld/notification.md` §6.2) — **gồm** `order.delivered`: `buyer.user_id` bắt buộc, `buyer.email`
 optional (`null` cho phép ở event chỉ phát `IN_APP`, ví dụ `order.paid`). Field khác trong `payload`
 lấy tên đúng theo response `GET /orders/{orderId}` (§3.6) và bảng `invoices` (db.md §3.4).
 
@@ -432,6 +433,28 @@ lấy tên đúng theo response `GET /orders/{orderId}` (§3.6) và bảng `invo
 }
 ```
 
+`order.delivered`:
+
+```json
+{
+  "event_id": "01912f99-7a1b-7c12-9c55-8b1c34a6d921",
+  "schema_version": 1,
+  "event_type": "order.delivered",
+  "occurred_at": "2026-08-31T10:20:00Z",
+  "aggregate_type": "ORDER",
+  "aggregate_id": "order-01912f91",
+  "payload": {
+    "order_id": "order-01912f91",
+    "buyer": { "user_id": "user-01912f10", "email": "buyer@example.com" },
+    "items": [
+      { "product_id": "product-01912f31", "sku_id": "sku-01912f33" },
+      { "product_id": "product-01912f41", "sku_id": "sku-01912f43" }
+    ],
+    "delivered_at": "2026-08-31T10:20:00Z"
+  }
+}
+```
+
 ### 6.2 Event lắng nghe
 
 | Nguồn | Event | Xử lý |
@@ -441,6 +464,7 @@ lấy tên đúng theo response `GET /orders/{orderId}` (§3.6) và bảng `invo
 | Inventory | `inventory.reservation.created`, `inventory.reservation.committed`, `inventory.reservation.released`, `inventory.reservation.expired` | Reconcile order intent/reservation; không tự sửa quantity. Tên event lấy đúng catalog của Inventory — **không có** `reservation.confirmed`/`reservation.rejected`/`stock_committed`: reserve thành công/thất bại là kết quả **đồng bộ** của `POST /internal/inventory/reservations`, event chỉ dùng để reconcile khi mất response. |
 | Shipment | `shipment.created`, `shipment.status_changed` | Update shipment projection/order status. |
 | Shipment | `shipment.delivered` | Order chuyển `SHIPPED → DELIVERED`; cập nhật `delivered_at`. |
+| Shipment | `shipment.failed` | Ghi nhận delivery failed vào timeline/shipment projection; **giữ** `OrderStatus = SHIPPED` (enum không có FAILED) — xử lý tiếp qua refund/return workflow ở Payment/Support, không tự đổi order status. |
 | Auth User | `user.status_changed` (mock policy) | Chặn hành động account mới nếu suspended; không đổi order history. |
 
 ### 6.3 Contract — Inventory reserve request
@@ -463,7 +487,7 @@ Content-Type: application/json
 }
 ```
 
-Response `201`: `{ "data": { "reservation_id", "status": "RESERVED", "expires_at", "items": [...] } }`. Commit/release theo `POST /internal/inventory/reservations/{id}/commit|release`. `expires_at` do Order đặt phải khớp `INVENTORY_RESERVATION_TTL` (15 phút) đã align với Inventory.
+Response `201`: `{ "data": { "reservation_id", "status": "RESERVED", "expires_at", "items": [...] } }`. Commit/release theo `POST /internal/inventory/reservations/{reservationId}/commit|release`. `expires_at` do Order đặt phải khớp `INVENTORY_RESERVATION_TTL` (15 phút) đã align với Inventory.
 
 ### 6.4 Contract — thuế suất từ Product Catalog
 

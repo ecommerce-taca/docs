@@ -14,7 +14,7 @@
 | Messaging | Kafka test container hoặc mock broker hỗ trợ retry, replay, out-of-order. |
 | Object storage | S3/MinIO test bucket private; mock signed URL + HEAD/checksum. |
 | Auth context | JWT/Gateway test fixture cho buyer, seller owner, seller staff, admin, user khác shop, token expired. |
-| Service fixtures | Shop `ACTIVE/APPROVED`, `ACTIVE/NEEDS_INFO`, `SUSPENDED`; categories depth 1 và depth 5; product mọi lifecycle. |
+| Service fixtures | Shop `ACTIVE/APPROVED`, `ACTIVE/NEEDS_INFO`, `SUSPENDED/APPROVED`; categories depth 1 và depth 5; product mọi lifecycle. |
 
 ### 1.2 Dữ liệu bắt buộc
 

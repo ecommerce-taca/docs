@@ -113,7 +113,7 @@ Mỗi migration có `up`/`down` cho local/test. Production không hard-delete `s
 | Seed | Giá trị |
 |---|---|
 | `inventory_items` | 1 SKU `qty_available=10, qty_reserved=0` (bình thường); 1 SKU `qty_available=0` (hết hàng); 1 SKU `status=DISABLED`; 1 SKU `qty_available=5, qty_reserved=5` (đang bị giữ hết). |
-| `stock_reservations` | 1 `RESERVED` chưa hết hạn; 1 `RESERVED` đã hết `expires_at` (test job expire); 1 `COMMITTED`; 1 `RELEASED`. |
+| `stock_reservations` | 1 `RESERVED` chưa hết hạn; 1 `RESERVED` đã hết `expires_at` (test job expire); 1 `COMMITTED`; 1 `RELEASED`; 1 `EXPIRED` (đã bị job TTL chuyển từ RESERVED). |
 | `stock_movements` | Đủ movement khớp balance hiện tại của từng `inventory_items` fixture ở trên — dùng để test reconciliation (§3.6 API `/admin/inventory/reconciliation`) ra `MATCHED`. |
 | `idempotency_keys` | 1 key đã dùng cho reserve, còn hạn 24h — test replay trả cùng response. |
 

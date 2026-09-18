@@ -98,7 +98,7 @@ Batch là read + ops (`retry` khi `FAILED`); hold/release theo rủi ro thuộc 
 
 ## 5. Enum và rules
 
-`PaymentStatus`: `PENDING/SUCCESS/FAILED/EXPIRED/REFUNDED/PARTIALLY_REFUNDED`; `WalletStatus`: `ACTIVE/FROZEN/CLOSED`; `PayoutStatus`: `REQUESTED/PROCESSING/SUCCESS/FAILED/CANCELLED`; `RefundStatus`: `REQUESTED/PROCESSING/SUCCESS/FAILED/CANCELLED`; `SettlementBatchStatus`: `PENDING/PROCESSING/COMPLETED/FAILED`; `FeeTaxScope`: `PLATFORM/CATEGORY`.
+`PaymentStatus`: `PENDING/PENDING_COD/SUCCESS/FAILED/EXPIRED/REFUNDED/PARTIALLY_REFUNDED`; `WalletStatus`: `ACTIVE/FROZEN/CLOSED`; `PayoutStatus`: `REQUESTED/PROCESSING/SUCCESS/FAILED/CANCELLED`; `RefundStatus`: `REQUESTED/PROCESSING/SUCCESS/FAILED/CANCELLED`; `SettlementBatchStatus`: `PENDING/PROCESSING/COMPLETED/FAILED`; `FeeTaxScope`: `PLATFORM/CATEGORY`.
 
 DB check không âm, application state machine/amount-match/signature/KYC gate; không hard-delete payment/ledger/provider event.
 

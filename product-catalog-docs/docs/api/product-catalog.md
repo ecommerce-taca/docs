@@ -5,6 +5,11 @@
 
 ## 1. Quy ước API chung
 
+| Mục | Quy định |
+|---|---|
+| Trace | W3C `traceparent`/`tracestate` qua REST và Kafka (do Gateway/service propagate, client không gửi). |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
+
 ### 1.1 Authentication và authorization
 
 | Nhóm route | Authentication | Authorization |
@@ -28,7 +33,7 @@ Product Catalog lấy `actor_user_id`, role và shop scope từ auth context do 
 }
 ```
 
-- List response: `{ data: [], meta: { request_id, page, size, total, has_next } }`.
+- List response: `{ data: [], meta: { request_id, page, size, total, total_pages } }`.
 - Default `size=20`, tối đa `100`; `page` bắt đầu từ `1`.
 - Timestamp ISO-8601 UTC; tiền là integer VND (`currency: "VND"`).
 - Public catalog list không phải full-text search engine; full-text/facet nâng cao thuộc Search Service.
@@ -79,6 +84,8 @@ Product Catalog lấy `actor_user_id`, role và shop scope từ auth context do 
 | 22 | `POST /admin/catalog/categories` | Admin | Tạo category. |
 | 23 | `PATCH /admin/catalog/categories/{categoryId}` | Admin | Sửa category/parent/status. |
 | 24 | `POST /admin/catalog/categories/{categoryId}/archive` | Admin | Soft archive category. |
+| 25 | `GET /health/live` | Internal/ops | Liveness process-only (Gateway active healthcheck gọi — bắt buộc). |
+| 26 | `GET /health/ready` | Internal/ops | Readiness: MongoDB/outbox consumer sẵn sàng. |
 
 Không có endpoint Product để reserve/deduct stock. Cart/Checkout phải gọi Inventory contract để xác minh availability và reserve atomically.
 
@@ -106,7 +113,7 @@ Response `200`:
     "rating_summary": { "avg": 4.6, "count": 128 },
     "stock_display": { "status": "IN_STOCK", "as_of": "2026-08-30T08:59:59Z" }
   }],
-  "meta": { "page": 1, "size": 20, "total": 1, "has_next": false, "request_id": "req-01912f50" }
+  "meta": { "page": 1, "size": 20, "total": 1, "total_pages": 1, "request_id": "req-01912f50" }
 }
 ```
 
@@ -224,7 +231,7 @@ Query: `page`, `size`, `status`, `q` (title/slug basic), `sort`. Trả tất c�
       "updated_at": "2026-08-30T09:00:00Z"
     }
   ],
-  "meta": { "request_id": "req-01912f53", "page": 1, "size": 20, "total": 84 }
+  "meta": { "request_id": "req-01912f53", "page": 1, "size": 20, "total": 84, "total_pages": 5 }
 }
 ```
 
@@ -434,7 +441,7 @@ Admin list hỗ trợ `page`, `size`, `status`, `shop_id`, `category_id`, `q`, `
   "data": [
     { "product_id": "product-01912f31", "title": "Áo khoác cotton", "shop_id": "shop-01912f30", "status": "ACTIVE", "category_id": "category-01912f20", "updated_at": "2026-08-30T09:05:00Z" }
   ],
-  "meta": { "request_id": "req-01912f59", "page": 1, "size": 20, "total": 4210 }
+  "meta": { "request_id": "req-01912f59", "page": 1, "size": 20, "total": 4210, "total_pages": 211 }
 }
 ```
 
@@ -484,7 +491,7 @@ Query: `status`, `parent_id`, `page`, `size`; trả cả active/inactive/archive
   "data": [
     { "category_id": "category-01912f20", "name": "Điện tử", "slug": "dien-tu", "parent_id": null, "path": "/category-01912f20", "depth": 1, "status": "ACTIVE", "tax_rate_bps": 1000, "version": 1 }
   ],
-  "meta": { "request_id": "req-01912f63", "page": 1, "size": 20, "total": 42 }
+  "meta": { "request_id": "req-01912f63", "page": 1, "size": 20, "total": 42, "total_pages": 3 }
 }
 ```
 
@@ -531,6 +538,7 @@ Không hard-delete; không nhận assignment mới; phải có migration policy 
 | `PRODUCT_CATEGORY_INVALID` | 400 | Category không active/assignment sai. |
 | `PRODUCT_ATTRIBUTE_INVALID` | 400 | Sai typed attribute/enum/key. |
 | `PRODUCT_PRICE_INVALID` | 400 | Price không phải integer VND/range. |
+| `PRODUCT_SKU_REQUIRED` | 400 | Publish không có SKU active. |
 | `PRODUCT_MEDIA_REQUIRED` | 400 | Thiếu cover READY. |
 | `PRODUCT_MEDIA_INVALID` | 400 | Object metadata/checksum/type sai. |
 | `PRODUCT_EXPORT_TOO_LARGE` | 400 | Vượt `PRODUCT_EXPORT_MAX_ROWS` (10.000), cần lọc hẹp hơn. |

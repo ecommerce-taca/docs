@@ -9,10 +9,11 @@
 |---|---|
 | Auth | Cart/checkout/order cần JWT; buyer/seller scope kiểm tra tại service. |
 | Request ID | `X-Request-ID` tối đa 64; Gateway tạo/propagate. |
-| Trace | W3C `traceparent`/`tracestate`; propagate sang Product/Inventory/Payment/Shipment và Kafka. |
+| Trace | W3C `traceparent`/`tracestate`; propagate sang Product/Inventory/Payment/Shipment và Kafka (do Gateway/service propagate, client không gửi). |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
 | Timestamp | ISO-8601 UTC; DB UTC `DATETIME(6)`. |
 | Money | Integer VND, `currency=VND`; không float. |
-| Pagination | page 1, size 20, max 100. |
+| Pagination | `page` từ 1, `size` mặc định 20, max 100; meta trả `request_id,page,size,total,total_pages`. |
 | Idempotency | `Idempotency-Key` bắt buộc với checkout/cancel/fulfill/voucher mutation; giữ 24h. |
 | Response | `{data,meta:{request_id}}`; error `{error:{code,message,details,trace_id}}`. |
 | Log | JSON field chuẩn auth-user/Gateway; không log token/payment credential/full address/order payload. |
@@ -27,7 +28,7 @@
 | 3 | `PUT /cart/items/{itemId}` | Buyer | Đổi quantity. |
 | 4 | `DELETE /cart/items/{itemId}` | Buyer | Xóa item. |
 | 5 | `GET /vouchers/validate` | Buyer | Preview voucher trên cart (buyer đã biết mã). |
-| 5a | `GET /vouchers` | Buyer | Danh sách voucher buyer đang dùng được (discovery). |
+| 5a | `GET /vouchers` | **Public (auth tuỳ chọn)** | Danh sách voucher khả dụng (PDP/Shop voucher strip cho khách chưa đăng nhập); có JWT thì service tính thêm `eligible`. |
 | 5b | `GET /vouchers/redemptions` | Buyer | Lịch sử voucher đã dùng + tổng tiền đã tiết kiệm. |
 | 6 | `GET /checkout/shipping-fee` | Buyer | Preview shipping fee. |
 | 7 | `POST /checkout/preview` | Buyer | Tính preview tổng tiền. |
@@ -46,12 +47,12 @@
 | 18 | `GET /seller/orders/{orderId}/invoice` | Seller/staff | Invoice. |
 | 19 | `POST /seller/vouchers` | Seller | Tạo shop voucher. |
 | 20 | `GET /seller/vouchers` | Seller | List voucher. |
-| 21 | `PUT /seller/vouchers/{id}` | Seller | Update voucher. |
-| 22 | `DELETE /seller/vouchers/{id}` | Seller | Soft archive/inactivate. |
+| 21 | `PUT /seller/vouchers/{voucherId}` | Seller | Update voucher. |
+| 22 | `DELETE /seller/vouchers/{voucherId}` | Seller | Soft archive/inactivate. |
 | 23 | `POST /admin/vouchers` | Admin (`VOUCHER_MANAGE`) | Tạo platform voucher (`scope=PLATFORM`). |
 | 24 | `GET /admin/vouchers` | Admin | List platform voucher + usage metric. |
-| 25 | `PUT /admin/vouchers/{id}` | Admin | Update platform voucher. |
-| 26 | `DELETE /admin/vouchers/{id}` | Admin | Soft archive/inactivate. |
+| 25 | `PUT /admin/vouchers/{voucherId}` | Admin | Update platform voucher. |
+| 26 | `DELETE /admin/vouchers/{voucherId}` | Admin | Soft archive/inactivate. |
 
 ## 3. Chi tiết endpoint
 
@@ -184,7 +185,7 @@ Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOU
       "discount_amount": 0
     }
   ],
-  "meta": { "request_id": "01912fa7-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 12 }
+  "meta": { "request_id": "01912fa7-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 12, "total_pages": 1 }
 }
 ```
 
@@ -218,7 +219,7 @@ Query: `page`, `size` (max 100), `from?`, `to?` (ISO-8601).
   ],
   "meta": {
     "request_id": "01912fa8-7a1b-7c12-9c55-8b1c34a6d921",
-    "page": 1, "size": 20, "total": 28,
+    "page": 1, "size": 20, "total": 28, "total_pages": 2,
     "total_saved": 1840000, "currency": "VND"
   }
 }
@@ -489,7 +490,7 @@ Với đơn COD, `payment.status` đi `PENDING_COD → SUCCESS` tại thời đi
       "placed_at": "2026-08-30T09:00:00Z"
     }
   ],
-  "meta": { "request_id": "01912fc1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 38 }
+  "meta": { "request_id": "01912fc1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 38, "total_pages": 2 }
 }
 ```
 
@@ -641,13 +642,13 @@ Response `201`:
   "data": [
     { "voucher_id": "vch-01912fc3", "code": "SHOP10", "discount_type": "PERCENT", "value": 10, "used_count": 128, "usage_limit": 500, "status": "ACTIVE", "expires_at": "2026-09-30T16:59:59Z" }
   ],
-  "meta": { "request_id": "01912fc5-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 4 }
+  "meta": { "request_id": "01912fc5-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 4, "total_pages": 1 }
 }
 ```
 
-`PUT /seller/vouchers/{id}` request cùng field với create cộng `version`; response `200` cùng shape với create. Không đổi `code` sau khi đã có redemption (tránh sai lệch lịch sử) — đổi `code` khi `used_count > 0` → `409 ORDER_VOUCHER_CODE_LOCKED`.
+`PUT /seller/vouchers/{voucherId}` request cùng field với create cộng `version`; response `200` cùng shape với create. Không đổi `code` sau khi đã có redemption (tránh sai lệch lịch sử) — đổi `code` khi `used_count > 0` → `409 ORDER_VOUCHER_CODE_LOCKED`.
 
-`DELETE /seller/vouchers/{id}` body `{version}`. Response `200`:
+`DELETE /seller/vouchers/{voucherId}` body `{version}`. Response `200`:
 
 ```json
 { "data": { "voucher_id": "vch-01912fc3", "status": "INACTIVE" }, "meta": { "request_id": "01912fc6-7a1b-7c12-9c55-8b1c34a6d921" } }
@@ -683,11 +684,11 @@ Response `201` cùng shape với `POST /seller/vouchers` nhưng `shop_id: null`.
   "data": [
     { "voucher_id": "vch-01912fc7", "code": "TACA200K", "scope": "PLATFORM", "discount_type": "FIXED", "value": 200000, "used_count": 812, "usage_limit": 1000, "status": "ACTIVE", "expires_at": "2026-09-30T16:59:59Z" }
   ],
-  "meta": { "request_id": "01912fc8-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 12 }
+  "meta": { "request_id": "01912fc8-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 12, "total_pages": 1 }
 }
 ```
 
-`PUT /admin/vouchers/{id}` cùng field với create cộng `version`, response `200` cùng shape. `DELETE /admin/vouchers/{id}` body `{version}` → `200 { data: { voucher_id, status: "INACTIVE" }, meta }`, soft `INACTIVE/ARCHIVED`, redemption history giữ nguyên. Validation, usage increment và scope-check khi checkout dùng chung code path với shop voucher.
+`PUT /admin/vouchers/{voucherId}` cùng field với create cộng `version`, response `200` cùng shape. `DELETE /admin/vouchers/{voucherId}` body `{version}` → `200 { data: { voucher_id, status: "INACTIVE" }, meta }`, soft `INACTIVE/ARCHIVED`, redemption history giữ nguyên. Validation, usage increment và scope-check khi checkout dùng chung code path với shop voucher.
 
 ## 4. Mã lỗi chung
 
@@ -697,6 +698,7 @@ Response `201` cùng shape với `POST /seller/vouchers` nhưng `shop_id: null`.
 | `ORDER_UNAUTHENTICATED` | 401 | Thiếu login. |
 | `ORDER_FORBIDDEN` | 403 | Sai buyer/shop scope. |
 | `ORDER_CART_EMPTY` | 409 | Không có item được chọn. |
+| `ORDER_CART_ITEM_NOT_FOUND` | 404 | Item không tồn tại trong cart (anti-enumeration). |
 | `ORDER_PRODUCT_UNAVAILABLE` | 409 | Product/SKU không active. |
 | `ORDER_PRICE_CHANGED` | 409 | Giá snapshot cũ. |
 | `ORDER_STOCK_UNAVAILABLE` | 409 | Inventory reserve fail. |
@@ -712,8 +714,11 @@ Response `201` cùng shape với `POST /seller/vouchers` nhưng `shop_id: null`.
 | `ORDER_CANCEL_NOT_ALLOWED` | 409 | Không còn được cancel. |
 | `ORDER_IDEMPOTENCY_CONFLICT` | 409 | Key khác request hash. |
 | `ORDER_DEPENDENCY_UNAVAILABLE` | 503 | Product/Inventory/Payment/Shipment down. |
+| `SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` | 400 | Pass-through nguyên trạng từ Shipment (§3.7a) — không đổi tên/status. |
 | `ORDER_INVOICE_NOT_READY` | 409 | Invoice pending. |
 | `ORDER_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
+
+> Mã lỗi của service dependency (Shipment, Inventory, Payment-Wallet) được pass-through nguyên trạng khi Order-Commerce đứng giữa — không đổi tên/status; ví dụ `SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` (§3.7a).
 
 ## 5. Giả định & câu hỏi mở
 

@@ -35,7 +35,7 @@ Inventory ──(không gọi trực tiếp Search)──► Product stock proje
 |---|---|---|
 | HLD Search | Elasticsearch product index, domain event từ Product | Dùng Kafka outbox domain event, không phải CDC/change-stream; không đọc database Product. |
 | mfe-buyer (Home/Search/Category) | Search keyword, category, price | REST query có full-text, filter, facet, sort, pagination. |
-| Product detail/card | `title`, `shopId`, `categoryPath`, `brand`, `price`, `ratingAvg`, `attributes` | Index document denormalized; URL/detail lấy Product API. |
+| Product detail/card | `title`, `shop_id`, `category_path`, `brand`, `price`, `rating_avg`, `attributes` | Index document denormalized; URL/detail lấy Product API. (tên field trên là quote HLD; index thực dùng snake_case theo db §2) |
 | mfe-seller/mfe-admin | Reindex/index diagnostics | Route admin/internal riêng, không expose index management cho buyer. |
 | UI states | loading, empty, error, offline | Stable error envelope, `request_id`, timeout và retry policy. |
 
@@ -72,7 +72,7 @@ src/
 - Propagate W3C `traceparent`/`tracestate` qua REST và Kafka headers; `X-Request-ID` tối đa 64 ký tự do Gateway tạo/propagate.
 - Không log access token, Authorization, raw email/phone/address, query body, secret, Elasticsearch DSL hoặc full Kafka payload; chỉ log IDs đã allowlist và hash khi cần correlation.
 - Metrics dùng OpenTelemetry/Prometheus-compatible exporter; không dùng `product_id`, `user_id`, `query` làm metric label.
-- Liveness/readiness: `/health/live`, `/health/ready`; readiness kiểm Kafka consumer, Elasticsearch cluster/index alias và config bắt buộc.
+- Liveness: `GET /health/live` (process-only — Gateway active healthcheck gọi, bắt buộc); Readiness: `GET /search/health` (api §3.3) kiểm Kafka consumer, Elasticsearch cluster/index alias và config bắt buộc.
 - Error response dùng `{error:{code,message,details,trace_id}}`; mọi error log phải có `trace_id` + `request_id`.
 
 ## 3. Luồng xử lý
@@ -140,6 +140,8 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 
 `PUBLISHED` chỉ là Search projection của Product Catalog `ACTIVE`; Search không tự publish sản phẩm. `STALE`/`FAILED` không làm Search suy diễn stock.
 
+> `index_document_state`/`consumer_state` là state nội bộ consumer (không lưu vào ES document, không phơi qua API); tên field API là `consumer` (xem api §3.4).
+
 ## 6. Event phát ra / lắng nghe
 
 ### 6.1 Event lắng nghe
@@ -154,6 +156,8 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 
 ### 6.2 Mock contract — Product event
 
+> Contract đã chốt với product-catalog (2026-09-18): `price` = `payload.price.sale` (scalar long VND cho range/sort); `category_path` và `visibility_status` do Product gửi sẵn trong payload (`product-catalog-docs/docs/lld/product-catalog.md` §6.2). Ví dụ dưới là hình dạng payload đã thống nhất.
+
 ```json
 {
   "event_id": "01912f70-7a1b-7c12-9c55-8b1c34a6d921",
@@ -163,7 +167,6 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
   "aggregate_type": "PRODUCT",
   "aggregate_id": "product-01912f31",
   "version": 8,
-  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
   "payload": {
     "product_id": "product-01912f31",
     "shop_id": "shop-01912f30",
@@ -179,6 +182,8 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
   }
 }
 ```
+
+(traceparent/request_id nằm ở Kafka header, không nằm trong payload — xem docs/00-conventions.md §7)
 
 ### 6.3 Reliability
 
@@ -198,8 +203,8 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | `SEARCH_INDEX_NOT_READY` | 503 | Alias/readiness chưa sẵn sàng. |
 | `SEARCH_ADMIN_FORBIDDEN` | 403 | Thiếu quyền reindex/diagnostics. |
 | `SEARCH_REINDEX_CONFLICT` | 409 | Reindex đang chạy hoặc alias conflict. |
-| `SEARCH_EVENT_INVALID` | 400 | Event schema/version không hợp lệ. |
-| `SEARCH_EVENT_VERSION_OLD` | 200/internal | Event cũ bị bỏ qua, ghi metric. |
+| `SEARCH_EVENT_INVALID` | 400/internal | Event schema/version không hợp lệ. |
+| `SEARCH_EVENT_VERSION_OLD` | 200/internal | Event cũ bị bỏ qua, ghi metric (mã nội bộ, không expose qua public API — chỉ ghi metric). |
 | `SEARCH_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
 
 ## 8. Giả định & câu hỏi mở
@@ -209,7 +214,7 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | 1 | Backend Search là NestJS, engine là Elasticsearch theo lựa chọn A. | Ảnh hưởng client SDK, deployment và query DSL adapter. | Tech lead |
 | 2 | Product event được đồng bộ qua Kafka outbox domain event (topic `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`), không phải CDC/change-stream MongoDB — đã đồng bộ với `product-catalog-docs/docs/lld/product-catalog.md` §1.1/§6.1–6.2 (2026-09-18). | Ảnh hưởng replay, ordering và source export khi rebuild index. | Platform/Search owner |
 | 3 | Product `ACTIVE` map thành Search `PUBLISHED`. | Nếu business dùng tên state khác, phải đổi mapping/API filter. | Product owner |
-| 4 | `rating.aggregate.updated` do `rating-comment` phát (đã có trong bộ 11 service); Search consume để cập nhật `rating_avg`/`rating_count` phục vụ sort/facet `rating_desc`. Chỉ cần chốt tên topic + schema registry giữa hai service. | Nếu topic/schema lệch, `rating_desc` sort trả kết quả cũ/thiếu. | Search + Rating owner |
+| 4 | `rating.aggregate.updated` do `rating-comment` phát (đã có trong bộ 11 service); Search consume để cập nhật `rating_avg`/`rating_count` phục vụ sort/facet `rating_desc`. Đã chốt tên topic + schema (2026-09-18): `rating.events.v1`, payload `product_id`/`avg`/`count`/`distribution` — khớp product-catalog §6.3. | Nếu topic/schema lệch, `rating_desc` sort trả kết quả cũ/thiếu. | Search + Rating owner |
 | 5 | Elasticsearch version, analyzer tiếng Việt, synonym và shard/replica chưa chốt. | Ảnh hưởng relevance, storage và query latency. | Search/DevOps |
 | 6 | Search không dùng stock projection realtime làm source availability. | Nếu cần sort theo stock, phải có event/contract và freshness SLA riêng. | Inventory/Product owner |
 | 7 | **Cấu trúc facet đã viết** ở `docs/api/search.md` §3.1 (category/brand/price bucket cố định/attribute động) là **thiết kế theo suy luận từ Penpot** (`Search / Filter sidebar`, `Chip / 256GB`, `Brand / Apple`), **chưa được Product xác nhận**. Count dùng semantics "multi-select facet" (post_filter). | Nếu Product muốn cấu trúc khác (VD không cần count, hoặc bucket giá động theo phân phối dữ liệu), phải đổi contract trước khi FE code filter sidebar. | Product owner |

@@ -11,7 +11,7 @@
 | Timestamp | BSON `Date`, UTC | API/log serialize ISO-8601 UTC; không lưu local time. |
 | Tiền | `Long` integer VND | Không dùng floating point/Decimal128 cho giá baseline; `1 ≤ price ≤ 999999999999`. |
 | Version | `version: Long`, bắt đầu từ `1` | Mutation phải kiểm tra version; mismatch trả `PRODUCT_VERSION_CONFLICT`. |
-| Soft delete | Lifecycle `ARCHIVED`/`DELETED` | Không hard-delete product, SKU, media hoặc category có reference nghiệp vụ trong v1. |
+| Soft delete | Lifecycle `ARCHIVED` (không hard-delete; `DELETED` không dùng trong v1) | Không hard-delete product, SKU, media hoặc category có reference nghiệp vụ trong v1. |
 | Cross-service reference | Chỉ lưu ID + source metadata | Không tạo foreign key hoặc query trực tiếp database của Auth User/Inventory/Search/Order. |
 | Tenant scope | `shop_id` trên product và các read model liên quan | Seller query/mutation luôn filter theo shop scope lấy từ auth context. |
 | Transaction | MongoDB transaction trên replica set/sharded deployment | Mutation domain + outbox + audit phải commit cùng transaction khi có thể. |
@@ -216,7 +216,7 @@ Quota baseline: tối đa 12 ảnh + 3 video/product. `READY` cover là điều 
 | `slug` | string | Có | Display/routing snapshot. |
 | `logo_url` | string/null | Không | URL hiển thị đã allowlist. |
 | `shop_status` | string | Có | Auth contract projection, tối thiểu `ACTIVE`/`SUSPENDED`. |
-| `kyc_status` | string | Có | Auth contract projection, tối thiểu `APPROVED`/`NEEDS_INFO`/`REJECTED`/`EXPIRED`. |
+| `kyc_status` | string | Có | Auth contract projection, tối thiểu `PENDING`/`APPROVED`/`NEEDS_INFO`/`REJECTED`/`EXPIRED`. |
 | `source_version` | long | Có | Bỏ qua event cũ hơn. |
 | `source_event_id` | string | Có | Dedupe. |
 | `updated_at` | Date | Có | Thời điểm source event. |

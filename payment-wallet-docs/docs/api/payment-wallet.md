@@ -8,11 +8,13 @@
 | Mục | Quy định |
 |---|---|
 | Auth | Buyer/seller/admin JWT qua Gateway; internal Order/Payment callback dùng service auth. |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
 | Request ID | `X-Request-ID` tối đa 64, Gateway tạo/propagate. |
-| Trace | W3C `traceparent`/`tracestate` REST/Kafka; error có `trace_id`. |
+| Trace | W3C `traceparent`/`tracestate` REST/Kafka; error có `trace_id` (do Gateway/service propagate, client không gửi). |
 | Time/money | ISO-8601 UTC; integer VND, không FLOAT. |
 | Idempotency | Payment/payout/refund command và webhook provider event bắt buộc dedupe. |
 | Response | `{data,meta:{request_id}}`; error `{error:{code,message,details,trace_id}}`. |
+| Pagination | `page` từ 1, `size` mặc định 20 tối đa 100; meta trả `request_id,page,size,total,total_pages`. |
 | Log | JSON field chuẩn `timestamp,level,service,env,version,event,trace_id,span_id,request_id,route,method,status_code,duration_ms`. |
 | Redaction | Không log token, VNPAY signature/raw payload, bank/card credential, full address/PII. |
 
@@ -20,28 +22,30 @@
 
 | # | Method + path | Quyền | Mục đích |
 |---:|---|---|---|
-| 1 | `POST /payments` | Internal Order/buyer flow | Tạo payment intent VNPAY/COD. |
+| 1 | `POST /payments` | Internal (service-to-service) — chỉ Order-Commerce gọi; service chặn caller khác bằng actor scope. | Tạo payment intent VNPAY/COD. |
 | 2 | `GET /payments/{paymentId}` | Buyer/internal | Xem payment status. |
 | 3 | `POST /payments/webhook` | VNPAY provider | Reconcile callback, không JWT. |
-| 4 | `POST /payments/{paymentId}/refunds` | Internal/admin | Tạo refund intent. |
+| 4 | `POST /payments/{paymentId}/refunds` | Internal (service-to-service) — chỉ Order-Commerce/Admin gọi; service chặn caller khác bằng actor scope. | Tạo refund intent. |
 | 5 | `GET /seller/wallet` | Seller | Xem available/pending balance. |
 | 6 | `GET /seller/wallet/ledger` | Seller | Xem ledger summary. |
 | 7 | `GET /seller/revenue` | Seller | Báo cáo doanh thu theo khoảng thời gian (HLD #38). |
 | 7a | `GET /seller/revenue/export` | Seller | Xuất báo cáo doanh thu ra file (.xlsx/.csv). |
-| 8 | `POST /seller/payouts` | Seller + step-up | Yêu cầu rút tiền. |
+| 8 | `POST /seller/payouts` | Seller + step-up (header `X-MFA-Step-Up`) | Yêu cầu rút tiền. |
 | 9 | `GET /seller/payouts` | Seller | Xem payout history. |
 | 10 | `GET /admin/payments/reconciliation` | `FINANCE_OPS` | Reconcile provider/payment/ledger. |
 | 11 | `GET /admin/fees` | `FINANCE_OPS` | Danh sách version config commission (hiện hành + lịch sử). |
-| 12 | `PUT /admin/fees` | `FINANCE_OPS` + 2FA | Tạo version commission mới, effective-dated. |
+| 12 | `PUT /admin/fees` | `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`) | Tạo version commission mới, effective-dated. |
 | 13 | `GET /admin/taxes` | `FINANCE_OPS` | Danh sách version config thuế. |
-| 14 | `PUT /admin/taxes` | `FINANCE_OPS` + 2FA | Tạo version thuế mới, effective-dated. |
+| 14 | `PUT /admin/taxes` | `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`) | Tạo version thuế mới, effective-dated. |
 | 15 | `GET /admin/settlements` | `FINANCE_OPS` | Danh sách settlement batch (period/status/tổng gross/commission/tax/net). |
 | 16 | `GET /admin/settlements/{batchId}` | `FINANCE_OPS` | Chi tiết batch + breakdown theo shop. |
-| 17 | `POST /admin/settlements/{batchId}/retry` | `FINANCE_OPS` + 2FA | Retry batch `FAILED` (idempotent). |
+| 17 | `POST /admin/settlements/{batchId}/retry` | `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`) | Retry batch `FAILED` (idempotent). |
 | 18 | `GET /admin/finance/summary` | `FINANCE_OPS` | Tổng hợp tài chính sàn read-only (GMV, commission income, tax, refund, payout volume). |
 | 18a | `GET /admin/finance/summary/export` | `FINANCE_OPS` | Xuất báo cáo tài chính sàn ra file (.xlsx/.csv). |
 | 19 | `GET /health/live` | Ops | Liveness. |
 | 20 | `GET /health/ready` | Ops | Readiness. |
+
+> `POST /payments` và `POST /payments/{paymentId}/refunds` là internal: Payment-Wallet KHÔNG dùng prefix `/internal/**` nên Gateway không chặn được ở route — service phải tự chặn bằng actor scope (X-User-Shop-Scope/role), không tin caller client.
 
 ## 3. Chi tiết endpoint
 
@@ -135,7 +139,7 @@ Response `200 {"data":{"accepted":true}}`. Quy tắc:
 ```json
 {
   "data": {
-    "refund_id": "rf-01912fa8",
+    "refund_id": "refund-01912fa8",
     "payment_id": "payment-01912f95",
     "amount": 1094000,
     "status": "REQUESTED",
@@ -154,7 +158,7 @@ Tổng refund **không vượt** số đã capture → `409 REFUND_AMOUNT_INVALI
 ```json
 {
   "data": {
-    "wallet_id": "wl-01912fb5",
+    "wallet_id": "wallet-01912fb5",
     "shop_id": "shop-01912f31",
     "available_balance": 12500000,
     "pending_balance": 3200000,
@@ -174,8 +178,8 @@ Tổng refund **không vượt** số đã capture → `409 REFUND_AMOUNT_INVALI
 {
   "data": [
     {
-      "entry_id": "le-01912fb7",
-      "posting_id": "ps-01912fb8",
+      "entry_id": "entry-01912fb7",
+      "posting_id": "posting-01912fb8",
       "entry_type": "CREDIT",
       "amount": 1094000,
       "balance_after": 12500000,
@@ -184,7 +188,7 @@ Tổng refund **không vượt** số đã capture → `409 REFUND_AMOUNT_INVALI
       "created_at": "2026-08-30T09:03:12Z"
     }
   ],
-  "meta": { "request_id": "01912fb9-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 340 }
+  "meta": { "request_id": "01912fb9-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 340, "total_pages": 17 }
 }
 ```
 
@@ -233,16 +237,16 @@ Cùng convention "signed URL, không stream qua Gateway" với `product-catalog`
 
 ### 3.6 `POST /seller/payouts`
 
-Header `Idempotency-Key` + step-up 2FA. Body:
+Header `Idempotency-Key` + step-up 2FA (header `X-MFA-Step-Up`). Body:
 
 ```json
-{ "amount": 5000000, "bank_account_id": "ba-01912fc0", "reason": "Rút doanh thu tháng 8" }
+{ "amount": 5000000, "bank_account_id": "bank_account-01912fc0", "reason": "Rút doanh thu tháng 8" }
 ```
 
 ```json
 {
   "data": {
-    "payout_id": "po-01912fc1",
+    "payout_id": "payout-01912fc1",
     "shop_id": "shop-01912f31",
     "amount": 5000000,
     "currency": "VND",
@@ -283,7 +287,7 @@ Response `202`. Điều kiện (kiểm theo đúng thứ tự này): KYC project
       "checked_at": "2026-08-30T09:10:00Z"
     }
   ],
-  "meta": { "request_id": "01912fa3-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 2, "mismatch_count": 1 }
+  "meta": { "request_id": "01912fa3-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 2, "total_pages": 1, "mismatch_count": 1 }
 }
 ```
 
@@ -291,7 +295,7 @@ Response `202`. Điều kiện (kiểm theo đúng thứ tự này): KYC project
 
 ### 3.8 Admin finance back-office (`FINANCE_OPS`)
 
-Phục vụ các màn Penpot Admin *Fees/Taxes*, *Finance*, *Seller settlement*, *Settlement batches*. Không có microservice admin riêng (xem `System_Overview.md` §6.3); Gateway coarse-gate role admin, service này enforce `FINANCE_OPS` + step-up 2FA cho mutation. Mọi mutation ghi `audit_logs` (actor/reason).
+Phục vụ các màn Penpot Admin *Fees/Taxes*, *Finance*, *Seller settlement*, *Settlement batches*. Không có microservice admin riêng (xem `System_Overview.md` §6.3); Gateway coarse-gate role admin, service này enforce `FINANCE_OPS` + step-up 2FA (header `X-MFA-Step-Up`) cho mutation. Mọi mutation ghi `audit_logs` (actor/reason).
 
 `GET /admin/finance/summary/export?from=&to=&format=xlsx|csv` — phục vụ Penpot `CTA / Xuất báo cáo` ở Admin Fees/Taxes. Cùng dữ liệu nguồn với `GET /admin/finance/summary`, xuất theo ngày. Response `200` cùng hình dạng với `GET /seller/revenue/export` ở trên (`export_url`/`format`/`row_count`/`generated_at`/`expires_at`). Cột export: `period, gmv, commission_income, tax_collected, refund_amount, payout_volume, shop_count`. Chỉ `FINANCE_OPS`; không có tham số `shop_id` — đây là tổng hợp toàn sàn.
 
@@ -352,5 +356,5 @@ Read-only aggregate toàn sàn trên `payment_allocations`/`ledger_entries`/`pay
 | 4 | Payout provider chưa chốt. | Tạm mock adapter/reconciliation. | Finance/DevOps |
 | 5 | Return/dispute workflow **ngoài v1**: refund chỉ khởi tạo thủ công (Order/`/admin/payments`). v1.1 service `dispute` sẽ điều phối và gọi cùng contract refund. | Cần thêm permission/state khi bật dispute. | Product/Finance |
 | 6 | `GET /seller/revenue` là báo cáo read-only tổng hợp `payment_allocations`/`ledger_entries` (HLD #38); commission/tax dùng đúng rate đã versioned tại thời điểm allocation. | Nếu rate/rounding chưa chốt, số tổng hợp phải khớp rate versioned, không tính lại. | Finance |
-| 7 | Admin back-office (Fees/Taxes, Finance, Settlement) phục vụ qua `/api/v1/admin/**` trên service này, `FINANCE_OPS` + 2FA; **không** tách microservice admin (`System_Overview.md` §6.3). Fee/tax là config effective-dated append-only; settlement là read + `retry`. | Nếu chuyển ownership fee/tax/settlement sang service khác phải đổi contract allocation. | Architecture + Finance |
+| 7 | Admin back-office (Fees/Taxes, Finance, Settlement) phục vụ qua `/api/v1/admin/**` trên service này, `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`); **không** tách microservice admin (`System_Overview.md` §6.3). Fee/tax là config effective-dated append-only; settlement là read + `retry`. | Nếu chuyển ownership fee/tax/settlement sang service khác phải đổi contract allocation. | Architecture + Finance |
 | 8 | Trigger settlement batch (scheduled theo cửa sổ hoàn tiền vs event `order.completed`) và độ dài cửa sổ chưa chốt. | Ảnh hưởng thời điểm `pending → available` và SLA payout. | Finance + Order owner |

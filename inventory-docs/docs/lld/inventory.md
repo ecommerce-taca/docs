@@ -21,7 +21,7 @@
 ```text
 Order-Commerce ──reserve/commit/release──► Inventory
 Seller/Admin ──stock adjustment/read──► Inventory
-Inventory ──Kafka outbox──► Product projection, Order reconciliation, Notification
+Inventory ──Kafka outbox──► Product projection, Order reconciliation
 Product Catalog ──SKU lifecycle event──► Inventory SKU registration/disable
 ```
 
@@ -118,6 +118,7 @@ Ràng buộc:
 |---|---|---|
 | `COMMIT` | `qty_reserved -= q`; reservation `COMMITTED`; movement commit | Order-Commerce gọi khi đơn được chốt: với VNPAY là lúc nhận `payment.succeeded`, với **COD là ngay trong luồng checkout** (không chờ tiền). Inventory không tự suy ra thời điểm này. |
 | `RELEASE` | `qty_reserved -= q`, `qty_available += q`; status `RELEASED`; movement release | Order cancel/payment fail. |
+| `RELEASE_FROM_COMMITTED` | `qty_available += q`; status `RELEASED`; movement `release_committed` | Order huỷ sau commit (VNPAY) — không chạm `qty_reserved` vì COMMIT đã trừ. |
 | `EXPIRE` | Tương tự RELEASE; status `EXPIRED` | TTL job sau `expires_at`. |
 | `ADJUSTMENT` | Available delta theo policy; movement adjustment | Seller/admin stock correction, reason bắt buộc. |
 
@@ -154,11 +155,11 @@ Commit/release/expire cùng reservation đã hoàn tất trả idempotent succes
 |---|---|
 | `InventoryItemStatus` | `ACTIVE`, `DISABLED`, `ARCHIVED`. |
 | `ReservationStatus` | `RESERVED`, `COMMITTED`, `RELEASED`, `EXPIRED`. |
-| `MovementReason` | `INITIALIZE`, `RESERVE`, `COMMIT`, `RELEASE`, `EXPIRE`, `ADJUSTMENT`, `RETURN`, `DAMAGE`. |
+| `MovementReason` | `INITIALIZE`, `RESERVE`, `COMMIT`, `RELEASE`, `RELEASE_COMMITTED`, `EXPIRE`, `ADJUSTMENT`, `RETURN`, `DAMAGE`. |
 | `StockAdjustmentSource` | `SELLER`, `ADMIN`, `IMPORT`, `SYSTEM`. |
 | `CommandResult` | `APPLIED`, `IDEMPOTENT_REPLAY`, `REJECTED`, `CONFLICT`. |
 
-Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity không vượt reserved balance; tổng movement/audit phải reconcile được với balance.
+Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity không vượt reserved balance; tổng movement/audit phải reconcile được với balance. Các bước trả hàng (`RELEASE`, `RELEASE_FROM_COMMITTED`, `EXPIRE`) đều phải giữ quantity **không âm** sau khi cập nhật.
 
 ## 6. Event phát ra / lắng nghe
 
@@ -169,7 +170,8 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 | `inventory.events.v1` | `inventory.stock_snapshot.updated` | sku/product, available/reserved/committed snapshot, source_version, as_of |
 | `inventory.events.v1` | `inventory.reservation.created` | reservation/order_intent, SKU quantities, expires_at |
 | `inventory.events.v1` | `inventory.reservation.committed` | reservation/order, committed_at |
-| `inventory.events.v1` | `inventory.reservation.released/expired` | reservation/order, reason |
+| `inventory.events.v1` | `inventory.reservation.released` | reservation/order/reason |
+| `inventory.events.v1` | `inventory.reservation.expired` | reservation/order/expired_at |
 | `inventory.events.v1` | `inventory.adjusted` | sku, delta, reason, actor, movement_id |
 
 ### 6.2 Event lắng nghe
@@ -178,7 +180,7 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 |---|---|---|
 | Product Catalog | `sku.created`, `sku.updated`, `sku.status_changed` | Register/update/disable SKU projection; không lấy giá/product content. |
 | Order-Commerce | `order.cancelled` (reconciliation) | Release reservation nếu command callback bị mất; idempotent. |
-| Payment-Wallet | `payment.succeeded/failed` (nếu platform dùng event) | Commit/release theo order intent; API command vẫn source command contract. |
+| Payment-Wallet | *(không consume)* | Commit/release do **Order-Commerce** gọi qua API command (`POST /internal/inventory/reservations/{reservationId}/commit|release`); Payment-Wallet không mutate stock. |
 
 ### 6.3 Mock contract — reserve response
 

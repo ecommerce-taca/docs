@@ -78,6 +78,8 @@ Persist bằng index hoặc operational store tùy deployment; tối thiểu ph�
 | `checkpoint` | keyword | Resume token, không là public ID. |
 | `processed_count`/`failed_count` | long | Non-negative. |
 | `started_at`/`finished_at` | date | UTC. |
+| `updated_at` | date | Timestamp cập nhật gần nhất của job. |
+| `error_code` | keyword/null | Mã lỗi allowlist khi `state=FAILED`, null nếu không lỗi. |
 | `trace_id`/`request_id` | keyword | Correlation allowlist. |
 
 ## 4. Index và uniqueness

@@ -31,6 +31,7 @@
 | SH-API-02 | Seller tracking own/other shop | Correct shop scope. |
 | SH-API-03 | Internal quote valid/invalid | `200` fee or `400 SHIPMENT_INVALID_INPUT`. |
 | SH-API-04 | Create GHN/MOCK valid | `201 CREATED`, tracking/external ID, event/outbox. |
+| SH-API-04b | Create khi carrier không phủ khu vực order | `400 SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER`; không tạo shipment; có thể gọi lại với carrier khác. |
 | SH-API-05 | Create duplicate/idempotency | Existing result / conflict for different payload. |
 | SH-API-06 | Carrier timeout/error | `503/504`, pending reconciliation; no false tracking. |
 | SH-API-07 | Cancel before/after pickup | Success or `409 SHIPMENT_STATE_INVALID`. |
@@ -52,7 +53,7 @@
 | Module | Cases |
 |---|---|
 | `StatusMapper` | GHN/MOCK statuses, unknown status, no backward transition. |
-| `ShipmentStateMachine` | Created/picked/in transit/delivered/failed/cancelled. |
+| `ShipmentStateMachine` | Created/picked/in transit/delivered/failed/cancelled + `NOT_CREATED` (ảo) + `PENDING_RECONCILIATION` (đối soát về CREATED/CANCELLED). |
 | `CarrierAdapter` | Timeout, retry rules, safe response mapping. |
 | `WebhookService` | Signature, external event dedupe, skew, payload hash. |
 | `Authorization` | Buyer/seller/internal scopes. |

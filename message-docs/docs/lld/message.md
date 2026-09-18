@@ -68,6 +68,8 @@ src/
 | `SupportPolicy` | Support escalation/access | `SUPPORT_AGENT`/admin permission; audit. |
 | `ObservabilityModule` | Shared logs/traces/metrics/health | No raw message/PII logs. |
 
+> Giới hạn connection do **Gateway** enforce: `WS_MAX_CONNECTIONS_PER_USER = 10` (vượt → `429` ở handshake) — Message Service không tự đếm cap này, chỉ enforce rate limit frame riêng.
+
 ### 2.2 Chuẩn observability dùng chung
 
 - Structured JSON stdout field bắt buộc: `timestamp`, `level`, `service`, `env`, `version`, `event`, `trace_id`, `span_id`, `request_id`, `route`, `method`, `status_code`, `duration_ms`.
@@ -173,10 +175,10 @@ Hai enum trên là **hai trục khác nhau** và không được gộp vào mộ
   "event_id":"message-event-1",
   "schema_version":1,
   "traceparent":"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-  "conversation_id":"conversation-1",
-  "message_id":"message-1",
+  "conversation_id":"cv-01912fc0",
+  "message_id":"msg-01912fc5",
   "sequence":42,
-  "sender_id":"user-1",
+  "sender_id":"usr-01912f10",
   "created_at":"2026-08-30T12:00:00Z",
   "content_preview":"safe preview or omitted",
   "attachments_count":0

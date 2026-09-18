@@ -112,7 +112,7 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 - Create payment với method `COD` tạo `PENDING_COD`; không gọi VNPAY.
 - **`PENDING_COD` không chặn fulfillment.** Order-Commerce cho đơn COD vào `CONFIRMED` ngay tại checkout và không chờ event nào từ Payment-Wallet để giao hàng (xem `order-commerce-docs/docs/lld/order-commerce.md` §3.4). Payment-Wallet **không** phát `payment.succeeded` tại thời điểm đặt đơn COD, và Order-Commerce **không** chờ event đó.
 - Capture: khi nhận `shipment.delivered` (hoặc collection event tương đương từ carrier adapter), Payment transition `PENDING_COD → SUCCESS`, post ledger và phát `payment.succeeded`. Đây là **sau** khi order đã `DELIVERED`, nên event này chỉ phục vụ đối soát/settlement, không mở luồng giao hàng.
-- `shipment.failed` hoặc order cancelled trước khi giao: `PENDING_COD → FAILED`/`CANCELLED` tuỳ policy, không post ledger, không tạo allocation.
+- `shipment.failed` hoặc order cancelled trước khi giao: `PENDING_COD → FAILED` (enum PaymentStatus **không có** `CANCELLED` — chốt dùng `FAILED`), không post ledger, không tạo allocation.
 - COD failure/cancel không tạo seller payout; exact cash collection event cần Shipment/Finance contract.
 
 > Thứ tự thời gian của hai phương thức khác nhau, ledger phải chịu được cả hai:
@@ -156,8 +156,10 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 | `PayoutStatus` | `REQUESTED`, `PROCESSING`, `SUCCESS`, `FAILED`, `CANCELLED`. |
 | `RefundStatus` | `REQUESTED`, `PROCESSING`, `SUCCESS`, `FAILED`, `CANCELLED`. |
 | `Provider` | `VNPAY`, `COD`, `MOCK`. |
+| `SettlementBatchStatus` | `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`. |
+| `FeeTaxScope` | `PLATFORM`, `CATEGORY`. |
 
-Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `SUCCESS → PARTIALLY_REFUNDED/REFUNDED`; terminal state không reopen.
+Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `PENDING_COD → SUCCESS` (capture sau delivered) `→ FAILED` (shipment.failed/order cancelled trước giao); `SUCCESS → PARTIALLY_REFUNDED/REFUNDED`; terminal state không reopen.
 
 ## 6. Event phát ra / lắng nghe
 
@@ -166,11 +168,14 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `SUCCESS → PARTIALLY_REFUNDED/RE
 | Topic | Event | Payload chính |
 |---|---|---|
 | `payment.events.v1` | `payment.created` | payment/order/amount/method/status |
-| `payment.events.v1` | `payment.succeeded` | payment/order/provider ref/paid_at |
-| `payment.events.v1` | `payment.failed/expired` | payment/reason |
-| `payment.events.v1` | `payment.refunded` | payment/order/refund amount |
+| `payment.events.v1` | `payment.succeeded` | payment/order/provider ref/paid_at + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
+| `payment.events.v1` | `payment.failed` | payment/reason + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
+| `payment.events.v1` | `payment.expired` | payment/expired_at + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
+| `payment.events.v1` | `payment.refunded` | payment/order/refund amount + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
 | `wallet.events.v1` | `wallet.allocated` | order/shop/gross/commission/tax/net |
-| `wallet.events.v1` | `payout.succeeded/failed` | payout/shop/amount/status |
+| `wallet.events.v1` | `payout.succeeded/failed` | payout/shop/amount/status + `owner_user_id`, `owner_email` (seller) — recipient bắt buộc cho template EMAIL của Notification |
+
+> Field recipient (`buyer`/`owner`) bắt buộc có trong payload mọi event được Notification map sang template EMAIL (quyết định 2026-09-18, xem `docs/00-conventions.md` §7).
 
 ### 6.2 Event lắng nghe
 
@@ -179,7 +184,7 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `SUCCESS → PARTIALLY_REFUNDED/RE
 | Order-Commerce | `order.created`, `order.cancelled` | Create payment intent/release pending payment/refund policy. |
 | Shipment | `shipment.delivered`, `shipment.failed` | COD collection confirmation hoặc hold. |
 | Auth User | `shop.kyc.approved`, `shop.kyc.expired` | Local payout/withdraw gate projection (KYC phải `APPROVED` mới cho payout). |
-| Auth User | `shop.status_changed` | Shop `SUSPENDED`/`CLOSED` → khoá payout/withdraw. Không có event `shop.kyc.suspended`; đình chỉ shop đến qua `shop.status_changed`. |
+| Auth User | `shop.status_changed` | Shop `SUSPENDED`/`DELETED` → khoá payout/withdraw (enum `ShopStatus` theo `auth-user-docs/docs/db/auth-user.md` §5; doc auth-user lld §6.2 hiện ghi `CLOSED` là lỗi, đang freeze chưa sửa). Không có event `shop.kyc.suspended`; đình chỉ shop đến qua `shop.status_changed`. |
 
 ### 6.3 Mock contract — VNPAY webhook
 
@@ -214,6 +219,8 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `SUCCESS → PARTIALLY_REFUNDED/RE
 | `WALLET_FROZEN` | 403 | Wallet bị freeze. |
 | `PAYOUT_NOT_ALLOWED` | 403/409 | KYC/state/min amount không đạt. |
 | `REFUND_AMOUNT_INVALID` | 400/409 | Refund vượt captured/invalid. |
+| `FEE_CONFIG_INVALID` | 409 | Fee/tax version config không hợp lệ. |
+| `SETTLEMENT_BATCH_INVALID_STATE` | 409 | Retry batch không ở trạng thái `FAILED`. |
 | `PAYMENT_IDEMPOTENCY_CONFLICT` | 409 | Key khác request hash. |
 | `PAYMENT_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
 

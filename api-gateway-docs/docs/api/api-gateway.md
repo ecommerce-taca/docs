@@ -50,10 +50,10 @@
 | # | Method/path family | Upstream | Access mặc định | Timeout | Retry |
 |---:|---|---|---|---:|---|
 | 1 | `ANY /api/v1/auth/**` | `auth-user` | Exact endpoint policy: public/protected | 5s | GET/HEAD idempotent only |
-| 2 | `ANY /api/v1/users/**` (gồm `/users/me/favorites/**`, `/users/me/following`), `/api/v1/addresses/**` | `auth-user` | Authenticated | 5s | Không retry mutation |
+| 2 | `ANY /api/v1/users/**` (gồm `/users/me/favorites/**`, `/users/me/following`) | `auth-user` | Authenticated | 5s | Không retry mutation |
 | 3 | `ANY /api/v1/seller/onboarding/**`, `/api/v1/seller/shop` | `auth-user` | Seller role-gated | 5s | Không retry mutation |
 | 4 | `ANY /api/v1/admin/users/**`, `/api/v1/admin/shops/**` | `auth-user` | Admin permission-gated | 5s | Không retry mutation |
-| 5 | `GET /api/v1/shops/{shopId}`, `ANY /api/v1/shops/{shopId}/follow` | `auth-user` | GET public; follow authenticated | 5s | GET tối đa 1 lần |
+| 5 | `GET /api/v1/shops/{shopId}`, `GET /api/v1/shops/{shopId}/followers/count`, `ANY /api/v1/shops/{shopId}/follow` | `auth-user` | GET public; follow authenticated | 5s | GET tối đa 1 lần |
 | 6 | `ANY /api/v1/products/**`, `/api/v1/categories/**`, `GET /api/v1/shops/{shopId}/products` | `product-catalog` | GET public; mutation role-gated | 5s | GET tối đa 1 lần |
 | 7 | `ANY /api/v1/seller/products/**` | `product-catalog` | Seller/admin role-gated | 5s | Không retry mutation |
 | 8 | `ANY /api/v1/admin/catalog/**` | `product-catalog` | Admin permission-gated | 5s | Không retry mutation |
@@ -63,7 +63,7 @@
 | 11 | `ANY /api/v1/seller/orders/**`, `/api/v1/seller/vouchers/**` | `order-commerce` | Seller role-gated | 5s | Không retry write |
 | 12 | `ANY /api/v1/admin/vouchers/**` | `order-commerce` | Admin permission-gated | 5s | Không retry write |
 | 13 | `ANY /api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | `inventory` | Seller/admin role-gated (`/internal/**` không expose) | 5s | GET tối đa 1 lần |
-| 14 | `ANY /api/v1/payments/**` (webhook không JWT), `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `GET /api/v1/seller/revenue`, `GET /api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated/seller/admin; `/payments/webhook` public+signature | 10s | Không retry write |
+| 14 | `ANY /api/v1/payments/**` (webhook không JWT), `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `GET /api/v1/seller/revenue`, `GET /api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated/seller/admin; `/payments/webhook` public+signature; `POST /payments` + `POST /payments/{paymentId}/refunds` là internal — service tự chặn bằng actor scope (chỉ Order-Commerce/Admin) | 10s | Không retry write |
 | 15 | `GET /api/v1/orders/{orderId}/shipment`, `GET /api/v1/seller/orders/{orderId}/shipment`, `GET /api/v1/seller/orders/{orderId}/shipment/carriers`, `POST /api/v1/webhooks/shipping/{carrier}` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
 | 16 | `GET/POST /api/v1/products/{productId}/reviews`, `ANY /api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; write authenticated | 5s | GET tối đa 1 lần |
 | 17 | `ANY /api/v1/notifications/**` | `notification` | Authenticated | 5s | GET tối đa 1 lần |
@@ -98,17 +98,18 @@ Gateway chỉ thực hiện coarse gate trong bảng; service đích kiểm tra 
 | 3 | `GET` | `/metrics` | Metrics Prometheus/OpenMetrics | Internal observability | `200` text |
 | 4 | `OPTIONS` | `/api/v1/**` | CORS preflight | Public origin allowlist | `204` |
 | 5 | `ANY` | `/api/v1/auth/**` | Proxy auth/verification/MFA | Theo exact endpoint | Upstream pass-through/mapped error |
-| 6 | `ANY` | `/api/v1/users/**`, `/api/v1/addresses/**` | Proxy profile/address | Authenticated | Upstream pass-through/mapped error |
+| 6 | `ANY` | `/api/v1/users/**` (gồm `/users/me/favorites/**`, `/users/me/following`) | Proxy profile/favorites/following | Authenticated | Upstream pass-through/mapped error |
 | 7 | `ANY` | `/api/v1/seller/onboarding/**` | Proxy seller onboarding/KYC | Seller | Upstream pass-through/mapped error |
-| 8 | `ANY` | `/api/v1/admin/users/**`, `/api/v1/admin/shops/**` | Proxy admin user/KYC | Admin permission | Upstream pass-through/mapped error |
-| 9 | `ANY` | `/api/v1/products/**`, `/api/v1/categories/**` | Proxy catalog public/admin | Method/role policy | Upstream pass-through/mapped error |
+| 8 | `ANY` | `/api/v1/admin/users/**`, `/api/v1/admin/shops/**`, `/api/v1/admin/audit-logs` | Proxy admin user/KYC/audit | Admin permission | Upstream pass-through/mapped error |
+| 8a | `GET`/`ANY` | `/api/v1/shops/{shopId}`, `/api/v1/shops/{shopId}/follow`, `/api/v1/shops/{shopId}/followers/count` | Proxy shop profile/follow | GET public; follow authenticated | Upstream pass-through/mapped error |
+| 9 | `ANY` | `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/shops/{shopId}/products` | Proxy catalog public/admin | Method/role policy | Upstream pass-through/mapped error |
 | 10 | `ANY` | `/api/v1/seller/products/**` | Proxy seller product CRUD/publish | Seller/admin | Upstream pass-through/mapped error |
-| 11 | `ANY` | `/api/v1/search/**` | Proxy search | Public GET | Upstream pass-through/mapped error |
-| 12 | `ANY` | `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**` | Proxy commerce | Authenticated | Upstream pass-through/mapped error |
+| 11 | `ANY` | `/api/v1/search/**`, `/api/v1/products/search`, `/api/v1/admin/search/**` | Proxy search (public query + admin reindex) | Public GET; admin role-gated | Upstream pass-through/mapped error |
+| 12 | `ANY` | `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**` (trừ `GET /api/v1/vouchers`) | Proxy commerce | Authenticated | Upstream pass-through/mapped error |
 | 12a | `GET` | `/api/v1/vouchers` | List voucher khả dụng (PDP/Shop voucher strip cho khách chưa đăng nhập) | Public; có JWT thì service tính thêm `eligible` | Upstream pass-through/mapped error |
-| 13 | `ANY` | `/api/v1/inventory/**` | Proxy inventory | Seller/admin | Upstream pass-through/mapped error |
-| 14 | `ANY` | `/api/v1/payments/**`, `/api/v1/wallet/**`, `/api/v1/payouts/**`, `/api/v1/refunds/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | Proxy payment/wallet + admin finance | Authenticated/admin (`FINANCE_OPS` cho `/admin/**`) | Upstream pass-through/mapped error |
-| 15 | `ANY` | `/api/v1/shipments/**` | Proxy shipment | Buyer/seller/admin | Upstream pass-through/mapped error |
+| 13 | `ANY` | `/api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | Proxy inventory | Seller/admin | Upstream pass-through/mapped error |
+| 14 | `ANY` | `/api/v1/payments/**` (webhook không JWT), `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `GET /api/v1/seller/revenue`, `GET /api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | Proxy payment/wallet + admin finance | Authenticated/seller/admin (`FINANCE_OPS` cho `/admin/**`); `POST /payments` + `POST /payments/{paymentId}/refunds` là internal, service tự chặn bằng actor scope | Upstream pass-through/mapped error |
+| 15 | `ANY` | `/api/v1/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment/carriers`, `POST /api/v1/webhooks/shipping/{carrier}` | Proxy shipment tracking + carrier webhook | Buyer/seller theo endpoint; webhook không JWT | Upstream pass-through/mapped error |
 | 16 | `ANY` | `/api/v1/products/{productId}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | Proxy rating/comment | Public GET/auth write | Upstream pass-through/mapped error |
 | 17 | `ANY` | `/api/v1/notifications/**` | Proxy notification center | Authenticated | Upstream pass-through/mapped error |
 | 17a | `ANY` | `/api/v1/admin/notifications/**` | Proxy notification delivery/retry diagnostics | Admin permission | Upstream pass-through/mapped error |
@@ -224,7 +225,7 @@ Gateway không định nghĩa request/response business schema. Payload chi ti�
 
 | Thành phần | Quy tắc |
 |---|---|
-| Path/query | Giữ nguyên path/query sau khi strip public prefix theo route config; không tự đổi field. |
+| Path/query | Giữ nguyên path/query tới upstream — `strip_path = false` trên toàn bộ Route business (upstream nhận nguyên `/api/v1/...`); không tự đổi field. |
 | Body | Giữ JSON/multipart metadata theo allowlist; reject vượt 1 MiB JSON. |
 | Auth | Route protected validate JWT; public route không bắt buộc JWT. |
 | Actor context | Set `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope`; strip bản client gửi. |
@@ -232,7 +233,7 @@ Gateway không định nghĩa request/response business schema. Payload chi ti�
 | Request ID | Forward `X-Request-ID` và trace context. |
 | Status success | Giữ nguyên status upstream. |
 | Status 4xx | Giữ business error code nếu allowlist; bổ sung trace ID nếu thiếu. |
-| Status 5xx | Map thành `GATEWAY_UPSTREAM_UNAVAILABLE` hoặc `GATEWAY_UPSTREAM_BAD_RESPONSE`; không trả raw body. |
+| Status 5xx | Giữ nguyên business code nếu thuộc allowlist 5xx đã chốt (bảng §4.1); các 5xx còn lại map thành `GATEWAY_UPSTREAM_UNAVAILABLE` hoặc `GATEWAY_UPSTREAM_BAD_RESPONSE`; không trả raw body. |
 | Timeout | Default connect 2s/read 5s; checkout/payment/shipment read 10s. |
 | Retry | Chỉ GET/HEAD hoặc route explicitly idempotent; tối đa 1 lần. |
 | Rate limit | Auth 10/phút/IP; public 120/phút/IP; authenticated 300/phút/user. |
@@ -242,7 +243,7 @@ Gateway không định nghĩa request/response business schema. Payload chi ti�
 Request:
 
 ```http
-GET /api/v1/products?page=1&size=20&category_id=cat-01912f31 HTTP/1.1
+GET /api/v1/products?page=1&size=20&category_id=category-01912f31 HTTP/1.1
 Host: api.example.com
 X-Request-ID: 01912f60-7a1b-7c12-9c55-8b1c34a6d921
 Accept: application/json
@@ -387,7 +388,7 @@ Origin: https://buyer.example
 
 - Access token gửi qua `Sec-WebSocket-Protocol` (`bearer, <token>`); cho phép query `?access_token=` cho client không set được subprotocol, nhưng token trong query phải được redact khỏi log.
 - Gateway kiểm: CORS `Origin` allowlist → rate limit handshake (IP + user) → `WS_MAX_CONNECTIONS_PER_USER` → JWT RS256/JWKS (`iss/aud/exp/nbf/kid`).
-- Thành công: `101 Switching Protocols`, Gateway mở tunnel tới `MESSAGE_BASE_URL` kèm `X-User-ID`, `X-User-Roles`, `X-Trace-ID`; sau đó chỉ relay frame.
+- Thành công: `101 Switching Protocols` kèm echo `Sec-WebSocket-Protocol: bearer` (bắt buộc — browser sẽ đóng kết nối nếu response không echo subprotocol), Gateway mở tunnel tới `MESSAGE_BASE_URL` kèm `Authorization: Bearer <token>` (lấy từ subprotocol/query, để Message Service tự validate lại), `X-User-ID`, `X-User-Roles`, `X-Trace-ID`; sau đó chỉ relay frame.
 
 Handshake lỗi (không upgrade), dùng error envelope HTTP:
 
@@ -402,7 +403,7 @@ Handshake lỗi (không upgrade), dùng error envelope HTTP:
 Sau khi upgrade:
 
 - Gateway không parse/sửa/buffer frame, không retry, không tự reconnect.
-- Đóng socket khi: client/upstream đóng, quá `WS_IDLE_TIMEOUT` không có frame, hoặc user bị revoke (Redis `revoked_user_id`).
+- Đóng socket khi: client/upstream đóng, quá `WS_IDLE_TIMEOUT` không có frame, hoặc user bị revoke (Redis `revoked_user:{user_id}`).
 - Reconnect và đồng bộ message bị miss là trách nhiệm client (`conversation.sync` qua REST cursor của Message Service).
 
 ## 4. Bảng mã lỗi dùng chung
@@ -426,6 +427,22 @@ Sau khi upgrade:
 | `GATEWAY_CONFIG_INVALID` | 503 | Config thiếu/sai, readiness fail | `Hệ thống chưa sẵn sàng.` |
 | `GATEWAY_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
 
+### 4.1 Allowlist 5xx business của upstream (pass-through nguyên trạng)
+
+> Chốt theo quyết định của Cecilia (2026-09-18): Gateway giữ nguyên business code 5xx trong bảng dưới
+> (đi kèm trace_id); mọi 5xx khác map về `GATEWAY_UPSTREAM_UNAVAILABLE`/`GATEWAY_UPSTREAM_BAD_RESPONSE`.
+> Service chỉ được thêm mã mới vào bảng này sau khi cập nhật bảng lỗi chính thức ở lld của chính service.
+
+| Mã upstream | HTTP | Ý nghĩa (service sở hữu) |
+|---|---:|---|
+| `SEARCH_UNAVAILABLE` | 503 | Elasticsearch không sẵn sàng (`search`) |
+| `SEARCH_INDEX_NOT_READY` | 503 | Index/alias chưa sẵn sàng (`search`) |
+| `SEARCH_TIMEOUT` | 504 | Query Elasticsearch quá hạn (`search`) |
+| `SHIPMENT_CARRIER_UNAVAILABLE` | 503 | Carrier adapter không sẵn sàng (`shipment`) |
+| `SHIPMENT_CARRIER_TIMEOUT` | 504 | Carrier timeout (`shipment`) |
+| `ORDER_DEPENDENCY_UNAVAILABLE` | 503 | Dependency (Inventory/Payment) down khi checkout (`order-commerce`) |
+| `CATALOG_EVENT_PUBLISH_FAILED` | 503 | Outbox publisher chưa phát được event (`product-catalog`) |
+
 ## 5. Giả định & câu hỏi mở
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
@@ -436,7 +453,7 @@ Sau khi upgrade:
 | 3 | `CORS_ALLOWED_ORIGINS` thật của các ứng dụng Micro-Frontends (`mfe-shell`, `mfe-buyer`, `mfe-seller`, `mfe-admin`) chưa cung cấp. | Frontend có thể bị block hoặc mở origin ngoài ý muốn. | Frontend/DevOps |
 | 4 | Refresh token đang dùng JSON Bearer flow; nếu chuyển HttpOnly cookie phải bổ sung CSRF/CORS contract. | Ảnh hưởng browser auth và Gateway credentials policy. | Frontend/Security |
 | 5 | Internal REST có bắt buộc TLS/mTLS hay chỉ network policy chưa chốt. | Nếu chỉ tin forwarded identity header, có rủi ro bypass khi service bị gọi trực tiếp. | Security/DevOps |
-| 6 | WebSocket `/ws/messages` được hỗ trợ trong v1: Gateway validate JWT ở handshake (subprotocol `bearer, <token>` hoặc query), proxy TCP upgrade tới Message Service, không buffer/không retry. Format subprotocol cần Message Service xác nhận. | Nếu Message Service đổi handshake, cập nhật §3.12. SSE không dùng trong v1. | Product/frontend/Message owner |
-| 7 | Route ownership đã chốt (xem §1.3): `/shops/{shopId}` + follow → auth-user; `/shops/{shopId}/products` → product-catalog; voucher buyer/seller/admin → order-commerce; `/seller/wallet` + `/seller/payouts` + `/seller/revenue` + `/admin/fees` + `/admin/taxes` + `/admin/settlements` + `/admin/finance` → payment-wallet; `/admin/catalog/**` → product-catalog; `/admin/users/**` + `/admin/shops/**` → auth-user; `/notifications/**` + `/admin/notifications/**` → notification. Upstream business error allowlist vẫn cần align trong API spec từng service. | Gateway map nhầm service hoặc expose error không nhất quán. | Backend leads |
+| 6 | WebSocket `/ws/messages` được hỗ trợ trong v1: Gateway validate JWT ở handshake (subprotocol `bearer, <token>` hoặc query), echo `Sec-WebSocket-Protocol: bearer`, proxy TCP upgrade tới Message Service kèm `Authorization` + actor headers, không buffer/không retry. | Nếu Message Service đổi handshake, cập nhật §3.12. SSE không dùng trong v1. | Product/frontend/Message owner |
+| 7 | Route ownership đã chốt (xem §1.3): `/shops/{shopId}` + follow + followers/count → auth-user; `/shops/{shopId}/products` → product-catalog; voucher buyer/seller/admin → order-commerce; `/seller/wallet` + `/seller/payouts` + `/seller/revenue` + `/admin/fees` + `/admin/taxes` + `/admin/settlements` + `/admin/finance` → payment-wallet; `/admin/catalog/**` → product-catalog; `/admin/users/**` + `/admin/shops/**` + `/admin/audit-logs` → auth-user; `/notifications/**` + `/admin/notifications/**` → notification; `/products/search` + `/admin/search/**` → search. Upstream business error allowlist đã chốt: 4xx giữ nguyên business code; 5xx theo allowlist §4.1. | Gateway map nhầm service hoặc expose error không nhất quán. | Backend leads |
 | 9 | Phạm vi Admin/back-office đã chốt (`System_Overview.md` §6.3): v1 **không** có microservice admin riêng; mọi `/api/v1/admin/**` route thẳng tới service sở hữu dữ liệu, Gateway chỉ coarse-gate theo role admin, permission chi tiết + 2FA do service enforce. Admin Dashboard là tầng đọc tổng hợp (không có endpoint Gateway riêng). `dispute`/`campaign` là service v1.1 — khi có sẽ thêm family `/api/v1/admin/disputes/**`, `/api/v1/admin/campaigns/**`. | Nếu tách service admin gộp sau này phải thiết kế lại route/auth. | Architecture owner |
 | 8 | `GET /health/ready` degraded rule cho upstream chưa có SLO; LLD dùng dependency baseline. | Ảnh hưởng autoscaling/rollout khi một domain service tạm down. | DevOps/Architecture |

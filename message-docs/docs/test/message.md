@@ -30,8 +30,8 @@
 |---|---|---|
 | M-API-01 | `GET /conversations` own/other | Own list; other denied/no leak. |
 | M-API-02 | `POST /conversations` valid/duplicate/forged participant | Deterministic idempotent; forged scope denied. |
-| M-API-03 | `GET /conversations/{id}` participant/support/nonparticipant | Correct scope/context safe. |
-| M-API-04 | `GET /conversations/{id}/messages` cursor/bounds | Ordered sequence, max 100, no unbounded query. |
+| M-API-03 | `GET /conversations/{conversationId}` participant/support/nonparticipant | Correct scope/context safe. |
+| M-API-04 | `GET /conversations/{conversationId}/messages` cursor/bounds | Ordered sequence, max 100, no unbounded query. |
 | M-API-05 | `POST messages` text/attachment valid | `201`, sequence/ACK, one message. |
 | M-API-06 | Send closed/empty/oversized/rate limit | Correct `409/400/429`, no write. |
 | M-API-07 | Duplicate/different idempotency payload | Same result / `409 MESSAGE_IDEMPOTENCY_CONFLICT`. |
