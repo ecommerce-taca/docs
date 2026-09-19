@@ -441,7 +441,8 @@ Sau khi upgrade:
 | `SHIPMENT_CARRIER_UNAVAILABLE` | 503 | Carrier adapter không sẵn sàng (`shipment`) |
 | `SHIPMENT_CARRIER_TIMEOUT` | 504 | Carrier timeout (`shipment`) |
 | `ORDER_DEPENDENCY_UNAVAILABLE` | 503 | Dependency (Inventory/Payment) down khi checkout (`order-commerce`) |
-| `CATALOG_EVENT_PUBLISH_FAILED` | 503 | Outbox publisher chưa phát được event (`product-catalog`) |
+
+> `CATALOG_EVENT_PUBLISH_FAILED` (`product-catalog`) đã bị **gỡ khỏi bảng này** (Cecilia, 2026-09-19, DOCS-CONSISTENCY-01) — product-catalog đổi cơ chế đồng bộ Search sang CDC, publish lên Kafka tách rời request/response nên mã lỗi này không còn tình huống nào để trả về; xem `product-catalog-docs/docs/lld/product-catalog.md` §7/giả định #23.
 
 ## 5. Giả định & câu hỏi mở
 
