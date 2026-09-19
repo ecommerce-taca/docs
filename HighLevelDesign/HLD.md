@@ -3,13 +3,14 @@
 > **Bản dịch nguyên trạng (verbatim transcription)** từ `docs/HighLevelDesign/EcommercePlatform-v4.excalidraw` sang Markdown, để tiện đọc/diff/tìm kiếm.
 > Không biên tập nội dung, không lọc trùng lặp, không sửa mâu thuẫn nội tại của bản vẽ gốc (ví dụ: file gốc có 2 lớp mô tả DB schema khác nhau — "7.1 Per-Service Database Schemas (Deep Dive)" và "9. Database Schema per Service (Final 11-service design)" — cả hai đều được giữ nguyên bên dưới dù có thể lệch nhau).
 > Canvas gốc là sơ đồ 2D (nhiều cột cạnh nhau: sequence diagram bên phải song song với outline yêu cầu/API bên trái, rồi tới khối kiến trúc/DB deep-dive, rồi khối DB schema cuối). Markdown là tuyến tính nên tài liệu này nhóm nội dung thành 3 phần theo layout thật của canvas (xem ghi chú đầu mỗi phần) và sắp xếp trong mỗi phần theo thứ tự trên-xuống, trái-qua-phải — **thứ tự đọc có thể không phản ánh đúng 100% quan hệ trực quan** (mũi tên, vị trí cạnh nhau) của bản vẽ gốc. Muốn xem chính xác bố cục/mũi tên, mở file `.excalidraw` bằng https://excalidraw.com.
-> **Tài liệu chốt/nguồn đúng của hệ thống là `docs/<service>-docs/docs/{api,db,lld,test}/*.md`** (44 file, 11 service) — HLD (cả bản excalidraw lẫn bản dịch `.md` này) là bản phác thảo ban đầu, một số nội dung đã lỗi thời so với các doc đó (xem `reports/no-task-docs-consistency/2026-09-19-hld-excalidraw-consistency.md` và `plans/DOCS-CONSISTENCY-01-cdc-hld.md`).
+> **Tài liệu chốt/nguồn đúng của hệ thống là `docs/<service>-docs/docs/{api,db,lld,test}/*.md`** (44 file, 11 service) — HLD (cả bản excalidraw lẫn bản dịch `.md` này) là bản phác thảo ban đầu, một số nội dung đã lỗi thời so với các doc đó. Ghi chú/quyết định liên quan nằm trong workspace nội bộ ở thư mục `reports/` và `plans/` **ngoài git repo này** (repo này chỉ chứa `docs/`) — nếu bạn đang xem file trong workspace đầy đủ, tìm `reports/no-task-docs-consistency/2026-09-19-hld-excalidraw-consistency.md` và `plans/DOCS-CONSISTENCY-01-cdc-hld.md`; nếu chỉ có repo `docs/` (ví dụ clone từ GitHub), 2 đường dẫn trên sẽ không tồn tại.
 
 ---
 
 ## Phần A — Sequence Diagram: Marketplace Platform (Tiki-style) — End-to-End
 
 > Cột bên phải của canvas (Buyer/User · System/Platform · Payment Gateway · Shop/Seller làm 4 "swimlane"), nằm song song về mặt bố cục với outline yêu cầu/API ở Phần B, không phải phần tiếp nối tuần tự của Phần B.
+> Các dòng bên dưới là nhãn message theo thứ tự trên-xuống của canvas; **hướng gửi/nhận và swimlane nguồn/đích của từng message không được giữ lại** trong bản dịch text này (transcription chỉ lấy nội dung text, không lấy mũi tên/vị trí) — muốn biết ai gửi cho ai, mở file `.excalidraw` gốc.
 
 **Buyer/User**
 
