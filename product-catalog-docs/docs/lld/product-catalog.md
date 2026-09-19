@@ -15,7 +15,7 @@
 | Giá | `product-catalog` là source of truth cho `base_price`/`sale_price` hiển thị. Order-Commerce đọc giá qua API/event và lưu price snapshot khi checkout/order; voucher/discount rule thuộc Order-Commerce. |
 | Publish | Seller có thể tạo/cập nhật draft không cần product approval/censor. Publish yêu cầu shop có `kyc_status = APPROVED` (enum `KycStatus` của auth-user); không có trạng thái `PENDING_APPROVAL`. |
 | Inventory display | Product giữ read-only inventory projection từ event của Inventory để hiển thị `Còn hàng/Hết hàng` hoặc số lượng snapshot. Projection có thể eventual consistent và không dùng để trừ stock. |
-| Search | Search đồng bộ dữ liệu qua Kafka outbox domain event (`product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`), không phải CDC/change-stream MongoDB; search sở hữu search index. Product không đọc/ghi trực tiếp Elasticsearch. |
+| Search | Search đồng bộ dữ liệu qua domain event trên `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`, được publish bởi **CDC (Debezium Outbox Event Router)** đọc outbox collection của Product Catalog — không đọc trực tiếp collection nghiệp vụ (`products`/`skus`/`categories`); search sở hữu search index. Product không đọc/ghi trực tiếp Elasticsearch. |
 | Rating hiển thị | `rating-comment` là source of truth cho review/rating. Product chỉ cache `rating_summary` (`avg`/`count`) từ event `rating.aggregate.updated` để hiển thị PDP/Shop hero; không tự tính rating. |
 | Không thuộc service | User/profile/KYC decision, inventory deduction/reservation, cart/checkout/order, voucher calculation, payment, shipment, review, message và search index. |
 | Được gọi bởi | Các ứng dụng Micro-Frontends (`mfe-buyer`, `mfe-seller`, `mfe-admin`, `mfe-catalog` qua `mfe-shell`) thông qua API Gateway; Order/Inventory/Search dùng REST/event contract, không đọc MongoDB trực tiếp. |
@@ -32,7 +32,7 @@ API Gateway
 Product Catalog
   ├─ MongoDB: product, SKU, category, media, price, shop snapshot
   ├─ S3/MinIO: product media bytes qua signed URL
-  ├─ Kafka outbox → Order, Inventory, Search và các consumer khác (domain event, không phải CDC)
+  ├─ Kafka outbox (relay bởi CDC — Debezium Outbox Event Router) → Order, Inventory, Search và các consumer khác (domain event, topic/payload không đổi)
   ├─ Kafka consumer ← Inventory stock snapshot
   ├─ Kafka consumer ← Auth User shop/KYC status event
   └─ Kafka consumer ← Rating-Comment rating aggregate event
@@ -612,7 +612,7 @@ Ràng buộc:
 - Publisher retry tối đa 3 lần, backoff 2 giây; sau đó đưa `product-catalog.events.dlq.v1`.
 - Consumer ghi `processed_event_id` hoặc dùng unique event ID để dedupe; không xử lý lại event hoàn tất.
 - Inventory projection cho phép replay/resync từ Inventory snapshot; Product không dùng event replay để suy ra deduction.
-- Search có thể lag sau publish; Product response `ACTIVE` là source of truth catalog, Search eventually indexes thông qua outbox event (không phải CDC).
+- Search có thể lag sau publish; Product response `ACTIVE` là source of truth catalog, Search eventually indexes thông qua outbox event do CDC (Debezium Outbox Event Router) publish.
 
 ## 7. Mã lỗi
 
@@ -664,13 +664,12 @@ Ràng buộc:
 | 9 | Media baseline là 12 ảnh + 3 video/product, S3/MinIO signed URL; virus scan provider và exact product media policy chưa chốt. | Ảnh hưởng upload UX, storage cost, publish readiness và security. | Product/Security/DevOps |
 | 10 | Admin `BLOCKED` là post-publication emergency action, không phải pre-approval/censor workflow. | Nếu cần review trước publish, phải thêm state machine, queue và SLA. | Product owner |
 | 11 | Shop snapshot nhận từ Auth User event; event schema/version và field allowlist cần align với auth-user API/event spec. | Product detail có thể hiển thị shop stale hoặc publish gate sai. | Auth-user owner |
-| 12 | Search eventual consistency qua Kafka outbox domain event (không phải CDC); Product response ACTIVE không đợi Search index thành công. | User có thể thấy product detail trước khi tìm thấy qua search. | Search owner |
+| 12 | Search eventual consistency qua domain event publish bởi CDC (Debezium Outbox Event Router đọc outbox collection); Product response ACTIVE không đợi Search index thành công. | User có thể thấy product detail trước khi tìm thấy qua search. | Search owner |
 | 13 | Product detail không gọi Inventory synchronous; snapshot stale sau 60 giây hiển thị metadata `STALE`. | Nếu UX bắt buộc số tồn realtime, phải bổ sung read API/timeout/fallback. | Product + frontend |
 | 14 | Realtime price history, promotion campaign, brand approval và AI content moderation chưa thuộc v1. Campaign/flash sale (giá theo thời gian) là service **`campaign` riêng ở v1.1** (`System_Overview.md` §6.3), không nhồi vào Product Catalog. | Nếu Penpot/HLD bổ sung sớm, cần thêm aggregate/permission/event riêng. | Product owner |
 | 15 | Đã chốt (`System_Overview.md` §6.3): admin catalog (Categories, Products/SKU, moderation) phục vụ qua `/api/v1/admin/catalog/**` **trên chính service này**, gác `CATALOG_ADMIN`/`SUPER_ADMIN` — không tách microservice admin. Product Catalog **cố ý** không có pre-approval, chỉ `BLOCKED` sau publish; màn "Product moderation queue" của Penpot render thành "danh sách product đã publish + hành động block", không phải hàng đợi duyệt trước. | Nếu bắt buộc duyệt trước, phải thêm state `PENDING_REVIEW` + queue + SLA + event — thay đổi logic lifecycle. | Product owner |
 | 16 | `display_as` (`PLAIN`/`COLOR_SWATCH`/`IMAGE_THUMB`) chỉ là hint render cho Frontend Seller SKU builder; không ảnh hưởng `variant_key`. | Nếu cần swatch bắt buộc theo value, thêm validate riêng. | Product + Frontend |
 | 17 | `GET /products?product_ids=` (batch ≤100) là contract hydrate thẻ sản phẩm cho Favorites (`auth-user`) và Cart (`order-commerce`). | Nếu payload thẻ cần field khác, mở rộng response `ProductCard`. | Product + Frontend |
-| 18 | Đổi mô tả đồng bộ Search từ CDC/Debezium sang Kafka outbox domain event (`product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`); `search-docs` §1.1/tech stack hiện vẫn còn nhắc "CDC (Debezium/Kafka)" dù event contract thật ở §6 của chính doc đó đã dùng đúng các topic domain event này. | Nếu Search vẫn dùng CDC/change-stream thật, phải đổi lại mô tả và event `version` field. | Search owner |
 | 19 | Payload `product.published` đã chốt với Search (2026-09-18): gồm `category_path`, `visibility_status`, map giá `price.sale` → scalar long; `product.created`/`sku.*` vẫn là giả định, chưa có xác nhận chính thức từ Search/Inventory. | Nếu payload thật hẹp hơn, Search phải tự query bổ sung hoặc Product phải điều chỉnh event schema. | Product + Search + Inventory owner |
 | 20 | Payload event KYC/shop thật (không có `kyc_status`/`source_version`/`logo_url`) lấy từ `auth-user-docs/docs/lld/auth-user.md` §6.2 tại thời điểm viết; nếu Auth User đổi contract phải cập nhật lại theo. | Nếu Auth User đổi payload, `ShopProjectionService` suy sai `kyc_status`. | Auth-user owner |
 | 21 | `rating_summary` cache (avg/count) trên Product lấy từ event `rating.aggregate.updated` do `rating-comment` sở hữu; Product không lưu `distribution`. | Nếu PDP cần hiển thị distribution, phải mở rộng cache field. | Product + Rating owner |
