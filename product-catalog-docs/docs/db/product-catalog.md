@@ -252,8 +252,14 @@ Projection stale sau 60 giây. Product không thực hiện reserve/deduct và k
 | `schema_version` | int | Có | Bắt đầu `1`. |
 | `payload` | object | Có | Không chứa secret/KYC document. |
 | `occurred_at` | Date | Có | Domain event time UTC. |
+| `topic` | string | Có | Kafka topic đích — đúng 1-trong-4: `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`, khớp cột "Topic" của bảng `lld` §6.2 theo từng `event_type`. App ghi giá trị này khi insert; connector route theo field này (xem `lld` §6.6) — không có logic suy luận nào khác ngoài giá trị đã ghi sẵn. |
+| `version` | long | Có | Aggregate version tại thời điểm phát event — khớp field `version` hiện tại của `products`/`skus`/`categories` lúc ghi outbox trong cùng transaction. Đưa vào envelope Kafka (`lld` §6.1), dùng để consumer (Search…) bỏ qua event cũ hơn. |
+| `actor_user_id` | string/null | Không | Null khi event do **consume event khác** sinh ra (projection-driven — ví dụ `product.shop_snapshot_updated`, phát ra khi Product tự cập nhật sau khi nhận event từ Auth User, không phải hành động trực tiếp của ai); có giá trị khi event do seller/admin thao tác trực tiếp (tạo/sửa/publish/block/...). |
+| `traceparent` | string/null | Không | W3C trace context tại thời điểm ghi outbox; null nếu request gốc không mang trace (job nội bộ/background). Đưa vào Kafka **header**, không vào body (xem `lld` §6.6). |
 
 Dưới CDC (Debezium MongoDB Outbox Event Router, xem `docs/lld/product-catalog.md` §1.1/§2.1/§6.6): collection này **write-only** với application. Connector đọc **change stream** của collection, không cập nhật ngược document nào — nên schema **không có** field trạng thái publish (`published_at`, `attempt_count`, `last_error`, `dead_lettered_at` như bản trước CDC đã bị bỏ). Muốn biết event đã tới Kafka hay chưa, theo dõi **connector lag/offset** ở tầng Kafka Connect, không phải query field trên document.
+
+`topic`/`version`/`actor_user_id`/`traceparent` (thêm 2026-09-19, `DOCS-CDC-02`) là field vận chuyển (transport-level) cho connector — **không phải** field nghiệp vụ mới, không đổi `payload`/contract §6.1–6.5. Xem `docs/lld/product-catalog.md` §6.6 cho cấu hình connector đọc 4 field này.
 
 ### 3.10 `catalog_audits`
 
