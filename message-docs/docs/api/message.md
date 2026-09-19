@@ -52,7 +52,7 @@ WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event nam
     {
       "conversation_id": "cv-01912fc0",
       "type": "BUYER_SELLER",
-      "status": "OPEN",
+      "status": "ACTIVE",
       "shop": { "shop_id": "shop-01912f31", "shop_name": "Anker Official", "logo_url": "https://cdn.taca.vn/s/anker.webp" },
       "participants": [
         { "user_id": "usr-01912f10", "display_name": "Nguyễn Văn A", "role": "BUYER" },
@@ -93,6 +93,8 @@ WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event nam
   "meta": { "request_id": "01912fc2-7a1b-7c12-9c55-8b1c34a6d921", "has_more": true, "next_after_sequence": 42 }
 }
 ```
+
+Nguồn field (đối chiếu `docs/db/message.md` §3.3): `sender_user_id` = `sender_id`; `edited_at` = `updated_at` khi `status=EDITED`; `deleted` suy ra từ `status=DELETED`; `moderation_status` = `status` (`ACCEPTED`/`EDITED`/`DELETED`/`BLOCKED`).
 
 `POST /conversations/{conversationId}/messages` — header `Idempotency-Key` bắt buộc.
 

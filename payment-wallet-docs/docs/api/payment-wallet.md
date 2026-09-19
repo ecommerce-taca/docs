@@ -295,7 +295,7 @@ Response `202`. Điều kiện (kiểm theo đúng thứ tự này): KYC project
 
 ### 3.8 Admin finance back-office (`FINANCE_OPS`)
 
-Phục vụ các màn Penpot Admin *Fees/Taxes*, *Finance*, *Seller settlement*, *Settlement batches*. Không có microservice admin riêng (xem `System_Overview.md` §6.3); Gateway coarse-gate role admin, service này enforce `FINANCE_OPS` + step-up 2FA (header `X-MFA-Step-Up`) cho mutation. Mọi mutation ghi `audit_logs` (actor/reason).
+Phục vụ các màn Penpot Admin *Fees/Taxes*, *Finance*, *Seller settlement*, *Settlement batches*. Không có microservice admin riêng (quyết định admin-scope đã chốt 2026-09-18); Gateway coarse-gate role admin, service này enforce `FINANCE_OPS` + step-up 2FA (header `X-MFA-Step-Up`) cho mutation. Mọi mutation ghi `audit_logs` (actor/reason).
 
 `GET /admin/finance/summary/export?from=&to=&format=xlsx|csv` — phục vụ Penpot `CTA / Xuất báo cáo` ở Admin Fees/Taxes. Cùng dữ liệu nguồn với `GET /admin/finance/summary`, xuất theo ngày. Response `200` cùng hình dạng với `GET /seller/revenue/export` ở trên (`export_url`/`format`/`row_count`/`generated_at`/`expires_at`). Cột export: `period, gmv, commission_income, tax_collected, refund_amount, payout_volume, shop_count`. Chỉ `FINANCE_OPS`; không có tham số `shop_id` — đây là tổng hợp toàn sàn.
 
@@ -356,5 +356,5 @@ Read-only aggregate toàn sàn trên `payment_allocations`/`ledger_entries`/`pay
 | 4 | Payout provider chưa chốt. | Tạm mock adapter/reconciliation. | Finance/DevOps |
 | 5 | Return/dispute workflow **ngoài v1**: refund chỉ khởi tạo thủ công (Order/`/admin/payments`). v1.1 service `dispute` sẽ điều phối và gọi cùng contract refund. | Cần thêm permission/state khi bật dispute. | Product/Finance |
 | 6 | `GET /seller/revenue` là báo cáo read-only tổng hợp `payment_allocations`/`ledger_entries` (HLD #38); commission/tax dùng đúng rate đã versioned tại thời điểm allocation. | Nếu rate/rounding chưa chốt, số tổng hợp phải khớp rate versioned, không tính lại. | Finance |
-| 7 | Admin back-office (Fees/Taxes, Finance, Settlement) phục vụ qua `/api/v1/admin/**` trên service này, `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`); **không** tách microservice admin (`System_Overview.md` §6.3). Fee/tax là config effective-dated append-only; settlement là read + `retry`. | Nếu chuyển ownership fee/tax/settlement sang service khác phải đổi contract allocation. | Architecture + Finance |
+| 7 | Admin back-office (Fees/Taxes, Finance, Settlement) phục vụ qua `/api/v1/admin/**` trên service này, `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`); **không** tách microservice admin (quyết định admin-scope đã chốt 2026-09-18). Fee/tax là config effective-dated append-only; settlement là read + `retry`. | Nếu chuyển ownership fee/tax/settlement sang service khác phải đổi contract allocation. | Architecture + Finance |
 | 8 | Trigger settlement batch (scheduled theo cửa sổ hoàn tiền vs event `order.completed`) và độ dài cửa sổ chưa chốt. | Ảnh hưởng thời điểm `pending → available` và SLA payout. | Finance + Order owner |

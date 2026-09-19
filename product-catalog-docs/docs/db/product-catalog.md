@@ -169,7 +169,7 @@ Giới hạn product: tối đa 50 definitions. Category definition khi áp dụ
 
 Category inactive/archived không nhận assignment mới. Không hard-delete category đã có product reference.
 
-**Vì sao `tax_rate_bps` là số nguyên bps chứ không phải decimal:** toàn hệ thống cấm float ở mọi tầng (`System_Overview.md` §10). Lưu `0.1` dạng double rồi nhân với tiền là con đường chắc chắn dẫn tới lệch đồng. Với bps, phép tính thuế là số nguyên trọn vẹn: `tax = line_net × rate_bps / (10000 + rate_bps)`.
+**Vì sao `tax_rate_bps` là số nguyên bps chứ không phải decimal:** toàn hệ thống cấm float ở mọi tầng (quy ước toàn repo — mỗi service db.md đều cấm float, không có ngoại lệ). Lưu `0.1` dạng double rồi nhân với tiền là con đường chắc chắn dẫn tới lệch đồng. Với bps, phép tính thuế là số nguyên trọn vẹn: `tax = line_net × rate_bps / (10000 + rate_bps)`.
 
 Thuế suất **thừa kế theo cây danh mục**: sản phẩm lấy `tax_rate_bps` của `primary_category_id`; nếu category đó có giá trị `null` thì leo lên `parent_id` cho tới khi gặp giá trị. Root bắt buộc có giá trị để không bao giờ rỗng. Order-Commerce **snapshot** thuế suất tại thời điểm checkout — đổi thuế suất sau này không hồi tố đơn cũ.
 

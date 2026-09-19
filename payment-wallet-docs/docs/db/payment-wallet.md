@@ -131,7 +131,7 @@ DB check không âm, application state machine/amount-match/signature/KYC gate; 
 | `wallets` + `ledger_entries` | 1 wallet có `available_balance`/`pending_balance` khớp **chính xác** tổng `ledger_entries` (double-entry cân bằng — đây là bất biến bắt buộc, seed sai sẽ làm mọi test reconciliation fail). |
 | `payouts` | 1 `REQUESTED`; 1 `SUCCESS`; 1 `FAILED`. |
 | `refunds` | 1 `SUCCESS` không vượt `payments.amount` đã capture. |
-| `fee_configs`/`tax_configs` | 1 version `PLATFORM` fee + 1 version tax do Finance cung cấp (placeholder nếu chưa có số thật — xem `System_Overview.md` §11 blocker #5), `effective_from` trong quá khứ để allocation seed dùng được ngay. |
+| `fee_configs`/`tax_configs` | 1 version `PLATFORM` fee + 1 version tax do Finance cung cấp (placeholder nếu chưa có số thật — Finance chốt số thật trước go-live), `effective_from` trong quá khứ để allocation seed dùng được ngay. |
 | `settlement_batches` | 1 batch `COMPLETED` với `settlement_batch_items` khớp tổng `payment_allocations` của batch đó. |
 
 Không seed VNPAY secret/signature thật hoặc bank account thật — dùng sandbox/mock credential.
@@ -151,4 +151,4 @@ Không seed VNPAY secret/signature thật hoặc bank account thật — dùng s
 | 3 | One payment intent/order policy chưa chốt cho multi-shop group. | Ảnh hưởng allocation/refund/payment API. | Order owner |
 | 4 | Commission/tax rates và rounding chưa chốt; `fee_configs`/`tax_configs` lưu version effective-dated, giá trị khởi tạo do Finance seed. Admin sửa qua `PUT /admin/fees`,`/admin/taxes` (append version, không hồi tố). | Ảnh hưởng ledger/invoice. | Finance |
 | 5 | Bank payout adapter chưa có provider/SLA. | Cần mock/reconciliation job. | Finance/DevOps |
-| 6 | Cơ chế sinh `settlement_batches` (scheduled theo cửa sổ hoàn tiền vs event) chưa chốt; bảng chỉ mô tả cấu trúc kết quả. Không có microservice admin riêng — bảng thuộc `payment-wallet` (`System_Overview.md` §6.3). | Ảnh hưởng thời điểm `pending → available`. | Finance + Order owner |
+| 6 | Cơ chế sinh `settlement_batches` (scheduled theo cửa sổ hoàn tiền vs event) chưa chốt; bảng chỉ mô tả cấu trúc kết quả. Không có microservice admin riêng — bảng thuộc `payment-wallet` (quyết định admin-scope đã chốt 2026-09-18). | Ảnh hưởng thời điểm `pending → available`. | Finance + Order owner |

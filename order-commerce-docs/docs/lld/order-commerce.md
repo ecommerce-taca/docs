@@ -497,8 +497,8 @@ Thuế suất đi kèm ngay trong response `GET /products?product_ids=` / `GET /
 
 ```json
 {
-  "product_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
-  "primary_category_id": "01912f20-7a1b-7c12-9c55-8b1c34a6d921",
+  "product_id": "product-01912f31",
+  "primary_category_id": "category-01912f20",
   "tax_rate_bps": 1000
 }
 ```
@@ -546,7 +546,7 @@ Quy tắc:
 | 4 | Một checkout multi-shop split thành order con theo shop. | Ảnh hưởng voucher scope, shipment, seller view và invoice grouping. | Product owner |
 | 5 | Shipping fee là mock/integration với Shipment; exact carrier calculation chưa có HLD contract. | Cần thêm quote contract/SLA trước production. | Shipment owner |
 | 6 | Payment service tên `payment-wallet`; HLD có chỗ gọi Payment Service. | Cần chuẩn hóa topic/API service name ở platform registry. | Architecture |
-| 7 | Buyer cancel được trước shipping; seller cancel policy cần business rule chi tiết. Return/dispute workflow **ngoài v1** — service `dispute` (v1.1) điều phối; nếu cần sớm thì làm module trong `order-commerce` (`System_Overview.md` §6.3). | Ảnh hưởng refund/stock release và dispute. | Product/Finance |
+| 7 | Buyer cancel được trước shipping; seller cancel policy cần business rule chi tiết. Return/dispute workflow **ngoài v1** — service `dispute` (v1.1) điều phối; nếu cần sớm thì làm module trong `order-commerce` (quyết định đã chốt 2026-09-18). | Ảnh hưởng refund/stock release và dispute. | Product/Finance |
 | 8 | Tax calculation baseline là snapshot/tax breakdown từ Order; tax authority/provider chưa chốt. | Ảnh hưởng invoice compliance. | Finance owner |
 | 9 | Voucher v1 chỉ theo mã + scope PLATFORM/SHOP + `min_order`/thời gian/`usage_limit`; **không có** audience/targeting/segment/import user IDs. Các màn Penpot Seller voucher targeting là ngoài v1. | Nếu bật targeting cần bảng `voucher_audiences` + quan hệ follow shop; đổi checkout redemption. | Product owner |
-| 10 | Đã chốt (`System_Overview.md` §6.3): v1 **không** tách microservice admin. Platform voucher (`scope=PLATFORM`) do `order-commerce` sở hữu; admin console gọi trực tiếp `/api/v1/admin/vouchers/**` của service này (`VOUCHER_MANAGE` + 2FA), Gateway chỉ coarse-gate role admin. | Nếu voucher aggregate chuyển service khác phải đổi event/redemption. | Product owner + Architecture |
+| 10 | Đã chốt (2026-09-18): v1 **không** tách microservice admin. Platform voucher (`scope=PLATFORM`) do `order-commerce` sở hữu; admin console gọi trực tiếp `/api/v1/admin/vouchers/**` của service này (`VOUCHER_MANAGE` + 2FA), Gateway chỉ coarse-gate role admin. | Nếu voucher aggregate chuyển service khác phải đổi event/redemption. | Product owner + Architecture |

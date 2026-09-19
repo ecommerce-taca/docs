@@ -25,8 +25,8 @@
 |---:|---|---|---|
 | 1 | `GET /internal/inventory/availability` | Order/internal | Đọc availability, không reserve. |
 | 2 | `POST /internal/inventory/reservations` | Order/internal | Atomic reserve nhiều SKU. |
-| 3 | `POST /internal/inventory/reservations/{reservationId}/commit` | Order/Payment internal | Commit reservation. |
-| 4 | `POST /internal/inventory/reservations/{reservationId}/release` | Order/Payment internal | Release reservation. |
+| 3 | `POST /internal/inventory/reservations/{reservationId}/commit` | Order internal | Commit reservation. |
+| 4 | `POST /internal/inventory/reservations/{reservationId}/release` | Order internal | Release reservation. |
 | 5 | `GET /seller/inventory` | Seller/staff | Xem stock shop. |
 | 6 | `PATCH /seller/inventory/{skuId}/adjust` | Seller | Điều chỉnh available bằng delta. |
 | 7 | `GET /admin/inventory/reconciliation` | Admin | Reconcile balance/ledger. |

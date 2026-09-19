@@ -199,7 +199,7 @@ Quy tắc:
 - Endpoint này **không** giữ chỗ và **không** tăng `used_count`; redemption vẫn chốt ở `POST /checkout`.
 - `EXPIRING_SOON` = hết hạn trong 7 ngày; phục vụ metric `Voucher metric / Sắp hết hạn`.
 
-> **v1 không có "lưu/đổi voucher".** Không có bảng sở hữu voucher theo user; "Voucher của tôi" = danh sách voucher buyer **đang đủ điều kiện dùng**, tính động. Nút `CTA / Đổi voucher` trên Penpot (thu thập voucher về ví cá nhân) ngoài phạm vi v1 — xem `System_Overview.md` §6.2.
+> **v1 không có "lưu/đổi voucher".** Không có bảng sở hữu voucher theo user; "Voucher của tôi" = danh sách voucher buyer **đang đủ điều kiện dùng**, tính động. Nút `CTA / Đổi voucher` trên Penpot (thu thập voucher về ví cá nhân) ngoài phạm vi v1 (quyết định đã chốt 2026-09-18).
 
 ### 3.2b `GET /vouchers/redemptions` — voucher đã dùng
 
@@ -660,7 +660,7 @@ Soft `INACTIVE`, không xóa redemption history.
 
 ### 3.8 Admin platform voucher (`/admin/vouchers`)
 
-Quyền: `VOUCHER_MANAGE` (do Auth User RBAC cấp) + step-up 2FA cho mutation; Gateway coarse-gate role admin, `order-commerce` enforce permission. v1 không có microservice admin riêng — admin console gọi trực tiếp route này (`System_Overview.md` §6.3).
+Quyền: `VOUCHER_MANAGE` (do Auth User RBAC cấp) + step-up 2FA cho mutation; Gateway coarse-gate role admin, `order-commerce` enforce permission. v1 không có microservice admin riêng — admin console gọi trực tiếp route này (quyết định admin-scope đã chốt 2026-09-18).
 
 `POST /admin/vouchers` request:
 

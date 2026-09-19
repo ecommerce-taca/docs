@@ -1388,7 +1388,7 @@ Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_c
 }
 ```
 
-Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — theo chuẩn chung `System_Overview.md` §8. Consumer dedupe theo `event_id`. Bảng field chi tiết từng event nằm ở `docs/lld/auth-user.md` §6.2.
+Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — theo quy ước chung của repo. Consumer dedupe theo `event_id`. Bảng field chi tiết từng event nằm ở `docs/lld/auth-user.md` §6.2.
 
 ## 5. Giả định & câu hỏi mở
 
