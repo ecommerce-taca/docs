@@ -245,7 +245,8 @@ Projection stale sau 60 giây. Product không thực hiện reserve/deduct và k
 
 | Field | Type | Required | Ràng buộc |
 |---|---|---:|---|
-| `_id`/`event_id` | string UUIDv7 | Có | Unique toàn service. |
+| `_id` | string UUIDv7 | Có | Document ID, immutable. |
+| `event_id` | string UUIDv7 | Có | ID event duy nhất toàn service — field riêng bắt buộc (connector map `collection.field.event.id=event_id`, xem `docs/lld/product-catalog.md` §6.6); không bỏ field này dù giá trị có trùng `_id`. |
 | `aggregate_type` | enum | Có | `PRODUCT`, `SKU`, `CATEGORY`, `SHOP_PROJECTION`. |
 | `aggregate_id` | string | Có | Key ordering theo aggregate. |
 | `event_type` | string | Có | Ví dụ `product.published`. |
