@@ -1,7 +1,7 @@
 # LLD — Search Service
 
 > Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
-> Tech stack đã chốt: Node.js + NestJS · Elasticsearch · Kafka consumer (domain event từ outbox của Product Catalog, không phải CDC) · REST qua API Gateway
+> Tech stack đã chốt: Node.js + NestJS · Elasticsearch · Kafka consumer (domain event do CDC — Debezium Outbox Event Router — đọc outbox collection của Product Catalog và publish) · REST qua API Gateway
 
 ## 1. Phạm vi
 
@@ -11,7 +11,7 @@
 |---|---|
 | Trách nhiệm chính | Full-text product search, autocomplete, category/shop/brand/price filter, facet, sort và index lifecycle. |
 | Nguồn dữ liệu | Elasticsearch là read index; Product Catalog là source of truth cho product content/lifecycle/price. |
-| Đồng bộ | Consume Kafka outbox domain event (`product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`) từ Product Catalog, không phải CDC/change-stream MongoDB; hỗ trợ replay/reindex. |
+| Đồng bộ | Consume domain event trên `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`, được publish bởi CDC (Debezium Outbox Event Router) đọc **outbox collection** của Product Catalog — không phải app tự poll, và không đọc trực tiếp `products`/`skus`/`categories`; topic/payload giữ nguyên như §6. Hỗ trợ replay/reindex. |
 | Không thuộc service | Product CRUD, stock deduction/reservation, order/cart/voucher, review aggregate source, KYC, payment. |
 | Public visibility | Chỉ index product đã `ACTIVE`/published; status index dùng `PUBLISHED` là projection từ Product `ACTIVE`. |
 | Được gọi bởi | `mfe-buyer`, `mfe-seller`, `mfe-admin` qua API Gateway; internal reindex/health qua ops policy. |
@@ -19,7 +19,11 @@
 ### 1.2 Boundary
 
 ```text
-Product Catalog ──Kafka outbox domain event──► Search Consumer ──► Elasticsearch products index
+Product Catalog outbox collection ──CDC (Debezium Outbox Event Router)──► Kafka
+  (product.events.v1 / sku.events.v1 / category.events.v1 / catalog.events.v1)
+                                                                              │
+                                                                              ▼
+                                                                    Search Consumer ──► Elasticsearch products index
 mfe-buyer/mfe-seller/mfe-admin ──API Gateway──► Search REST API
 Inventory ──(không gọi trực tiếp Search)──► Product stock projection ──event──► Search
 ```
@@ -33,7 +37,7 @@ Inventory ──(không gọi trực tiếp Search)──► Product stock proje
 
 | Nguồn | Requirement | Quyết định |
 |---|---|---|
-| HLD Search | Elasticsearch product index, domain event từ Product | Dùng Kafka outbox domain event, không phải CDC/change-stream; không đọc database Product. |
+| HLD Search | Elasticsearch product index, đồng bộ qua CDC từ Product | Dùng CDC (Debezium Outbox Event Router) đọc outbox collection của Product Catalog, publish domain event lên Kafka; không đọc trực tiếp collection nghiệp vụ (`products`/`skus`/`categories`) của Product. |
 | mfe-buyer (Home/Search/Category) | Search keyword, category, price | REST query có full-text, filter, facet, sort, pagination. |
 | Product detail/card | `title`, `shop_id`, `category_path`, `brand`, `price`, `rating_avg`, `attributes` | Index document denormalized; URL/detail lấy Product API. (tên field trên là quote HLD; index thực dùng snake_case theo db §2) |
 | mfe-seller/mfe-admin | Reindex/index diagnostics | Route admin/internal riêng, không expose index management cho buyer. |
@@ -212,7 +216,7 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
 | 1 | Backend Search là NestJS, engine là Elasticsearch theo lựa chọn A. | Ảnh hưởng client SDK, deployment và query DSL adapter. | Tech lead |
-| 2 | Product event được đồng bộ qua Kafka outbox domain event (topic `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`), không phải CDC/change-stream MongoDB — đã đồng bộ với `product-catalog-docs/docs/lld/product-catalog.md` §1.1/§6.1–6.2 (2026-09-18). | Ảnh hưởng replay, ordering và source export khi rebuild index. | Platform/Search owner |
+| 2 | Product event được đồng bộ qua **CDC (Debezium Outbox Event Router)** đọc outbox collection của Product Catalog, publish nguyên trạng lên topic `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1` — không đọc trực tiếp collection nghiệp vụ (`products`/`skus`/`categories`); topic/payload không đổi so với trước — đã đồng bộ với `product-catalog-docs/docs/lld/product-catalog.md` §1.1/§6.1–6.2 (2026-09-19, DOCS-CONSISTENCY-01). | Ảnh hưởng replay, ordering và source export khi rebuild index; cần connector Debezium theo dõi outbox collection còn sống. | Platform/Search owner |
 | 3 | Product `ACTIVE` map thành Search `PUBLISHED`. | Nếu business dùng tên state khác, phải đổi mapping/API filter. | Product owner |
 | 4 | `rating.aggregate.updated` do `rating-comment` phát (đã có trong bộ 11 service); Search consume để cập nhật `rating_avg`/`rating_count` phục vụ sort/facet `rating_desc`. Đã chốt tên topic + schema (2026-09-18): `rating.events.v1`, payload `product_id`/`avg`/`count`/`distribution` — khớp product-catalog §6.3. | Nếu topic/schema lệch, `rating_desc` sort trả kết quả cũ/thiếu. | Search + Rating owner |
 | 5 | Elasticsearch version, analyzer tiếng Việt, synonym và shard/replica chưa chốt. | Ảnh hưởng relevance, storage và query latency. | Search/DevOps |
