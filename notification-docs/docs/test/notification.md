@@ -39,6 +39,10 @@
 | N-INT-02 | Same dedupe key different data | `NOTIFICATION_IDEMPOTENCY_CONFLICT`. |
 | N-INT-03 | Provider retry 1–3 then fail | Correct attempt status/DLQ, no false sent. |
 | N-INT-04 | Template missing/invalid fields | `NOTIFICATION_TEMPLATE_NOT_FOUND`, no dispatch. |
+| N-INT-05 | Command `MESSAGE_RECEIVED` | Template `message-received-v1`; dedupe; channel IN_APP. |
+| N-INT-06 | Command `REVIEW_REQUESTED` | Template `review-request-v1`; payload allowlist. |
+| N-INT-07 | Event `order.cancelled` | Template `order-cancelled-v1` EMAIL + IN_APP. |
+| N-API-02b | Filter `status=EXPIRED` | Fixture `EXPIRED` trả đúng; v1 không có luồng nào set giá trị này (reserved — xem lld §5). |
 | N-SEC-01 | Raw token/PII/template log scan | No leakage. |
 
 ## 4. Unit test

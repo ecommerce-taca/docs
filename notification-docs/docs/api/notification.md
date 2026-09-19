@@ -57,7 +57,7 @@ Không có public endpoint để client tự gửi Email hoặc chọn template 
 }
 ```
 
-`reference.type` nằm trong allowlist `ORDER | SHIPMENT | PAYMENT | REVIEW | CONVERSATION | SHOP` — client dùng để deep-link. **Không** trả email/phone người nhận, không trả nội dung email thô.
+`reference.type` nằm trong allowlist `ORDER | SHIPMENT | PAYMENT | REVIEW | CONVERSATION | SHOP` — client dùng để deep-link. (`reference.type` là tập con deep-link được của `category` ở `docs/db/notification.md` §3.1 — `SECURITY`/`MARKETING` không có deep-link.) **Không** trả email/phone người nhận, không trả nội dung email thô.
 
 ### 3.2 Mark read
 
@@ -99,7 +99,7 @@ Chỉ in-app notifications của user; không thay đổi email delivery status.
 
 ### 3.4 Admin delivery
 
-`GET /admin/notifications/deliveries` query `status?` (`QUEUED`|`SENT`|`FAILED`|`SKIPPED`|`EXPIRED`), `channel?`, `template?`, `from?`, `to?`, `recipient_hash?`, `page`, `size`. Admin role/permission do Gateway/Auth User enforce.
+`GET /admin/notifications/deliveries` query `status?` (`QUEUED`|`PROCESSING`|`SENT`|`FAILED`|`SKIPPED`|`EXPIRED`), `channel?`, `template?`, `from?`, `to?`, `recipient_hash?`, `page`, `size`. Admin role/permission do Gateway/Auth User enforce.
 
 ```json
 {
@@ -135,14 +135,18 @@ Chỉ in-app notifications của user; không thay đổi email delivery status.
 
 `recipient_masked`/`recipient_hash` — không bao giờ trả email/phone đầy đủ. `error_code` chỉ dùng allowlist từ provider adapter đã redact, không trả raw provider error string.
 
+Nguồn field (đối chiếu `docs/db/notification.md` §3.1/§3.2): `queued_at` = `notifications.created_at`; `attempt_count` = số attempt ở `delivery_attempts`; `provider_status` = trạng thái provider của attempt cuối (cột `provider_status` ở db §3.2); `sent_at` = `notifications.sent_at`.
+
 ### 3.5 Internal command contract
 
 Notification nhận **hai loại input** (chi tiết ở LLD §6.2):
 
-1. **Domain event** trên topic của service chủ — `order.confirmed`, `order.paid`, `order.cancelled`, `invoice.issued`, `shipment.delivered`, `shipment.failed`, `payment.succeeded/failed`, `payout.succeeded/failed`. Notification **tự** map event → template; producer không cần biết template.
+1. **Domain event** trên topic của service chủ — `order.confirmed`, `order.paid`, `order.cancelled`, `invoice.issued`, `shipment.delivered`, `shipment.failed`, `payment.succeeded/failed/expired/refunded`, `payout.succeeded/failed`. Notification **tự** map event → template; producer không cần biết template.
 2. **Command** trên `notification.commands.v1` — chỉ gồm `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED`, `MESSAGE_RECEIVED`, `REVIEW_REQUESTED`.
 
 > **Không có command `ORDER_SUCCESS`** — email xác nhận đơn hàng đến từ domain event `order.confirmed`, map sang template `order-success-v1`. Không dùng `order.paid` cho email này: với COD `order.paid` chỉ tới sau khi giao hàng xong.
+>
+> **`PHONE_OTP_REQUESTED` (channel `SMS`): known gap v1** — Channel v1 chỉ có `EMAIL`/`IN_APP` (xem lld §1.1), SMS chưa có provider; command channel=SMS trả `409 NOTIFICATION_CHANNEL_DISABLED` cho tới khi SMS thuộc v1 (quyết định Cecilia 2026-09-18).
 
 Envelope command (producer khác — auth-user, message, rating-comment — phải phát đúng hình dạng này lên `notification.commands.v1`):
 
@@ -160,6 +164,8 @@ Envelope command (producer khác — auth-user, message, rating-comment — ph�
   "data": { "verification_url": "https://taca.vn/verify?t=…", "expires_in_minutes": 30 }
 }
 ```
+
+`data` theo command: `AUTH_VERIFICATION_REQUESTED` → `verification_url`/`expires_in_minutes`; `PASSWORD_RESET_REQUESTED` → `reset_url`/`expires_in_minutes` — producer (auth-user) tự dựng URL, **không** gửi token trong `data` (quyết định Cecilia 2026-09-18).
 
 Mọi input có `event_id`, `dedupe_key`, `schema_version` và data theo allowlist; consumer persist rồi mới dispatch. Producer **không** được gọi public API để bypass dedupe. `command_type` ngoài 5 giá trị allowlist ở trên → `400 NOTIFICATION_INVALID_INPUT`, không tự tạo template mới.
 

@@ -280,7 +280,7 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | SEC-01 | JWT `alg=none`/HS256/unknown `kid` | Từ chối 401; không fallback. |
 | SEC-02 | JWT issuer/audience/exp/nbf sai | Từ chối 401; không gọi protected business handler. |
 | SEC-03 | IDOR address/shop/KYC/role | User chỉ đọc/sửa resource thuộc scope; resource khác trả 404/403 theo contract. |
-| SEC-04 | Header spoofing `X-User-ID`, `X-Role`, `X-MFA-Step-Up` | Strip/reject client header; context lấy từ validated token/step-up. |
+| SEC-04 | Header spoofing `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` | Strip/reject client header; context lấy từ validated token. (`X-MFA-Step-Up` không phải identity header — là step-up token client gửi và được verify, xem api §2.33.) |
 | SEC-05 | Password/token/OTP/KYC/bank log scan | Không xuất hiện raw trong application log, event, error, audit. |
 | SEC-06 | Brute force | Login/OTP/MFA/resend rate limit và lockout đúng threshold. |
 | SEC-07 | Reset/refresh replay | Token one-time/rotation; reuse revoke family; reset revoke sessions. |

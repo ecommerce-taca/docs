@@ -53,6 +53,8 @@
 | 24 | `GET /admin/vouchers` | Admin | List platform voucher + usage metric. |
 | 25 | `PUT /admin/vouchers/{voucherId}` | Admin | Update platform voucher. |
 | 26 | `DELETE /admin/vouchers/{voucherId}` | Admin | Soft archive/inactivate. |
+| 27 | `GET /health/live` | Internal/ops | Liveness process-only (Gateway active healthcheck gọi — bắt buộc). |
+| 28 | `GET /health/ready` | Internal/ops | Readiness: MySQL/Redis/Kafka theo policy (khớp lld §2). |
 
 ## 3. Chi tiết endpoint
 

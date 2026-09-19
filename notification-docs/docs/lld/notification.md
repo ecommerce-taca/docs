@@ -112,7 +112,7 @@ src/
 | `RENDERED_BODY_MAX_LENGTH` | 100000 | Không log body. |
 | `KAFKA_BATCH_SIZE` | 100 | Consumer bounded. |
 | `CONSUMER_MAX_LAG_ALERT` | 60s | Alert. |
-| `TIMESTAMP_FORMAT` | UTC ISO-8601 | MySQL DATETIME. |
+| `TIMESTAMP_FORMAT` | UTC ISO-8601 | MySQL DATETIME(6). |
 
 ## 5. Enum & trạng thái
 
@@ -123,6 +123,8 @@ src/
 | `AttemptStatus` | `STARTED`, `SENT`, `SKIPPED`, `RETRYABLE_FAILED`, `RETRY_EXHAUSTED`, `PERMANENT_FAILED`. |
 | `ReadStatus` | `UNREAD`, `READ`. |
 | `PreferenceStatus` | `ENABLED`, `DISABLED`. |
+
+`EXPIRED` (trong `NotificationStatus`) là giá trị **reserved**: v1 chưa có luồng nào set (expiry hiện chỉ là retention/audit, xem §3.2) — giữ trong enum để tương thích filter `status`; fixture và test phủ giá trị này (xem `test/notification.md` N-API-02b).
 
 Retryable provider failure không mark `SENT`; duplicate completed event trả idempotent result.
 
@@ -136,7 +138,7 @@ Retryable provider failure không mark `SENT`; duplicate completed event trả i
 | Order-Commerce | `order.confirmed`, `order.paid`, `invoice.issued`, `order.cancelled` | Order/invoice/cancel Email + In-app. |
 | Shipment | `shipment.delivered`, `shipment.failed` | Review prompt/tracking update. |
 | Payment-Wallet | `payment.succeeded/failed/expired/refunded`, `payout.succeeded/failed` | Payment/wallet notification. |
-| Message | Command `MESSAGE_RECEIVED` (`notification.commands.v1`) | In-app/push new message alert. |
+| Message | Command `MESSAGE_RECEIVED` (`notification.commands.v1`) | In-app new message alert. |
 | Rating-Comment | Command `REVIEW_REQUESTED` (`notification.commands.v1`, optional) | Review request sau khi order delivered. |
 
 ### 6.2 Contract — notification command
@@ -195,6 +197,15 @@ Payload producer không gửi password/token/card; consumer phải reject field 
 - Dedupe `dedupe_key` unique theo recipient/template/event; DLQ lưu redacted payload.
 - MySQL/Kafka/SMTP down: readiness/degraded metric; không giả báo sent.
 
+### 6.4 Event phát ra
+
+| Topic | Event | Payload chính | Khi nào |
+|---|---|---|---|
+| `notification.delivered.v1` | `notification.delivered` | `notification_id`, `dedupe_key`, `channel`, `template_key`, `occurred_at` | Delivery thành công (relay từ `delivery_outbox`, xem `docs/db/notification.md` §3.5) |
+| `notification.failed.v1` | `notification.failed` | như trên + `error_code` allowlist | Sau retry policy mà vẫn fail |
+
+Consumer (auth-user) dùng `dedupe_key` để khớp kết quả async của command (xem `auth-user-docs/docs/lld/auth-user.md` §3.12).
+
 ## 7. Mã lỗi
 
 | Mã | HTTP | Ý nghĩa |
@@ -205,6 +216,7 @@ Payload producer không gửi password/token/card; consumer phải reject field 
 | `NOTIFICATION_NOT_FOUND` | 404 | Notification không tồn tại. |
 | `NOTIFICATION_TEMPLATE_NOT_FOUND` | 409 | Template/version chưa có. |
 | `NOTIFICATION_CHANNEL_DISABLED` | 409 | Channel bị tắt theo preference/policy. |
+| `NOTIFICATION_PREFERENCE_LOCKED` | 403 | Cố tắt category bắt buộc (`SECURITY`). |
 | `NOTIFICATION_PROVIDER_UNAVAILABLE` | 503 | SMTP/Kafka/MySQL unavailable. |
 | `NOTIFICATION_DELIVERY_FAILED` | 503 | Gửi thất bại sau policy. |
 | `NOTIFICATION_IDEMPOTENCY_CONFLICT` | 409 | Dedupe key khác payload. |
