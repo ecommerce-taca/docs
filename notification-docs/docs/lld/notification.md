@@ -135,7 +135,7 @@ Retryable provider failure không mark `SENT`; duplicate completed event trả i
 | Auth User | `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED` | Email/critical channel; không lưu raw secret. |
 | Order-Commerce | `order.confirmed`, `order.paid`, `invoice.issued`, `order.cancelled` | Order/invoice/cancel Email + In-app. |
 | Shipment | `shipment.delivered`, `shipment.failed` | Review prompt/tracking update. |
-| Payment-Wallet | `payment.succeeded/failed`, `payout.succeeded/failed` | Payment/wallet notification. |
+| Payment-Wallet | `payment.succeeded/failed/expired/refunded`, `payout.succeeded/failed` | Payment/wallet notification. |
 | Message | Command `MESSAGE_RECEIVED` (`notification.commands.v1`) | In-app/push new message alert. |
 | Rating-Comment | Command `REVIEW_REQUESTED` (`notification.commands.v1`, optional) | Review request sau khi order delivered. |
 
@@ -178,12 +178,16 @@ Envelope command:
 | `shipment.delivered` | `shipment-delivered-v1` | IN_APP |
 | `shipment.failed` | `shipment-failed-v1` | EMAIL + IN_APP |
 | `payment.succeeded` / `payment.failed` | `payment-result-v1` | EMAIL + IN_APP |
+| `payment.expired` | `payment-expired-v1` | EMAIL + IN_APP |
+| `payment.refunded` | `payment-refunded-v1` | EMAIL + IN_APP |
 | `payout.succeeded` / `payout.failed` | `payout-result-v1` | EMAIL + IN_APP |
 
 Payload producer không gửi password/token/card; consumer phải reject field ngoài allowlist.
 
 > Field recipient trong payload domain event: xem `order-commerce.md` §6.1 — `buyer.user_id`
 > (bắt buộc) / `buyer.email` (optional với event chỉ phát `IN_APP`, ví dụ `order.paid`).
+> Riêng event `wallet.events.v1` (`payout.succeeded`/`payout.failed`), recipient là `owner_user_id`/
+> `owner_email` (seller) theo `payment-wallet-docs/docs/lld/payment-wallet.md` §6.1.
 
 ### 6.3 Reliability
 

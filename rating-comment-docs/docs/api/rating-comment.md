@@ -42,7 +42,7 @@ Query `rating?` (1–5), `with_media?` (bool), `page`, `size` (max 100), `sort` 
 {
   "data": {
     "aggregate": {
-      "avg": 4.6,
+      "avg": 4.5,
       "count": 128,
       "distribution": { "1": 2, "2": 3, "3": 8, "4": 30, "5": 85 }
     },
@@ -96,7 +96,7 @@ Query `rating?` (1–5), `with_media?` (bool), `page`, `size` (max 100), `sort` 
     "is_verified_purchase": true,
     "version": 1,
     "created_at": "2026-08-31T04:00:00Z",
-    "aggregate": { "avg": 4.6, "count": 129, "distribution": { "1": 2, "2": 3, "3": 8, "4": 30, "5": 86 } }
+    "aggregate": { "avg": 4.5, "count": 129, "distribution": { "1": 2, "2": 3, "3": 8, "4": 30, "5": 86 } }
   },
   "meta": { "request_id": "01912fd3-7a1b-7c12-9c55-8b1c34a6d921" }
 }
@@ -128,7 +128,7 @@ Một buyer chỉ review **một lần cho mỗi `(order_id, product_id)`** (kh�
 `DELETE /reviews/{reviewId}` body `{version,reason?}`; soft delete, aggregate recompute, không xóa audit. Response `200`:
 
 ```json
-{ "data": { "review_id": "rv-01912fd2", "status": "DELETED", "aggregate": { "avg": 4.6, "count": 128, "distribution": { "1": 2, "2": 3, "3": 8, "4": 30, "5": 85 } } }, "meta": { "request_id": "01912fd5-7a1b-7c12-9c55-8b1c34a6d921" } }
+{ "data": { "review_id": "rv-01912fd2", "status": "DELETED", "aggregate": { "avg": 4.5, "count": 128, "distribution": { "1": 2, "2": 3, "3": 8, "4": 30, "5": 85 } } }, "meta": { "request_id": "01912fd5-7a1b-7c12-9c55-8b1c34a6d921" } }
 ```
 
 ### 3.4 Media

@@ -111,7 +111,7 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 
 - Create payment với method `COD` tạo `PENDING_COD`; không gọi VNPAY.
 - **`PENDING_COD` không chặn fulfillment.** Order-Commerce cho đơn COD vào `CONFIRMED` ngay tại checkout và không chờ event nào từ Payment-Wallet để giao hàng (xem `order-commerce-docs/docs/lld/order-commerce.md` §3.4). Payment-Wallet **không** phát `payment.succeeded` tại thời điểm đặt đơn COD, và Order-Commerce **không** chờ event đó.
-- Capture: khi nhận `shipment.delivered` (hoặc collection event tương đương từ carrier adapter), Payment transition `PENDING_COD → SUCCESS`, post ledger và phát `payment.succeeded`. Đây là **sau** khi order đã `DELIVERED`, nên event này chỉ phục vụ đối soát/settlement, không mở luồng giao hàng.
+- Capture: khi nhận `shipment.delivered` (hoặc collection event tương đương từ carrier adapter), Payment transition `PENDING_COD → SUCCESS`, post ledger và phát `payment.succeeded`. Đây là **sau** khi order đã `DELIVERED`, nên event này chỉ phục vụ đối soát/settlement, không mở luồng giao hàng. **Amount capture = `grand_total` của order (gồm `shipping_fee`)**: carrier thu hộ cả tiền hàng lẫn phí ship; Payment hạch toán phần phí ship vào shipment payable (xem §3.4), không credit seller phần phí.
 - `shipment.failed` hoặc order cancelled trước khi giao: `PENDING_COD → FAILED` (enum PaymentStatus **không có** `CANCELLED` — chốt dùng `FAILED`), không post ledger, không tạo allocation.
 - COD failure/cancel không tạo seller payout; exact cash collection event cần Shipment/Finance contract.
 
@@ -122,8 +122,8 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 
 ### 3.4 Wallet/allocation/payout/refund
 
-- Sau payment captured, split gross theo order items/shop, commission và tax bằng integer rounding policy.
-- Ledger posting atomic: buyer clearing/payment account, platform revenue/tax payable, seller pending wallet.
+- Sau payment captured, split gross theo order items/shop (`gross` **không gồm** phí ship — phí ship hạch toán riêng, xem dòng dưới), commission và tax bằng integer rounding policy.
+- Ledger posting atomic: buyer clearing/payment account, platform revenue/tax payable, seller pending wallet, shipment payable (phí ship — posting riêng từ buyer clearing sang shipment payable, không đi qua allocation của shop).
 - Payout chỉ dùng available seller balance, reserve amount trước khi gọi bank adapter; duplicate payout key không double debit.
 - Refund tạo refund intent; reverse allocation/ledger theo amount không vượt captured và trạng thái policy.
 
@@ -234,4 +234,4 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `PENDING_COD → SUCCESS` (capture
 | 4 | Payout bank provider và SLA chưa có HLD contract. | Cần mock adapter và retry/reconciliation job. | Finance/DevOps |
 | 5 | Refund initiation do Order/Admin gọi Payment; **return/dispute workflow ngoài v1** — sẽ do service `dispute` (v1.1) điều phối, gọi cùng contract `POST /payments/{paymentId}/refunds`. Trong v1 refund chỉ khởi tạo thủ công qua `/admin/payments` hoặc Order. | Ảnh hưởng API/permission. | Product/Finance |
 | 6 | Phạm vi Admin/back-office đã chốt (`System_Overview.md` §6.3): Fees/Taxes, Finance, Seller settlement, Settlement batches phục vụ qua `/api/v1/admin/**` **trên service này**, không tách microservice. `dispute`/`campaign` là service v1.1. | Nếu tách service admin gộp phải chuyển ownership fee/tax/settlement. | Architecture + Finance |
-| 7 | Cơ chế kích hoạt settlement batch (scheduled job theo cửa sổ hoàn tiền vs. event `order.completed`) và độ dài cửa sổ chưa chốt. Admin screen chỉ giám sát + `retry` batch `FAILED`. | Ảnh hưởng thời điểm `pending → available` và SLA payout. | Finance + Order owner |
+| 7 | Cơ chế kích hoạt settlement batch (scheduled job theo cửa sổ hoàn tiền vs. event `order.completed` — **ghi chú: `order.completed` hiện không tồn tại**, order-commerce không phát event này; nếu chọn hướng event phải mở rộng contract order trước) và độ dài cửa sổ chưa chốt. Admin screen chỉ giám sát + `retry` batch `FAILED`. | Ảnh hưởng thời điểm `pending → available` và SLA payout. | Finance + Order owner |

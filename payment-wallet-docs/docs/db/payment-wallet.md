@@ -35,7 +35,7 @@ erDiagram
 
 ### 3.2 `payment_allocations`
 
-`id`, `payment_id`, `order_id`, `shop_id`, `gross_amount`, `commission_amount`, `tax_amount`, `seller_net_amount`, `currency`, `created_at`. Invariant: gross = commission + tax + net theo rounding policy.
+`id`, `payment_id`, `order_id`, `shop_id`, `gross_amount`, `commission_amount`, `tax_amount`, `seller_net_amount`, `currency`, `created_at`. Invariant: gross = commission + tax + net theo rounding policy. `gross_amount` tính theo order items, **không gồm** phí ship — phí ship đi qua posting riêng tới shipment payable (xem `docs/lld/payment-wallet.md` §3.4).
 
 ### 3.3 `payment_events`
 
@@ -46,9 +46,9 @@ erDiagram
 | Bảng | Field/rule |
 |---|---|
 | `wallets` | `id`, `shop_id` unique, `available_balance`, `pending_balance`, `currency`, `status`, `version`, timestamps; balance non-negative. |
-| `ledger_entries` | `id`, `posting_id`, `wallet_id`, `entry_type(DEBIT/CREDIT)`, `amount`, `balance_after`, `reference_type/id`, `created_at`; immutable. |
+| `ledger_entries` | `id`, `posting_id`, `wallet_id`, `entry_type(DEBIT/CREDIT)`, `amount`, `balance_after`, `reference_type/id`, `created_at`; immutable. `description` trong API response là label derived (join `reference_type/id`), không phải cột lưu. |
 
-Mỗi posting có clearing/platform/tax/seller accounts logic; không update balance nếu chưa append ledger entries trong cùng transaction.
+Mỗi posting có clearing/platform/tax/seller/shipment-payable accounts logic; không update balance nếu chưa append ledger entries trong cùng transaction.
 
 ### 3.5 `payouts` và `refunds`
 
