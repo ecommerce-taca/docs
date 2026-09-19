@@ -607,7 +607,7 @@ Ba khác biệt so với circuit breaker tự viết, **phải biết trước k
 
 1. Passive healthcheck của Kong đếm **lỗi liên tiếp**, không đếm theo cửa sổ trượt `30s`. Traffic xen kẽ thành công/thất bại có thể không bao giờ chạm ngưỡng. Nếu cần ngữ nghĩa cửa sổ, phải dựa vào active healthcheck với `interval` ngắn.
 2. Trạng thái healthcheck là **per-node**, không chia sẻ giữa các node Kong (§3.5).
-3. Active healthcheck gọi `/health/live` của service — nghĩa là **mọi service upstream bắt buộc phải có endpoint đó** và endpoint phải nhẹ, không phụ thuộc database. Điều này đã đúng với 10/11 service hiện tại (`/health/live` process-only); `auth-user` docs chưa khai endpoint health do đang freeze — phải bổ sung khi hết freeze. Giờ là ràng buộc cứng, không còn là khuyến nghị.
+3. Active healthcheck gọi `/health/live` của service — nghĩa là **mọi service upstream bắt buộc phải có endpoint đó** và endpoint phải nhẹ, không phụ thuộc database. Điều này đã đúng với **cả 11 service** hiện tại (`/health/live` process-only — `auth-user` bổ sung 2026-09-19, DOCS-CONSISTENCY-02). Giờ là ràng buộc cứng, không còn là khuyến nghị.
 
 ### 5.3 `JwksAvailability`
 

@@ -184,7 +184,7 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `PENDING_COD → SUCCESS` (capture
 | Order-Commerce | `order.created`, `order.cancelled` | Create payment intent/release pending payment/refund policy. |
 | Shipment | `shipment.delivered`, `shipment.failed` | COD collection confirmation hoặc hold. |
 | Auth User | `shop.kyc.approved`, `shop.kyc.expired` | Local payout/withdraw gate projection (KYC phải `APPROVED` mới cho payout). |
-| Auth User | `shop.status_changed` | Shop `SUSPENDED`/`DELETED` → khoá payout/withdraw (enum `ShopStatus` theo `auth-user-docs/docs/db/auth-user.md` §5; doc auth-user lld §6.2 hiện ghi `CLOSED` là lỗi, đang freeze chưa sửa). Không có event `shop.kyc.suspended`; đình chỉ shop đến qua `shop.status_changed`. |
+| Auth User | `shop.status_changed` | Shop `SUSPENDED`/`DELETED` → khoá payout/withdraw (enum `ShopStatus` theo `auth-user-docs/docs/db/auth-user.md` §5). Không có event `shop.kyc.suspended`; đình chỉ shop đến qua `shop.status_changed`. |
 
 ### 6.3 Mock contract — VNPAY webhook
 

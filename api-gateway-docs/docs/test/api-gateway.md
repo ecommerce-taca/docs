@@ -213,7 +213,7 @@ Chạy trong CI, fail pipeline nếu vi phạm — đây là nơi thay thế ph�
 | Mã | Kiểm tra | Kết quả bắt buộc |
 |---|---|---|
 | SEC-GW-01 | Bypass Gateway bằng public/internal URL từ client network | Internal service không reachable hoặc bị network policy chặn. |
-| SEC-GW-02 | Spoof `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` | Header client bị strip; không privilege escalation. (`X-MFA-Step-Up` không phải identity header — client gửi làm step-up token, được verify rồi forward, khớp api §3.4 CORS allowlist.) |
+| SEC-GW-02 | Spoof `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope`, `X-Auth-Method` | Header client bị strip; không privilege escalation. (`X-MFA-Step-Up` không phải identity header — client gửi làm step-up token, được verify rồi forward, khớp api §3.4 CORS allowlist.) |
 | SEC-GW-03 | JWT algorithm confusion | Chỉ RS256 được chấp nhận. |
 | SEC-GW-04 | Token replay sau expire | Protected request 401; không cache auth decision quá TTL. |
 | SEC-GW-05 | CORS wildcard/credential | Không cho `*` với credentials; origin allowlist exact. |
