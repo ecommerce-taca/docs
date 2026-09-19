@@ -110,7 +110,7 @@ Response `200`:
     "slug": "ao-khoac-cotton",
     "price": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
     "cover_media": { "media_id": "media-01912f32", "url": "https://cdn.example/signed", "content_type": "image/webp" },
-    "rating_summary": { "avg": 4.6, "count": 128 },
+    "rating_summary": { "avg": 4.5, "count": 128 },
     "stock_display": { "status": "IN_STOCK", "as_of": "2026-08-30T08:59:59Z" }
   }],
   "meta": { "page": 1, "size": 20, "total": 1, "total_pages": 1, "request_id": "req-01912f50" }
@@ -136,7 +136,7 @@ Response `200` trả `ProductDetail` gồm `product_id`, shop snapshot, title/de
     "primary_category_id": "category-01912f20",
     "tax_rate_bps": 1000,
     "price": { "base_price": 299000, "sale_price": 249000, "currency": "VND" },
-    "rating_summary": { "avg": 4.6, "count": 128 },
+    "rating_summary": { "avg": 4.5, "count": 128 },
     "attributes": [{ "key": "material", "label": "Chất liệu", "type": "ENUM", "values": ["cotton"] }],
     "skus": [{
       "sku_id": "sku-01912f33",

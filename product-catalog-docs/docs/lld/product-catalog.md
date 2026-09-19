@@ -32,7 +32,7 @@ API Gateway
 Product Catalog
   ├─ MongoDB: product, SKU, category, media, price, shop snapshot
   ├─ S3/MinIO: product media bytes qua signed URL
-  ├─ Kafka outbox (relay bởi CDC — Debezium MongoDB Outbox Event Router) → Order, Inventory, Search và các consumer khác (domain event, topic/payload không đổi)
+  ├─ Kafka outbox (relay bởi CDC — Debezium MongoDB Outbox Event Router) → Inventory, Search và các consumer khác (domain event, topic/payload không đổi; Order-Commerce **không** consume product event — quan hệ order↔product là REST re-read, xem `order-commerce-docs/docs/lld/order-commerce.md` §6.4)
   ├─ Kafka consumer ← Inventory stock snapshot
   ├─ Kafka consumer ← Auth User shop/KYC status event
   └─ Kafka consumer ← Rating-Comment rating aggregate event
@@ -104,7 +104,7 @@ Chi tiết field type, validator, index và migration nằm ở `docs/db/product
 | `product_media` | `media_id`, `product_id`, `sku_id?`, `scope`, `object_key`, `content_type`, `size_bytes`, `sha256`, `sort_order`, `is_cover`, `status` | Product/scope/status, unique `object_key`; `(product_id, sha256)` chỉ là index phát hiện trùng, không unique |
 | `shop_snapshots` | `shop_id`, `name`, `slug`, `logo_url`, `kyc_status`, `shop_status`, `source_version`, `updated_at` | Unique shop ID, status |
 | `inventory_projections` | `sku_id`, `product_id`, `available_qty_snapshot`, `stock_status`, `as_of`, `source_event_id` | Unique SKU, product/status, `as_of` |
-| `outbox_events` | `event_id`, `aggregate_type`, `aggregate_id`, `event_type`, `schema_version`, `payload` | Aggregate, event type. Dưới CDC không có field trạng thái publish (`published_at`/`attempt_count`) — connector đọc change stream, không cần app đánh dấu đã publish; chi tiết xem `docs/db/product-catalog.md` §3.9. |
+| `outbox_events` | `event_id`, `aggregate_type`, `aggregate_id`, `event_type`, `schema_version`, `payload`, `topic`, `version`, `actor_user_id`, `traceparent` | Aggregate, event type. 4 field cuối là vận chuyển cho connector (routing/envelope, `DOCS-CDC-02` — xem §6.6). Dưới CDC không có field trạng thái publish (`published_at`/`attempt_count`) — connector đọc change stream, không cần app đánh dấu đã publish; chi tiết xem `docs/db/product-catalog.md` §3.9. |
 | `catalog_audits` | `actor_user_id`, `shop_id?`, `action`, `target_type`, `target_id`, `reason`, `metadata`, `occurred_at` | Target/time, actor/time, action |
 
 ### 2.3 Aggregate và ownership
@@ -618,10 +618,11 @@ Ràng buộc:
 
 Ba nhóm cấu hình bắt buộc để connector dựng đúng Kafka record theo §6.1/§6.2 từ document `outbox_events`:
 
-1. **Field-name mapping** — schema dùng snake_case, khác field mặc định của SMT (`id`/`aggregatetype`/`aggregateid`/`type`/`payload`, không dấu gạch dưới):
+1. **Field-name mapping** — schema dùng snake_case, khác field mặc định của SMT:
    `collection.field.event.id=event_id` · `collection.field.event.key=aggregate_id` · `collection.field.event.type=event_type` · `collection.field.event.payload=payload`.
+   Default của SMT (Debezium 3.6.x): `collection.field.event.id=_id` (có gạch dưới), `collection.field.event.key=aggregateid`, `collection.field.event.type=type`, `collection.field.event.payload=payload`. Lưu ý: `collection.field.event.type` **chỉ đổi tên field SMT đọc** — giá trị event type **không** được đưa vào record phát ra qua option này; muốn `event_type` xuất hiện trong envelope phải khai `additional.placement` (nhóm 3).
 2. **Routing** — `route.by.field=topic`, `route.topic.replacement=${routedByValue}`: connector đọc field `topic` của mỗi document, dùng **nguyên giá trị** làm tên Kafka topic đích. App đã ghi đúng 1-trong-4 topic khi insert (không route theo `aggregate_type`, vì `product.events.v1` và `catalog.events.v1` cùng thuộc `aggregate_type=PRODUCT` — không thể tách bằng 1 field suy luận).
-3. **Envelope/header bổ sung** — `collection.fields.additional.placement=version:envelope:version,actor_user_id:envelope:actor_user_id,traceparent:header:traceparent`: `version`/`actor_user_id` đưa vào **body** (khớp envelope §6.1); `traceparent` đưa vào Kafka **header**, không vào body — giữ đúng quy ước đã chốt ở `search-docs/docs/lld/search.md:190` ("traceparent nằm ở Kafka header, không nằm trong payload").
+3. **Envelope/header bổ sung** — `collection.fields.additional.placement=version:envelope:version,actor_user_id:envelope:actor_user_id,event_type:envelope:event_type,schema_version:envelope:schema_version,occurred_at:envelope:occurred_at,aggregate_type:envelope:aggregate_type,traceparent:header:traceparent`: `version`/`actor_user_id`/`event_type`/`schema_version`/`occurred_at`/`aggregate_type` đưa vào **body** (khớp đủ envelope §6.1 — `aggregate_id` nằm ở Kafka message key, `event_id` nằm ở Kafka header `id` do SMT tự đặt từ `collection.field.event.id`); `traceparent` đưa vào Kafka **header**, không vào body — giữ đúng quy ước đã chốt ở `search-docs/docs/lld/search.md:190` ("traceparent nằm ở Kafka header, không nằm trong payload").
 
 Contract §6.1–6.5 (topic name, event type, payload nghiệp vụ) **không đổi** — 3 nhóm cấu hình trên chỉ ánh xạ field vận chuyển đã có sẵn trong `outbox_events`, không thêm/bớt gì ở payload nghiệp vụ.
 
