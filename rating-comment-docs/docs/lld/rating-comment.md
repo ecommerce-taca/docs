@@ -134,7 +134,7 @@ V1 create eligible → published; delete → deleted; review không chuyển qua
 | Topic | Event | Payload chính |
 |---|---|---|
 | `rating.events.v1` | `review.created/updated/deleted` | review/product/shop/order/buyer-safe summary |
-| `rating.events.v1` | `rating.aggregate.updated` | product, avg, count, distribution |
+| `rating.events.v1` | `rating.aggregate.updated` | `product_id`, `avg`, `count`, `distribution` |
 | `rating.events.v1` | `review.reply_updated` | review/product/shop/reply status |
 | `notification.commands.v1` | `REVIEW_REQUESTED` (optional) | user/order/product template data |
 
@@ -154,7 +154,7 @@ V1 create eligible → published; delete → deleted; review không chuyển qua
   "event_type":"order.delivered",
   "aggregate_id":"order-1",
   "occurred_at":"2026-08-30T12:00:00Z",
-  "payload":{"order_id":"order-1","buyer_user_id":"user-1","items":[{"product_id":"product-1","sku_id":"sku-1"}]}
+  "payload":{"order_id":"order-01912f91","buyer":{"user_id":"user-01912f10","email":"buyer@example.com"},"items":[{"product_id":"product-01912f31","sku_id":"sku-01912f33"}]}
 }
 ```
 
@@ -186,4 +186,4 @@ V1 create eligible → published; delete → deleted; review không chuyển qua
 | 3 | Review edit window 30 ngày và delete policy chưa có HLD cụ thể. | Ảnh hưởng UX/audit/aggregate. | Product owner |
 | 4 | Order delivered event là mock; fallback synchronous verify contract chưa chốt. | Ảnh hưởng eventual eligibility. | Order owner |
 | 5 | Media scan provider chưa chốt; `SCANNING` có thể async. | Ảnh hưởng publish/public media. | Security/DevOps |
-| 6 | `rating.aggregate.updated` (topic `rating.events.v1`, payload `product_id/avg/count/distribution`) được **Product Catalog** (cache `ratingAvg`) và **Search** (`rating_avg` cho sort `rating_desc`) consume. Cần chốt tên topic + schema registry với hai service này. | Nếu lệch topic/schema, rating hiển thị/sort ở PDP và Search bị cũ. | Rating + Search + Product owner |
+| 6 | `rating.aggregate.updated` (topic `rating.events.v1`, payload `product_id/avg/count/distribution`) được **Product Catalog** (cache `rating_summary`) và **Search** (`rating_avg` cho sort `rating_desc`) consume. Đã chốt (2026-09-18): topic + payload khớp `product-catalog` §6.3 và `search` lld giả định #4 — không còn là câu hỏi mở. | Nếu lệch topic/schema, rating hiển thị/sort ở PDP và Search bị cũ. | Rating + Search + Product owner |

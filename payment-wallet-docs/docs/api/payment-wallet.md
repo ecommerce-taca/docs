@@ -58,7 +58,7 @@ Header `Idempotency-Key` bắt buộc. Chỉ gọi từ Order-Commerce (internal
 | `order_id` | string | Có | — |
 | `checkout_group_id` | string | Có | Nhóm order multi-shop của cùng lần checkout |
 | `buyer_user_id` | string | Có | — |
-| `amount` | integer | Có | VND, > 0, **phải khớp** tổng của Order |
+| `amount` | integer | Có | VND, > 0, **phải khớp** `grand_total` của Order (gồm `shipping_fee` — xem `order-commerce` api §3.6) |
 | `currency` | string | Có | Cố định `"VND"` |
 | `method` | enum | Có | `VNPAY` \| `COD` |
 | `expires_at` | string | Có | ISO-8601 UTC |
@@ -181,7 +181,7 @@ Tổng refund **không vượt** số đã capture → `409 REFUND_AMOUNT_INVALI
       "entry_id": "entry-01912fb7",
       "posting_id": "posting-01912fb8",
       "entry_type": "CREDIT",
-      "amount": 1094000,
+      "amount": 1062000,
       "balance_after": 12500000,
       "reference": { "type": "ORDER", "id": "order-01912f91" },
       "description": "Doanh thu đơn TC-20260830-0001",
@@ -309,8 +309,8 @@ Phục vụ các màn Penpot Admin *Fees/Taxes*, *Finance*, *Seller settlement*,
 
 ```json
 { "data": [
-  { "version_id": "01J...", "scope": "PLATFORM", "category_id": null, "rate_bps": 700, "effective_from": "2026-09-01T00:00:00Z", "note": "Q4 baseline", "created_by": "usr_...", "created_at": "2026-08-30T10:00:00Z" }
-], "meta": { "request_id": "01J..." } }
+  { "version_id": "fee-version-01912fb0", "scope": "PLATFORM", "category_id": null, "rate_bps": 700, "effective_from": "2026-09-01T00:00:00Z", "note": "Q4 baseline", "created_by": "admin-01912f01", "created_at": "2026-08-30T10:00:00Z" }
+], "meta": { "request_id": "req-01912fb9" } }
 ```
 
 **Settlement — `GET /admin/settlements`, `GET /admin/settlements/{batchId}`, `POST /admin/settlements/{batchId}/retry`**

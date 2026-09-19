@@ -38,7 +38,7 @@
 | P-API-08 | Duplicate provider event | Idempotent ACK; no duplicate ledger/allocation. |
 | P-API-09 | Refund partial/full/over amount | Correct state; over amount `REFUND_AMOUNT_INVALID`. |
 | P-API-10 | Seller wallet/ledger scope | Own shop only; masked fields/pagination. |
-| P-API-10b | `GET /seller/revenue?from=&to=&granularity=` | Summary `gross=commission+tax+net−refunded` reconcile với ledger; chỉ shop của actor; range >366 ngày → `400`; không tạo ledger mới. |
+| P-API-10b | `GET /seller/revenue?from=&to=&granularity=` | Summary `gross = commission + tax + net` khớp `payment_allocations` (refund kiểm ở ledger reversal, không phải hạng tử trong công thức gross); reconcile với ledger; chỉ shop của actor; range >366 ngày → `400`; không tạo ledger mới. |
 | P-API-11 | Payout KYC not approved/frozen/low balance | `403/409`; no debit/provider call. |
 | P-API-12 | Payout retry same idempotency | One payout/debit; same result. |
 | P-API-13 | Reconciliation/admin permission | `FINANCE_OPS` sees mismatch summary; non-admin/không đủ permission denied. |
