@@ -88,7 +88,7 @@ src/
 | `ShopProjectionService` | Consume shop created/updated/status event và cập nhật local snapshot. | Không gọi Auth User trên mỗi product read. |
 | `InventoryProjectionService` | Consume stock snapshot event và cập nhật read-only display projection. | Projection không phải inventory ledger và không được dùng để confirm checkout. |
 | `CatalogQueryService` | Query public/seller/admin, pagination, filter status/category/shop. | Search full-text nâng cao thuộc Search Service; Product chỉ hỗ trợ query catalog cơ bản. |
-| `OutboxPublisher` | Publish product/category/SKU event sau commit. | Retry 3 lần, backoff 2 giây, sau đó dead-letter; consumer dedupe theo `event_id`. |
+| `OutboxPublisher` | Ghi outbox record vào cùng MongoDB transaction sau commit (write-only — **không tự publish lên Kafka**). | Publish thật do CDC (Debezium Outbox Event Router) đảm nhiệm: connector đọc collection này và đẩy lên Kafka; retry/backoff/dead-letter (`product-catalog.events.dlq.v1`) thuộc tầng connector, không phải application. Consumer dedupe theo `event_id`. |
 
 ### 2.2 MongoDB collections ở mức LLD
 
@@ -609,7 +609,7 @@ Ràng buộc:
 
 - Domain mutation và outbox event ghi trong cùng MongoDB transaction.
 - Kafka key theo `product_id`, `sku_id` hoặc `category_id` để giữ thứ tự trong aggregate.
-- Publisher retry tối đa 3 lần, backoff 2 giây; sau đó đưa `product-catalog.events.dlq.v1`.
+- Publish do CDC connector (Debezium Outbox Event Router) đảm nhiệm, không phải application; connector retry/backoff và dead-letter vào `product-catalog.events.dlq.v1` theo config Kafka Connect — số lần retry/backoff cụ thể của connector chưa chốt (xem giả định #22).
 - Consumer ghi `processed_event_id` hoặc dùng unique event ID để dedupe; không xử lý lại event hoàn tất.
 - Inventory projection cho phép replay/resync từ Inventory snapshot; Product không dùng event replay để suy ra deduction.
 - Search có thể lag sau publish; Product response `ACTIVE` là source of truth catalog, Search eventually indexes thông qua outbox event do CDC (Debezium Outbox Event Router) publish.
@@ -673,3 +673,5 @@ Ràng buộc:
 | 19 | Payload `product.published` đã chốt với Search (2026-09-18): gồm `category_path`, `visibility_status`, map giá `price.sale` → scalar long; `product.created`/`sku.*` vẫn là giả định, chưa có xác nhận chính thức từ Search/Inventory. | Nếu payload thật hẹp hơn, Search phải tự query bổ sung hoặc Product phải điều chỉnh event schema. | Product + Search + Inventory owner |
 | 20 | Payload event KYC/shop thật (không có `kyc_status`/`source_version`/`logo_url`) lấy từ `auth-user-docs/docs/lld/auth-user.md` §6.2 tại thời điểm viết; nếu Auth User đổi contract phải cập nhật lại theo. | Nếu Auth User đổi payload, `ShopProjectionService` suy sai `kyc_status`. | Auth-user owner |
 | 21 | `rating_summary` cache (avg/count) trên Product lấy từ event `rating.aggregate.updated` do `rating-comment` sở hữu; Product không lưu `distribution`. | Nếu PDP cần hiển thị distribution, phải mở rộng cache field. | Product + Rating owner |
+| 22 | Sau khi đổi sang CDC (DOCS-CONSISTENCY-01): số lần retry/backoff cụ thể của Debezium connector khi publish outbox lên Kafka **chưa chốt** — trước đây ghi "retry 3 lần, backoff 2 giây" là hành vi application, nay retry thuộc connector và chưa có con số chính thức. | Nếu incident xảy ra, không rõ SLA phục hồi; cần chốt config Kafka Connect trước khi vận hành production. | Platform/Search owner |
+| 23 | Mã lỗi `CATALOG_EVENT_PUBLISH_FAILED` (503, "Outbox publisher chưa phát được event") được định nghĩa từ thời app tự publish — với CDC, publish tách rời khỏi request/response nên client không còn cách nào đồng bộ biết "outbox publish that thất bại" tại thời điểm gọi API. Mã lỗi này cũng được `product-catalog-docs/docs/api/product-catalog.md` và `api-gateway-docs/docs/api/api-gateway.md` tham chiếu (contract liên service) — **không tự đổi/xoá trong batch này**, cần Cecilia xác nhận: (a) giữ nguyên mã lỗi nhưng đổi nghĩa thành "outbox transaction commit thất bại" (lỗi ghi, không phải lỗi publish), hay (b) bỏ hẳn khỏi error catalog và coi publish failure là vấn đề vận hành/observability, không phải lỗi API. | Sai lệch giữa 3 doc nếu không xử lý đồng bộ; gateway allowlist có thể pass-through một mã lỗi không còn ý nghĩa đúng. | Cecilia + Product + Gateway owner |
