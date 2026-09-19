@@ -79,7 +79,7 @@ com.taca.inventory
 
 ### 3.1 Đăng ký SKU
 
-1. Consume `sku.created`/`sku.status_changed` từ Product.
+1. Consume `sku.created`/`sku.updated`/`sku.status_changed` từ Product (tên event theo `product-catalog-docs/docs/lld/product-catalog.md` §6.2).
 2. Tạo `inventory_items` cho SKU mới với quantity 0 nếu chưa có.
 3. Disable/Archive SKU không hard-delete balance/ledger; không cho reserve SKU disabled.
 4. Event duplicate/out-of-order bỏ qua theo source version.
@@ -101,7 +101,7 @@ BEGIN
   if affected_rows == 0 → rollback/retry, CONCURRENCY_CONFLICT
   insert/update reservation RESERVED
   insert movement RESERVE (delta available=-q, reserved=+q)
-  insert outbox reservation.created + stock_snapshot.updated
+  insert outbox `inventory.reservation.created` + `inventory.stock_snapshot.updated`
 COMMIT
 ```
 
@@ -213,7 +213,7 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 | `INVENTORY_RESERVATION_EXPIRED` | 409 | Reservation đã hết TTL. |
 | `INVENTORY_IDEMPOTENCY_CONFLICT` | 409 | Cùng key nhưng payload khác. |
 | `INVENTORY_CONCURRENCY_CONFLICT` | 409 | Version/lock conflict sau retry policy. |
-| `INVENTORY_ADJUSTMENT_INVALID` | 400 | Delta/reason/permission sai. |
+| `INVENTORY_ADJUSTMENT_INVALID` | 400/409 | Delta/reason sai (400) hoặc state không cho phép (409). |
 | `INVENTORY_DEPENDENCY_UNAVAILABLE` | 503 | Kafka/config dependency không sẵn sàng. |
 | `INVENTORY_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
 
@@ -225,6 +225,6 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 | 2 | Backend Spring Boot/Java 25 + MySQL 8.4 theo HLD baseline. | Ảnh hưởng lock/migration/deployment. | Tech lead |
 | 3 | Reservation TTL 15 phút align Order; exact timeout/payment flow chưa có HLD contract. | Ảnh hưởng abandoned checkout và stock availability. | Order/Payment owner |
 | 4 | Seller adjustment dùng signed delta; chưa có cycle count/import UX chi tiết trong Penpot. | Có thể cần bulk import, approval hoặc absolute target flow. | Seller/Product owner |
-| 5 | Commit triggered by Payment success/order command; event ordering giữa Payment/Order cần saga contract. | Ảnh hưởng duplicate commit/release và reconciliation job. | Payment/Order owner |
+| 5 | Commit/release do **Order-Commerce gọi trực tiếp qua API command** (đã chốt 2026-09-18, NC28) — Payment-Wallet không mutate stock và không có saga Payment/Order cho commit; event `inventory.reservation.*` chỉ dùng để reconcile khi mất response. | Ảnh hưởng duplicate commit/release và reconciliation job. | Order owner |
 | 6 | `inventory.stock_snapshot.updated` là mock contract đã bổ sung để Product hiển thị. | Cần chốt topic/schema registry/source version ở platform. | Platform owner |
 | 7 | MySQL optimistic lock + idempotency đủ baseline exactness; multi-region active-active chưa thuộc v1. | Nếu cần multi-region, phải có single-writer/partition strategy. | Architecture |

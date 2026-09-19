@@ -378,7 +378,7 @@ Contract rules:
 
 Object storage chưa có contract trong HLD; dùng adapter nội bộ để có thể thay S3/MinIO mà không đổi domain logic.
 
-> **Phạm vi: chỉ nội bộ `auth-user`, chỉ cho KYC document.** Đây **không** phải endpoint dùng chung cho các service khác và **không** được đăng ký trong bảng contract nội bộ (`System_Overview.md` §9) — nó không xuất hiện trong `docs/api/auth-user.md` vì không phơi ra ngoài service. Product Catalog, Message và Rating-Comment mỗi service tự sở hữu cặp `upload-url`/`complete` của riêng mình (xem `System_Overview.md` §9.1); không service nào gọi vào đây.
+> **Phạm vi: chỉ nội bộ `auth-user`, chỉ cho KYC document.** Đây **không** phải endpoint dùng chung cho các service khác và **không** được đăng ký trong bảng contract nội bộ (quy ước đã chốt 2026-09-18) — nó không xuất hiện trong `docs/api/auth-user.md` vì không phơi ra ngoài service. Product Catalog, Message và Rating-Comment mỗi service tự sở hữu cặp `upload-url`/`complete` của riêng mình (quy ước đã chốt 2026-09-18); không service nào gọi vào đây.
 
 `POST /internal/v1/storage/presign`
 
@@ -569,7 +569,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | Finance admin scope | Role `FINANCE_OPS` (đã có ở §5.3 bảng Admin role) là scope cho payment-wallet `/admin/**`: fee/tax config, settlement, finance summary, reconciliation |
 | Step-up marker | `MFA_REQUIRED`, `MFA_VERIFIED` |
 
-> Phạm vi Admin đã chốt (`System_Overview.md` §6.3): **không có microservice admin riêng trong v1**; mỗi màn admin do service sở hữu dữ liệu phục vụ qua `/api/v1/admin/**`. Permission cross-service (`SEARCH_ADMIN`, `VOUCHER_MANAGE`, `FINANCE_OPS`, …) do `auth-user` cấp qua RBAC nhưng **được enforce tại service sở hữu tài nguyên** (Gateway chỉ coarse-gate theo role admin). Product Catalog moderation gate bằng role `CATALOG_ADMIN`/`SUPER_ADMIN`. `auth-user` tự phục vụ Shops/KYC + Users/Roles qua `AdminAccessController`. `dispute`/`campaign` là service v1.1 — khi có sẽ bổ sung role/permission tương ứng.
+> Phạm vi Admin đã chốt (2026-09-18): **không có microservice admin riêng trong v1**; mỗi màn admin do service sở hữu dữ liệu phục vụ qua `/api/v1/admin/**`. Permission cross-service (`SEARCH_ADMIN`, `VOUCHER_MANAGE`, `FINANCE_OPS`, …) do `auth-user` cấp qua RBAC nhưng **được enforce tại service sở hữu tài nguyên** (Gateway chỉ coarse-gate theo role admin). Product Catalog moderation gate bằng role `CATALOG_ADMIN`/`SUPER_ADMIN`. `auth-user` tự phục vụ Shops/KYC + Users/Roles qua `AdminAccessController`. `dispute`/`campaign` là service v1.1 — khi có sẽ bổ sung role/permission tương ứng.
 
 ### 5.4 Token và verification state
 
@@ -720,6 +720,6 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | 7 | Phone login/OTP dùng Notification Service channel `SMS`; provider thật chưa được chọn, hiện chỉ có mock contract. | Ảnh hưởng chi phí, deliverability và retry policy. | Tech lead |
 | 8 | Admin 2FA dùng TOTP, step-up TTL 5 phút; recovery-code policy chưa mô tả trong HLD. | Ảnh hưởng account recovery và support operation. | Security owner |
 | 9 | Product moderation không thuộc `auth-user`; KYC event là gate duy nhất từ user/shop side. | Nếu cần duyệt từng sản phẩm, Product Service phải có workflow riêng. | Product owner |
-| 12 | Phạm vi Admin đã chốt (`System_Overview.md` §6.3): v1 **không** tách microservice admin. `auth-user` phục vụ các màn Shops/KYC, Users/Roles, Administrator roles, Admin role editor qua `AdminAccessController` (`/api/v1/admin/users/**`, `/api/v1/admin/shops/**`), gác `RISK_MANAGER`/`SUPER_ADMIN` + 2FA. `dispute`/`campaign` là service v1.1. | Nếu sau này gộp admin thành service riêng phải chuyển ownership KYC/role. | Architecture owner |
+| 12 | Phạm vi Admin đã chốt (2026-09-18): v1 **không** tách microservice admin. `auth-user` phục vụ các màn Shops/KYC, Users/Roles, Administrator roles, Admin role editor qua `AdminAccessController` (`/api/v1/admin/users/**`, `/api/v1/admin/shops/**`), gác `RISK_MANAGER`/`SUPER_ADMIN` + 2FA. `dispute`/`campaign` là service v1.1. | Nếu sau này gộp admin thành service riêng phải chuyển ownership KYC/role. | Architecture owner |
 | 10 | Favorites (wishlist) và Follow shop có trong Frontend Design nhưng **không có trong HLD**; đặt tại `auth-user` (bảng `favorites`, `shop_follows`) vì là dữ liệu cá nhân của user, tương tự `addresses`. Chỉ lưu reference ID, không đồng bộ vòng đời product/shop. | Nếu khối lượng lớn hoặc cần feed/notification follower, có thể tách service `engagement` riêng sau này. | Product owner |
 | 11 | `GET /api/v1/shops/{shopId}` (public shop profile, HLD mục 10) đặt tại `auth-user` — chỉ trả identity + verified badge + `follower_count`. `rating_avg`/`product_count` do Product Catalog phục vụ; Frontend Shop hero ghép hai nguồn. | Nếu muốn một endpoint hợp nhất, cần chọn service tổng hợp hoặc BFF. | Product owner + Architecture |

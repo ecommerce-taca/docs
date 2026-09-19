@@ -590,7 +590,7 @@ Mỗi migration phải có `up` và `down` cho local/test. Production rollback d
 | KYC permissions | `KYC_READ`, `KYC_DECIDE`, `KYC_REQUEST_INFO`. |
 | User permissions | `USER_READ`, `USER_SUSPEND`, `ROLE_READ`, `ROLE_ASSIGN`. |
 | Seller permissions | `SHOP_READ`, `SHOP_UPDATE`, `SELLER_STAFF_MANAGE`. |
-| Cross-service admin scope | Permission `SEARCH_ADMIN` (search), `VOUCHER_MANAGE` (order-commerce) và role `FINANCE_OPS` (payment-wallet) cấp qua RBAC, enforce tại service sở hữu tài nguyên. Product moderation gate bằng role `CATALOG_ADMIN`. v1 không tách microservice admin (`System_Overview.md` §6.3). |
+| Cross-service admin scope | Permission `SEARCH_ADMIN` (search), `VOUCHER_MANAGE` (order-commerce) và role `FINANCE_OPS` (payment-wallet) cấp qua RBAC, enforce tại service sở hữu tài nguyên. Product moderation gate bằng role `CATALOG_ADMIN`. v1 không tách microservice admin (quyết định admin-scope đã chốt 2026-09-18). |
 | Seed admin account | Không seed password cố định; bootstrap job tạo invite/reset flow và bắt buộc bật 2FA. |
 | Feature/config | Không seed secret, private key, S3 credential, Kafka credential hoặc provider API key. |
 
