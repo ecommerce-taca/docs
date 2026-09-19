@@ -9,7 +9,7 @@
 |---|---|---|
 | Storage | Elasticsearch index + alias | Không tạo relational FK/cross-service join. |
 | Document ID | `product_id` string | Không dùng document ID ngẫu nhiên cho product index. |
-| Source | Product Kafka outbox domain event (không phải CDC/Debezium) | Search document là projection, có `source_version`, `source_event_id`. |
+| Source | Domain event trên `product.events.v1`/... publish bởi CDC (Debezium MongoDB Outbox Event Router đọc outbox collection của Product Catalog) | Search document là projection, có `source_version`, `source_event_id`. |
 | Time | ISO-8601 UTC trong document | Không lưu local time. |
 | Price | `long` integer VND | Không float/decimal trong query range. |
 | Visibility | `PUBLISHED`/`HIDDEN`/`DELETED` | Product `ACTIVE` map thành `PUBLISHED`. |
@@ -124,7 +124,7 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 
 ### 6.2 Seed tối thiểu cho local/test
 
-**Bắt buộc seed bằng event fixture** (giả lập `product.created`/`sku.created`/`category.created` qua consumer), **không** viết trực tiếp vào index bằng tay — để test luôn đi qua đúng pipeline Kafka outbox domain event như production.
+**Bắt buộc seed bằng event fixture** (giả lập `product.created`/`sku.created`/`category.created` qua consumer), **không** viết trực tiếp vào index bằng tay — để test luôn đi qua đúng pipeline domain event (publish bởi CDC) như production.
 
 | Seed (qua event) | Giá trị |
 |---|---|
