@@ -213,7 +213,7 @@ Chạy trong CI, fail pipeline nếu vi phạm — đây là nơi thay thế ph�
 | Mã | Kiểm tra | Kết quả bắt buộc |
 |---|---|---|
 | SEC-GW-01 | Bypass Gateway bằng public/internal URL từ client network | Internal service không reachable hoặc bị network policy chặn. |
-| SEC-GW-02 | Spoof `X-User-ID`, `X-User-Roles`, `X-MFA-Step-Up` | Header client bị strip; không privilege escalation. |
+| SEC-GW-02 | Spoof `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` | Header client bị strip; không privilege escalation. (`X-MFA-Step-Up` không phải identity header — client gửi làm step-up token, được verify rồi forward, khớp api §3.4 CORS allowlist.) |
 | SEC-GW-03 | JWT algorithm confusion | Chỉ RS256 được chấp nhận. |
 | SEC-GW-04 | Token replay sau expire | Protected request 401; không cache auth decision quá TTL. |
 | SEC-GW-05 | CORS wildcard/credential | Không cho `*` với credentials; origin allowlist exact. |
@@ -224,7 +224,7 @@ Chạy trong CI, fail pipeline nếu vi phạm — đây là nơi thay thế ph�
 | SEC-GW-10 | Metrics exposure | Public client không đọc `/metrics`, labels không có PII. |
 | SEC-GW-11 | WS handshake không auth | `/ws/messages` không token/token sai → 401, không mở tunnel; không có đường bypass qua `/ws/**` path khác. |
 | SEC-GW-12 | WS token trong query log | `?access_token=` và subprotocol bearer bị redact trong access log/metric/trace. |
-| SEC-GW-13 | WS sau revoke | User bị suspend/revoke → socket đang mở bị đóng theo Redis `revoked_user_id`; handshake mới bị từ chối. |
+| SEC-GW-13 | WS sau revoke | User bị suspend/revoke → socket đang mở bị đóng theo Redis `revoked_user:{user_id}`; handshake mới bị từ chối. |
 | SEC-GW-14 | Kong Admin API expose | `:8001` không reachable từ mạng client ở mọi môi trường; không có Route nào proxy tới nó. |
 | SEC-GW-15 | Rò rỉ thông tin runtime của Kong | Response lỗi không chứa `{"message":...}` mặc định của Kong, tên Service/Upstream nội bộ, hay thông báo ring-balancer. |
 

@@ -198,7 +198,7 @@ Ràng buộc:
 | `issued_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | UTC. |
 | `expires_at` | `DATETIME(6)` | N | — | `> issued_at` | TTL 30 ngày. |
 | `revoked_at` | `DATETIME(6)` | Y | `NULL` | — | Revoke/rotation. |
-| `revoke_reason` | `VARCHAR(32)` | Y | `NULL` | Enum-like | `ROTATED/SIGNOUT/RESET/REUSE/SUSPEND`. |
+| `revoke_reason` | `VARCHAR(32)` | Y | `NULL` | Enum-like | `ROTATED/SIGNOUT/RESET/REUSE/SUSPEND/EXPIRED` (enum `TokenRevokeReason`, §5.1). |
 | `replaced_by_token_id` | `BINARY(16)` | Y | `NULL` | Internal reference | Token kế tiếp cùng family. Không FK bắt buộc để tránh cycle. |
 | `last_seen_at` | `DATETIME(6)` | Y | `NULL` | — | Security telemetry. |
 | `created_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | UTC. |
@@ -522,6 +522,7 @@ Không tạo index trên raw JSON `warehouse_snapshot`, `metadata` hoặc encryp
 | `ShopStatus` | `DRAFT`, `ACTIVE`, `SUSPENDED`, `DELETED` |
 | `KycStatus` | `DRAFT`, `PENDING`, `NEEDS_INFO`, `APPROVED`, `REJECTED`, `EXPIRED`, `SUSPENDED` |
 | `OnboardingStep` | `PROFILE`, `KYC`, `WAREHOUSE`, `BANK`, `FIRST_PRODUCT`, `COMPLETED` |
+| `OnboardingStatus` | `NOT_STARTED`, `IN_PROGRESS`, `READY_TO_SUBMIT`, `COMPLETED` — suy ra từ `current_step` + cờ step của `seller_onboarding`, **không phải cột lưu**; chỉ dùng ở API response (`docs/api/auth-user.md` §2.20/§2.21) |
 | `VerificationChannel` | `EMAIL`, `PHONE` |
 | `VerificationPurpose` | `EMAIL_VERIFY`, `PHONE_VERIFY` |
 | `TokenRevokeReason` | `ROTATED`, `SIGNOUT`, `RESET`, `REUSE`, `SUSPEND`, `EXPIRED` |
@@ -619,4 +620,4 @@ Mỗi migration phải có `up` và `down` cho local/test. Production rollback d
 | 8 | Audit retention baseline 365 ngày; compliance retention dài hơn cần partition/archive policy riêng. | Ảnh hưởng storage cost và legal hold. | Security/Compliance |
 | 9 | `favorites`/`shop_follows` là bảng nhẹ, xóa cứng, không audit, không soft delete; `favorites.product_id` không FK. | Nếu cần lịch sử wishlist hoặc feed follower, phải thêm bảng event/soft-delete. | Product owner |
 | 10 | `follower_count` tính bằng `COUNT(*)` trên index `ix_shop_follows_shop_created`; chấp nhận eventual khi hiển thị. | Nếu shop có hàng triệu follower, chuyển sang counter cache/materialized. | Backend lead |
-| 9 | KYC object storage dùng private S3/MinIO, max 10 MiB/file và signed URL 10 phút; virus scan chưa có provider. | Ảnh hưởng trạng thái `SCANNING` và publish readiness. | Security/DevOps |
+| 11 | KYC object storage dùng private S3/MinIO, max 10 MiB/file và signed URL 10 phút; virus scan chưa có provider. | Ảnh hưởng trạng thái `SCANNING` và publish readiness. | Security/DevOps |

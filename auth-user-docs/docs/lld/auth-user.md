@@ -97,6 +97,9 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
 | `kyc_cases` | `id`, `shop_id`, `status`, `submitted_at`, `reviewed_by`, `reviewed_at`, `decision_reason`, `expires_at` | Shop + current case; status; SLA queue |
 | `kyc_documents` | `id`, `kyc_case_id`, `document_type`, `object_key`, `content_type`, `size_bytes`, `sha256`, `status` | Case + document type; checksum |
 | `two_factor_credentials` | `user_id`, encrypted TOTP secret, `enabled_at`, `disabled_at`, recovery-code hashes | One active credential/user |
+| `seller_onboarding` | `shop_id` unique, `current_step`, 5 cờ step, `blockers_json` | Unique shop |
+| `two_factor_recovery_codes` | `credential_id`, `code_hash` unique, `used_at` | Credential + unused code |
+| `mfa_challenges` | `user_id`, `purpose`, `expires_at`, `attempt_count` | User + purpose; expiry |
 | `login_attempts` | `user_id/identifier_hash`, `succeeded`, `occurred_at`, `ip_hash` | Identifier + occurred time |
 | `audit_logs` | `actor_user_id`, `action`, `target_type`, `target_id`, `metadata`, `occurred_at` | Target; actor; occurred time |
 | `outbox_events` | `event_id`, `aggregate_type`, `aggregate_id`, `event_type`, `payload`, `published_at`, `attempt_count` | Published flag/time; aggregate key |
@@ -108,6 +111,13 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
 - `auth-user` là source of truth cho `users`, `shops`, role assignment, KYC status và verification state.
 - Product Service là source of truth cho product status; nó chỉ dùng `shop.kyc.*` event để gate publish.
 - Payment/Wallet Service là source of truth cho withdraw; nó chỉ dùng `shop.kyc.*` event để gate withdraw.
+
+### 2.4 Health endpoint
+
+| Endpoint | Quyền | Kiểm tra |
+|---|---|---|
+| `GET /health/live` | Internal/ops | Process-only; Gateway active healthcheck gọi — ràng buộc cứng (`api-gateway-docs/docs/lld/api-gateway.md` §5.2). |
+| `GET /health/ready` | Internal/ops | MySQL `userdb`, Kafka, config bắt buộc (JWKS keystore/secret manager). |
 
 ## 3. Luồng xử lý
 
@@ -274,6 +284,7 @@ Các endpoint bổ sung để khớp flow 5 bước trong Penpot:
 | `PUT /api/v1/seller/onboarding/profile` | Tên shop, business name, tax code, mô tả, logo metadata. |
 | `PUT /api/v1/seller/onboarding/warehouse` | Tên kho, contact, địa chỉ kho, carrier preference, COD flag. |
 | `POST /api/v1/seller/onboarding/kyc/documents/presign` | Lấy presigned upload URL cho KYC document. |
+| `POST /api/v1/seller/onboarding/kyc/documents/complete` | Xác nhận upload KYC document (verify metadata/checksum trước khi lưu `kyc_documents`). |
 | `POST /api/v1/seller/onboarding/kyc/submit` | Chốt bộ hồ sơ để chuyển `DRAFT → PENDING`. |
 | `PUT /api/v1/seller/onboarding/bank` | Lưu bank account snapshot và xác nhận chủ tài khoản. |
 | `GET/PUT /api/v1/seller/shop` | Xem/cập nhật business profile sau onboarding. |
@@ -347,8 +358,8 @@ Topic: `notification.commands.v1`
   "template": "auth-email-verification-v1",
   "data": {
     "display_name": "Nguyen Minh Anh",
-    "verification_token": "opaque-token-not-logged",
-    "expires_at": "2026-08-31T09:00:00Z"
+    "verification_url": "https://taca.vn/verify?t=opaque-token-reference",
+    "expires_in_minutes": 1440
   }
 }
 ```
@@ -357,9 +368,11 @@ Contract rules:
 
 - `channel`: `EMAIL` hoặc `SMS`.
 - `command_type`: `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED`.
+- `data` **không chứa token**: auth-user tự dựng URL và gửi `verification_url`/`expires_in_minutes` (email verify) hoặc `reset_url`/`expires_in_minutes` (reset password) — quyết định Cecilia 2026-09-18.
 - Notification Service trả kết quả async bằng event `notification.delivered.v1` hoặc `notification.failed.v1` với `dedupe_key` giữ nguyên.
 - Auth-user không rollback user khi notification provider lỗi; user có thể resend.
 - Notification Service phải mask recipient trong log và không log token/OTP raw.
+- **Known gap v1 (`PHONE_OTP_REQUESTED`)**: Notification v1 chỉ hỗ trợ channel `EMAIL`/`IN_APP` (xem `notification-docs/docs/lld/notification.md` §1.1) — command `channel=SMS` bị trả `409 NOTIFICATION_CHANNEL_DISABLED`; luồng phone OTP sẽ không hoàn tất cho tới khi có provider SMS (quyết định Cecilia 2026-09-18, chấp nhận gap).
 
 ### 3.13 Mock contract — Object Storage cho KYC document
 
@@ -562,7 +575,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 
 | Enum | Giá trị hợp lệ |
 |---|---|
-| Refresh token | `ACTIVE`, `REVOKED`, `EXPIRED`, `REUSE_DETECTED` |
+| Refresh token (state suy ra) | `ACTIVE`, `REVOKED`, `EXPIRED`, `REUSE_DETECTED` — `REUSE_DETECTED` suy ra từ `revoke_reason=REUSE` (enum `TokenRevokeReason`, `docs/db/auth-user.md` §5.1), không phải cột lưu |
 | Verification token | `ACTIVE`, `USED`, `EXPIRED`, `REVOKED` |
 | KYC document | `UPLOADING`, `UPLOADED`, `VERIFIED`, `REJECTED`, `EXPIRED`, `DELETED` |
 | 2FA | `DISABLED`, `ENROLLING`, `ENABLED`, `RESET_REQUIRED` |
@@ -576,7 +589,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `PENDING → NEEDS_INFO` | `RISK_MANAGER`, `SUPER_ADMIN` | Có reason 10–1.000 ký tự. |
 | `PENDING → REJECTED` | `RISK_MANAGER`, `SUPER_ADMIN` | Có reason và 2FA step-up. |
 | `APPROVED → SUSPENDED` | `RISK_MANAGER`, `SUPER_ADMIN` | Policy/risk case tồn tại, ghi audit. |
-| `ACTIVE → SUSPENDED` | Admin có `USER_SUSPEND` | Có reason, revoke refresh sessions, phát event `user.status_changed` và đẩy `revoked_user_id` vào Redis chung của Gateway để block JWT ngay. |
+| `ACTIVE → SUSPENDED` | Admin có `USER_SUSPEND` | Có reason, revoke refresh sessions, phát event `user.status_changed` và đẩy key `revoked_user:{user_id}` (TTL 15 phút) vào Redis chung của Gateway để block JWT ngay. |
 | Role assignment | `SUPER_ADMIN` hoặc permission được cấp | Không tự cấp quyền cao hơn quyền của actor. |
 
 ## 6. Event phát ra / lắng nghe
@@ -607,7 +620,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `user.events.v1` | `user.role_changed` | `user_id`, `role`, `shop_id`, `action` | Grant/revoke role | `user_id` |
 | `shop.events.v1` | `shop.created` | `shop_id`, `owner_user_id`, `status` | Register seller thành công | `shop_id` |
 | `shop.events.v1` | `shop.updated` | `shop_id`, changed fields trong allowlist snapshot (`name`, `slug`, `logo_object_key`, `description`), `updated_at`, `version` | Seller cập nhật shop profile | `shop_id` |
-| `shop.events.v1` | `shop.status_changed` | `shop_id`, `old_status`, `new_status`, `reason`, `changed_at` | Shop chuyển `DRAFT/ACTIVE/SUSPENDED/CLOSED` (gồm admin suspend/restore) | `shop_id` |
+| `shop.events.v1` | `shop.status_changed` | `shop_id`, `old_status`, `new_status`, `reason`, `changed_at` | Shop chuyển `DRAFT/ACTIVE/SUSPENDED/DELETED` (gồm admin suspend/restore) | `shop_id` |
 | `shop.events.v1` | `shop.kyc.submitted` | `shop_id`, `kyc_case_id`, document types | Submit KYC | `shop_id` |
 | `shop.events.v1` | `shop.kyc.approved` | `shop_id`, `kyc_case_id`, `approved_at` | Admin approve | `shop_id` |
 | `shop.events.v1` | `shop.kyc.needs_info` | `shop_id`, `kyc_case_id`, `reason` | Cần bổ sung | `shop_id` |
@@ -642,34 +655,53 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 
 | Mã | HTTP | Khi nào xảy ra | Thông điệp cho người dùng |
 |---|---:|---|---|
-| `AUTH_INVALID_INPUT` | 400 | Payload hoặc format không hợp lệ | `Thông tin đăng ký chưa đúng.` |
+| `AUTH_INVALID_INPUT` | 400 | Payload hoặc format không hợp lệ | `Thông tin gửi lên chưa đúng.` |
 | `AUTH_EMAIL_EXISTS` | 409 | Email đã được sử dụng | `Email đã được sử dụng.` |
 | `AUTH_PHONE_EXISTS` | 409 | Phone đã được sử dụng | `Số điện thoại đã được sử dụng.` |
+| `AUTH_TAX_CODE_EXISTS` | 409 | Tax code đã dùng | `Mã số thuế đã được sử dụng.` |
 | `AUTH_INVALID_CREDENTIALS` | 401 | Identifier/password không đúng | `Email/số điện thoại hoặc mật khẩu không đúng.` |
 | `AUTH_ACCOUNT_LOCKED` | 423 | Account đang bị lock tạm thời | `Tài khoản đang tạm khóa. Vui lòng thử lại sau.` |
 | `AUTH_ACCOUNT_SUSPENDED` | 403 | Account suspended/deleted | `Tài khoản hiện không thể sử dụng.` |
 | `AUTH_EMAIL_NOT_VERIFIED` | 403 | Action yêu cầu email verified | `Vui lòng xác thực email trước.` |
 | `AUTH_PHONE_NOT_VERIFIED` | 403 | Dùng phone chưa verified để login | `Vui lòng xác thực số điện thoại trước.` |
+| `AUTH_USER_NOT_FOUND` | 404 | User không tồn tại hoặc đã xoá | `Không tìm thấy tài khoản.` |
 | `AUTH_TOKEN_INVALID` | 401 | Access/refresh token sai | `Phiên đăng nhập không hợp lệ.` |
 | `AUTH_TOKEN_EXPIRED` | 401 | Token hết hạn | `Phiên đăng nhập đã hết hạn.` |
 | `AUTH_REFRESH_REUSED` | 401 | Phát hiện refresh token reuse | `Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.` |
 | `AUTH_VERIFICATION_INVALID` | 400 | Token/OTP sai, hết hạn hoặc đã dùng | `Mã xác thực không hợp lệ hoặc đã hết hạn.` |
+| `AUTH_VERIFICATION_ALREADY_COMPLETE` | 409 | Đã verify rồi | `Thông tin này đã được xác thực.` |
+| `AUTH_OTP_RATE_LIMITED` | 429 | Gửi OTP quá nhanh | `Vui lòng thử lại sau.` |
 | `AUTH_OTP_ATTEMPTS_EXCEEDED` | 429 | Vượt quá 5 lần thử OTP | `Bạn đã thử quá số lần cho phép.` |
+| `AUTH_RESEND_LIMIT_EXCEEDED` | 429 | Resend quá 3 lần/giờ | `Bạn đã gửi lại quá số lần cho phép.` |
 | `AUTH_RESET_INVALID` | 400 | Password reset token không hợp lệ | `Liên kết đặt lại mật khẩu không hợp lệ.` |
 | `AUTH_MFA_REQUIRED` | 401 | Admin cần 2FA step-up | `Vui lòng xác thực 2FA.` |
 | `AUTH_MFA_INVALID` | 401 | TOTP/recovery code sai | `Mã 2FA không đúng.` |
+| `AUTH_MFA_CHALLENGE_EXPIRED` | 400 | MFA challenge hết hạn | `Phiên xác thực 2FA đã hết hạn.` |
+| `AUTH_MFA_ATTEMPTS_EXCEEDED` | 429 | MFA thử quá giới hạn | `Bạn đã thử quá số lần cho phép.` |
+| `AUTH_MFA_ALREADY_ENABLED` | 409 | User đã bật 2FA | `2FA đã được bật.` |
 | `RBAC_PERMISSION_DENIED` | 403 | Thiếu permission hoặc scope | `Bạn không có quyền thực hiện thao tác này.` |
 | `RBAC_MFA_REQUIRED` | 428 | Destructive action chưa step-up | `Vui lòng xác thực lại trước khi tiếp tục.` |
+| `RBAC_INVALID_ROLE` | 400 | Role/scope không hợp lệ | `Vai trò hoặc phạm vi không hợp lệ.` |
+| `RBAC_ASSIGNMENT_EXISTS` | 409 | Assignment đã tồn tại | `Quyền này đã được cấp.` |
+| `RBAC_ASSIGNMENT_NOT_FOUND` | 409 | Assignment không tồn tại | `Không tìm thấy quyền cần thu hồi.` |
 | `PROFILE_INVALID` | 400 | Profile field sai format/length | `Thông tin hồ sơ chưa đúng.` |
 | `ADDRESS_NOT_FOUND` | 404 | Address không thuộc user hoặc không tồn tại | `Không tìm thấy địa chỉ.` |
 | `ADDRESS_LIMIT_REACHED` | 409 | Đã có 20 address còn sống | `Bạn đã đạt giới hạn số địa chỉ.` |
 | `ADDRESS_DEFAULT_REQUIRED` | 409 | Mutation làm user không còn default address | `Cần có một địa chỉ mặc định.` |
 | `SHOP_ALREADY_EXISTS` | 409 | User đã có shop active/onboarding | `Tài khoản đã có hồ sơ người bán.` |
+| `SHOP_NOT_FOUND` | 404 | Shop không tồn tại | `Không tìm thấy gian hàng.` |
+| `SHOP_SLUG_EXISTS` | 409 | Slug trùng | `Đường dẫn gian hàng đã tồn tại.` |
 | `SHOP_INVALID_STATE` | 409 | Action không hợp lệ với shop status | `Trạng thái gian hàng không cho phép thao tác này.` |
 | `KYC_REQUIRED` | 403 | Chưa đạt điều kiện KYC | `Vui lòng hoàn tất xác minh gian hàng.` |
 | `KYC_DOCUMENT_INVALID` | 400 | Sai type/checksum/object metadata | `Tài liệu không hợp lệ.` |
 | `KYC_DOCUMENT_TOO_LARGE` | 413 | File vượt 10 MiB | `Tài liệu vượt quá dung lượng cho phép.` |
-| `KYC_DECISION_INVALID` | 400 | Thiếu reason hoặc decision không hợp lệ | `Quyết định KYC chưa đầy đủ.` |
+| `KYC_DOCUMENT_LIMIT_REACHED` | 409 | Quá 10 file/case | `Hồ sơ đã đạt giới hạn số tài liệu.` |
+| `KYC_DOCUMENT_NOT_FOUND` | 404 | Document không tồn tại | `Không tìm thấy tài liệu.` |
+| `KYC_DOCUMENT_ALREADY_COMPLETED` | 409 | Complete lặp | `Tài liệu đã được hoàn tất.` |
+| `KYC_DECISION_INVALID` | 400/409 | Thiếu reason hoặc decision không hợp lệ | `Quyết định KYC chưa đầy đủ.` |
+| `KYC_CASE_NOT_FOUND` | 404 | KYC case không tồn tại | `Không tìm thấy hồ sơ KYC.` |
+| `KYC_ALREADY_PENDING` | 409 | Case đang chờ review | `Hồ sơ đang được xét duyệt.` |
+| `BANK_ACCOUNT_INVALID` | 409 | Bank account không hợp lệ | `Thông tin tài khoản ngân hàng chưa hợp lệ.` |
 | `FAVORITE_LIMIT_REACHED` | 409 | Đã đạt `MAX_FAVORITES_PER_USER` | `Bạn đã đạt giới hạn số sản phẩm yêu thích.` |
 | `SHOP_FOLLOW_LIMIT_REACHED` | 409 | Đã đạt `MAX_FOLLOWED_SHOPS_PER_USER` | `Bạn đã đạt giới hạn số shop theo dõi.` |
 | `RATE_LIMITED` | 429 | Vượt request limit | `Bạn thao tác quá nhanh. Vui lòng thử lại sau.` |
@@ -683,7 +715,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | 2 | LLD dùng MySQL 8.4, UUIDv7 và lưu vật lý UUID sẽ được chốt trong Database document. | Ảnh hưởng migration, index size và cross-service ID format. | Backend lead |
 | 3 | Profile UI có field email nhưng email đang được xem là read-only; email change phải đi flow verification riêng. | Nếu email editable trực tiếp, cần thêm API, token và migration audit. | Product owner |
 | 4 | KYC document dùng S3/MinIO private bucket, tối đa 10 MiB/file, lưu audit 365 ngày. | Ảnh hưởng storage cost, compliance và upload UX. | Product + Security |
-| 5 | `SELLER` role được gán khi tạo shop `DRAFT`; publish/withdraw chỉ mở khi shop `APPROVED`. | Ảnh hưởng Seller Center access và permission mapping giữa services. | Product owner |
+| 5 | `SELLER` role được gán khi tạo shop `DRAFT`; publish/withdraw chỉ mở khi `shop.status=ACTIVE` và `kyc_status=APPROVED` (xem §5.2). | Ảnh hưởng Seller Center access và permission mapping giữa services. | Product owner |
 | 6 | Seller staff được hỗ trợ ở RBAC baseline nhưng giới hạn số staff, invitation flow và staff UI chưa có trong HLD/Penpot. | Cần bổ sung schema/API nếu triển khai staff management ở v1. | Product owner |
 | 7 | Phone login/OTP dùng Notification Service channel `SMS`; provider thật chưa được chọn, hiện chỉ có mock contract. | Ảnh hưởng chi phí, deliverability và retry policy. | Tech lead |
 | 8 | Admin 2FA dùng TOTP, step-up TTL 5 phút; recovery-code policy chưa mô tả trong HLD. | Ảnh hưởng account recovery và support operation. | Security owner |

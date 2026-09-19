@@ -82,7 +82,7 @@ Ràng buộc:
 | 3 | `POST` | `/auth/refresh` | Đổi refresh token | Public với refresh token | Client auth interceptor |
 | 4 | `POST` | `/auth/signout` | Revoke session/token family | Authenticated | Account/sign out |
 | 5 | `POST` | `/auth/email/verify` | Verify email | Public với token | Email link |
-| 6 | `POST` | `/auth/email/resend` | Gửi lại email verification | Authenticated hoặc recovery token | Sign in/onboarding |
+| 6 | `POST` | `/auth/email/resend` | Gửi lại email verification | Authenticated | Sign in/onboarding |
 | 7 | `POST` | `/auth/phone/request-otp` | Gửi phone OTP | Authenticated | Profile/onboarding |
 | 8 | `POST` | `/auth/phone/verify-otp` | Verify phone OTP | Authenticated | Profile/onboarding |
 | 9 | `POST` | `/auth/password/forgot` | Khởi tạo reset password | Public | Forgot password |
@@ -122,6 +122,8 @@ Ràng buộc:
 | 43 | `GET` | `/users/me/following` | Danh sách shop đang theo dõi | Authenticated | Account |
 | 44 | `GET` | `/shops/{shopId}/followers/count` | Số người theo dõi shop | Public | Shop hero |
 | 45 | `GET` | `/shops/{shopId}` | Hồ sơ shop công khai (HLD #10) | Public | `Taca Buyer / Shop` |
+| 46 | `GET` | `/health/live` | Liveness process-only (Gateway active healthcheck gọi — bắt buộc) | Internal/ops | Ops healthcheck |
+| 47 | `GET` | `/health/ready` | Readiness: MySQL/Kafka/config bắt buộc | Internal/ops | Ops healthcheck |
 
 ## 2. Chi tiết endpoint
 
@@ -224,6 +226,7 @@ Lỗi:
 |---:|---|---|
 | 401 | `AUTH_INVALID_CREDENTIALS` | Identifier/password sai; không tiết lộ account. |
 | 401 | `AUTH_MFA_REQUIRED` | Admin cần TOTP/recovery code. |
+| 403 | `AUTH_PHONE_NOT_VERIFIED` | Dùng phone chưa verified làm identifier. |
 | 403 | `AUTH_ACCOUNT_SUSPENDED` | Account suspended/deleted. |
 | 423 | `AUTH_ACCOUNT_LOCKED` | 5 lần fail trong 15 phút, lock còn hiệu lực. |
 | 429 | `RATE_LIMITED` | Vượt rate limit. |
@@ -542,7 +545,7 @@ Request:
 ```json
 {
   "data": {
-    "user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
+    "id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
     "full_name": "Nguyễn Văn A",
     "phone": "+84901234567",
     "date_of_birth": "1995-05-20",
@@ -662,12 +665,14 @@ Response:
     "onboarding": {
       "current_step": "PROFILE",
       "completed_steps": [],
-      "blockers": ["EMAIL_VERIFICATION_REQUIRED"]
+      "blockers": []
     }
   },
   "meta": {"request_id": "01912f4c-7a1b-7c12-9c55-8b1c34a6d921"}
 }
 ```
+
+`blockers` là mã gợi ý free-form cho FE (không phải enum chốt — nguồn lưu là `blockers_json` ở `db` §3.4); chỉ xuất hiện mã khi điều kiện tương ứng thật sự thiếu (VD `KYC_DOCUMENT_REQUIRED` khi chưa có document).
 
 Lỗi: `403 AUTH_EMAIL_NOT_VERIFIED`, `409 SHOP_ALREADY_EXISTS`, `409 AUTH_TAX_CODE_EXISTS`, `400 PROFILE_INVALID`.
 
@@ -698,6 +703,8 @@ Response:
 ```
 
 Lỗi: `404 SHOP_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`.
+
+`onboarding_status` trả ở các response step là enum **suy ra** từ `current_step` + cờ step (không phải cột lưu — xem `docs/db/auth-user.md` §5.1 `OnboardingStatus`): `NOT_STARTED` (chưa hoàn thành step nào), `IN_PROGRESS`, `READY_TO_SUBMIT` (đủ hồ sơ/KYC/bank, chờ seller submit), `COMPLETED`.
 
 ### 2.21 `PUT /seller/onboarding/profile` — step Hồ sơ
 
@@ -1060,9 +1067,9 @@ Request:
 | `status` | enum | Có | `ACTIVE` hoặc `SUSPENDED`; `DELETED` không qua endpoint v1. |
 | `reason` | string | Có | 10–1.000 characters. |
 
-Khi suspend: revoke toàn bộ refresh token family, ghi audit, phát `user.status_changed` (kèm đẩy `revoked_user_id` TTL 15m vào Redis chung của Gateway để chặn Access JWT ngay lập tức). Access token JWT chưa hết hạn cũng sẽ bị Gateway từ chối sau khi đồng bộ cache.
+Khi suspend: revoke toàn bộ refresh token family, ghi audit, phát `user.status_changed` (kèm đẩy key `revoked_user:{user_id}` TTL 15 phút vào Redis chung của Gateway để chặn Access JWT ngay lập tức). Access token JWT chưa hết hạn cũng sẽ bị Gateway từ chối sau khi đồng bộ cache.
 
-Lỗi: `404 AUTH_USER_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`, `428 RBAC_MFA_REQUIRED`, `409 AUTH_ACCOUNT_SUSPENDED`.
+Lỗi: `404 AUTH_USER_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`, `428 RBAC_MFA_REQUIRED`, `403 AUTH_ACCOUNT_SUSPENDED`.
 
 ### 2.35 `GET /admin/audit-logs` — tra cứu audit
 
@@ -1093,7 +1100,7 @@ Query:
       "occurred_at": "2026-08-30T09:00:00Z"
     }
   ],
-  "meta": { "request_id": "01912fe1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 340 }
+  "meta": { "request_id": "01912fe1-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 340, "total_pages": 17 }
 }
 ```
 
@@ -1259,6 +1266,22 @@ Ràng buộc:
 
 Lỗi: `404 SHOP_NOT_FOUND` (không tồn tại hoặc `status = DELETED`).
 
+### 2.46 `GET /health/live` — liveness
+
+Quyền: Internal/ops · Response: `200`
+
+```json
+{ "status": "UP", "service": "auth-user", "time": "2026-08-30T09:00:00Z" }
+```
+
+Liveness process-only — không kiểm MySQL/Kafka/JWKS keystore; process còn nhận request thì `UP`. Gateway active healthcheck gọi endpoint này — ràng buộc cứng theo `api-gateway-docs/docs/lld/api-gateway.md` §5.2.
+
+### 2.47 `GET /health/ready` — readiness
+
+Quyền: Internal/ops · Response: `200` hoặc `503`
+
+Kiểm MySQL (`userdb`), Kafka và cấu hình bắt buộc (JWKS keystore, secret manager). Không trả secret/internal address.
+
 ## 3. Bảng mã lỗi dùng chung
 
 | Code | HTTP | Ý nghĩa | Thông điệp hiển thị |
@@ -1272,6 +1295,7 @@ Lỗi: `404 SHOP_NOT_FOUND` (không tồn tại hoặc `status = DELETED`).
 | `AUTH_ACCOUNT_SUSPENDED` | 403 | Account suspended/deleted | `Tài khoản hiện không thể sử dụng.` |
 | `AUTH_EMAIL_NOT_VERIFIED` | 403 | Chưa verify email | `Vui lòng xác thực email trước.` |
 | `AUTH_PHONE_NOT_VERIFIED` | 403 | Phone chưa verify | `Vui lòng xác thực số điện thoại trước.` |
+| `AUTH_USER_NOT_FOUND` | 404 | User không tồn tại hoặc đã xoá | `Không tìm thấy tài khoản.` |
 | `AUTH_TOKEN_INVALID` | 401 | Token sai | `Phiên đăng nhập không hợp lệ.` |
 | `AUTH_TOKEN_EXPIRED` | 401 | Token expired | `Phiên đăng nhập đã hết hạn.` |
 | `AUTH_REFRESH_REUSED` | 401 | Refresh token reuse | `Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.` |
@@ -1308,6 +1332,8 @@ Lỗi: `404 SHOP_NOT_FOUND` (không tồn tại hoặc `status = DELETED`).
 | `KYC_DOCUMENT_ALREADY_COMPLETED` | 409 | Complete lặp | `Tài liệu đã được hoàn tất.` |
 | `KYC_ALREADY_PENDING` | 409 | Case đang chờ review | `Hồ sơ đang được xét duyệt.` |
 | `KYC_DECISION_INVALID` | 400/409 | Decision/reason/state sai | `Quyết định KYC chưa hợp lệ.` |
+| `KYC_CASE_NOT_FOUND` | 404 | KYC case không tồn tại | `Không tìm thấy hồ sơ KYC.` |
+| `KYC_REQUIRED` | 403 | Chưa đạt điều kiện KYC | `Vui lòng hoàn tất xác minh gian hàng.` |
 | `BANK_ACCOUNT_INVALID` | 409 | Bank account không hợp lệ | `Thông tin tài khoản ngân hàng chưa hợp lệ.` |
 | `RATE_LIMITED` | 429 | Vượt request limit | `Bạn thao tác quá nhanh. Vui lòng thử lại sau.` |
 | `INTERNAL_ERROR` | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
@@ -1331,8 +1357,8 @@ Auth-user publish command vào `notification.commands.v1` sau transaction:
   "template": "auth-password-reset-v1",
   "data": {
     "display_name": "Nguyễn Minh Anh",
-    "reset_token": "opaque-token-not-logged",
-    "expires_at": "2026-08-30T09:30:00Z"
+    "reset_url": "https://taca.vn/reset-password?t=opaque-token-reference",
+    "expires_in_minutes": 30
   }
 }
 ```
@@ -1343,7 +1369,7 @@ Mock request/response được mô tả ở endpoint KYC presign. Adapter phải
 
 ### 4.3 Event downstream
 
-Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_changed`, `user.role_changed`, `shop.created`, `shop.kyc.*` dùng chung envelope:
+Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_changed`, `user.role_changed`, `shop.created`, `shop.updated`, `shop.status_changed`, `shop.kyc.*` dùng chung envelope:
 
 ```json
 {
@@ -1362,7 +1388,7 @@ Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_c
 }
 ```
 
-Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — theo chuẩn chung `System_Overview.md` §8. Consumer dedupe theo `event_id`. Bảng field chi tiết từng event nằm ở `docs/lld/auth-user.md` §6.1.
+Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — theo chuẩn chung `System_Overview.md` §8. Consumer dedupe theo `event_id`. Bảng field chi tiết từng event nằm ở `docs/lld/auth-user.md` §6.2.
 
 ## 5. Giả định & câu hỏi mở
 

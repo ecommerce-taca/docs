@@ -157,7 +157,7 @@ Hai enum trên là **hai trục khác nhau** và không được gộp vào mộ
 | `message.events.v1` | `conversation.created/archived` | conversation/participants-safe summary |
 | `message.events.v1` | `message.created/edited/deleted` | message ID/conversation/sequence/safe metadata |
 | `message.events.v1` | `message.read` | conversation/user/read_sequence |
-| `notification.commands.v1` | `MESSAGE_RECEIVED` | recipient/conversation/message preview allowlist |
+| `notification.commands.v1` | `MESSAGE_RECEIVED` | Command theo contract `notification-docs/docs/lld/notification.md` §6.2: `template=message-received-v1`, `channel`, `recipient`, `dedupe_key` + data preview allowlist (recipient/conversation/message) |
 
 ### 6.2 Event lắng nghe
 
