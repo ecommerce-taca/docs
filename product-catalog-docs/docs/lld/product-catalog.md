@@ -612,6 +612,19 @@ Ràng buộc:
 - Inventory projection cho phép replay/resync từ Inventory snapshot; Product không dùng event replay để suy ra deduction.
 - Search có thể lag sau publish; Product response `ACTIVE` là source of truth catalog, Search eventually indexes thông qua outbox event do CDC (Debezium MongoDB Outbox Event Router) publish.
 
+#### Cấu hình connector (Debezium MongoDB Outbox Event Router)
+
+*(thêm 2026-09-19, `DOCS-CDC-02` — đóng giả định #26; xem schema `outbox_events` đầy đủ ở `docs/db/product-catalog.md` §3.9)*
+
+Ba nhóm cấu hình bắt buộc để connector dựng đúng Kafka record theo §6.1/§6.2 từ document `outbox_events`:
+
+1. **Field-name mapping** — schema dùng snake_case, khác field mặc định của SMT (`id`/`aggregatetype`/`aggregateid`/`type`/`payload`, không dấu gạch dưới):
+   `collection.field.event.id=event_id` · `collection.field.event.key=aggregate_id` · `collection.field.event.type=event_type` · `collection.field.event.payload=payload`.
+2. **Routing** — `route.by.field=topic`, `route.topic.replacement=${routedByValue}`: connector đọc field `topic` của mỗi document, dùng **nguyên giá trị** làm tên Kafka topic đích. App đã ghi đúng 1-trong-4 topic khi insert (không route theo `aggregate_type`, vì `product.events.v1` và `catalog.events.v1` cùng thuộc `aggregate_type=PRODUCT` — không thể tách bằng 1 field suy luận).
+3. **Envelope/header bổ sung** — `collection.fields.additional.placement=version:envelope:version,actor_user_id:envelope:actor_user_id,traceparent:header:traceparent`: `version`/`actor_user_id` đưa vào **body** (khớp envelope §6.1); `traceparent` đưa vào Kafka **header**, không vào body — giữ đúng quy ước đã chốt ở `search-docs/docs/lld/search.md:190` ("traceparent nằm ở Kafka header, không nằm trong payload").
+
+Contract §6.1–6.5 (topic name, event type, payload nghiệp vụ) **không đổi** — 3 nhóm cấu hình trên chỉ ánh xạ field vận chuyển đã có sẵn trong `outbox_events`, không thêm/bớt gì ở payload nghiệp vụ.
+
 ## 7. Mã lỗi
 
 | Mã | HTTP | Khi nào xảy ra | Thông điệp cho người dùng |
@@ -676,4 +689,4 @@ Ràng buộc:
 | 23 | ~~Mã lỗi `CATALOG_EVENT_PUBLISH_FAILED`~~ — **đã chốt (Cecilia, 2026-09-19)**: bỏ hẳn khỏi error catalog API-facing, xem ghi chú cuối §7. | — | Đã đóng |
 | 24 | Dưới CDC, cửa sổ replay thật của event outbox bị giới hạn bởi **MongoDB oplog retention** (change stream chỉ đọc được trong khoảng oplog còn giữ) cộng với offset đã commit của connector — không phải retention/TTL của collection `outbox_events` như mô hình app-publish cũ. Retention job cho `outbox_events` (nếu có) chỉ dọn dữ liệu cũ, không ảnh hưởng khả năng replay của connector miễn offset còn hợp lệ. | Nếu oplog quá ngắn so với thời gian connector có thể downtime, resume sau downtime dài sẽ mất event mà không có cảnh báo rõ ràng. | Platform/DevOps owner |
 | 25 | `product-catalog` là service **duy nhất** trong 11 service dùng CDC relay (Debezium MongoDB Outbox Event Router) — **8/10** service còn lại phát domain event và dùng app-level outbox publisher (retry/backoff/DLQ ở tầng application): `auth-user`, `inventory`, `message`, `notification`, `order-commerce`, `payment-wallet`, `rating-comment`, `shipment`. `search` và `api-gateway` không phát domain event nào (search chỉ là consumer; api-gateway không sở hữu outbox/Kafka). Đây là lựa chọn có chủ ý: chỉ product-catalog cần đồng bộ gần-real-time và đáng tin cậy cho Search (yêu cầu ban đầu của HLD), MongoDB replica set sẵn có hỗ trợ change stream tốt; 8 service kia dùng MySQL/khác và chưa có nhu cầu tương đương. | Nếu sau này platform muốn thống nhất 1 cơ chế, đây là điểm bất đối xứng cần cân nhắc lại — không phải lỗi, ghi nhận có chủ ý. | Architecture/Cecilia |
-| 26 *(2026-09-19, sau review opus5 lượt 2)* | **CDC ↔ event contract chưa tương thích kỹ thuật với schema outbox hiện tại** — 2 gap đã xác nhận, để lại có chủ ý cho epic riêng `DOCS-CDC-02` (ngoài phạm vi v1 "chỉ sửa mô tả" của epic này): (1) `MongoEventRouter` chỉ route theo **1 field** (mặc định `aggregate_type`), nhưng `product.events.v1` và `catalog.events.v1` đều thuộc cùng `aggregate_type=PRODUCT` — không có field nào trong §3.9 tách được 4 topic của §6.2; (2) envelope §6.1 có `version`/`actor_user_id`/`traceparent` nhưng document outbox ở §3.9 không có field nào trong số đó, và connector (khác app cũ) không thể tự bồi thêm — Search dùng `version` để chống lùi index khi replay. | Nếu build thật theo docs hiện tại mà chưa giải quyết 2 gap này: event đổi category/media không tới được Search (connector vẫn xanh, không alert), và replay/restart connector có thể làm sản phẩm đã gỡ bán hiện lại trong kết quả tìm kiếm. | Cecilia — quyết định khi mở `DOCS-CDC-02` |
+| 26 | ~~CDC ↔ event contract chưa tương thích kỹ thuật với schema outbox~~ — **đã chốt (Cecilia, 2026-09-19, `DOCS-CDC-02`)**: bổ sung field `topic`/`version`/`actor_user_id`/`traceparent` vào `outbox_events` (`docs/db/product-catalog.md` §3.9) + cấu hình connector (field-name mapping, routing theo `topic`, envelope/header placement) ở §6.6. Contract §6.1–6.5 không đổi. | — | Đã đóng |
