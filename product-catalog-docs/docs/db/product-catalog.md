@@ -355,7 +355,7 @@ Seed không chứa KYC documents, token thật hoặc media bytes thật.
 | 4 | `price_override` null sẽ dùng giá product theo policy hiện tại; chưa chốt có cần snapshot `effective_price` trong SKU. | Ảnh hưởng publish validation và API price response. | Product + Order owner |
 | 5 | Category slug unique toàn taxonomy; HLD chỉ nêu category tree. | Nếu chỉ unique theo parent, index/API conflict rule phải đổi. | Catalog owner |
 | 6 | Media virus scan chưa có provider; `SCANNING` có thể là trạng thái trung gian. | Ảnh hưởng điều kiện chuyển `READY` và publish. | Security/DevOps |
-| 7 | Outbox retention/DLQ retention chưa có thời hạn chính thức. | Ảnh hưởng disk sizing và replay window. | Platform owner |
+| 7 | Outbox retention/DLQ retention chưa có thời hạn chính thức. | Ảnh hưởng disk sizing; **không** ảnh hưởng replay window (cửa sổ replay thật do MongoDB oplog retention + offset connector quyết định — xem §4 và `lld` giả định #24). | Platform owner |
 | 8 | MongoDB schema validator và Mongoose đều được triển khai. | Nếu chỉ dùng application validation, dữ liệu ngoài service có thể phá invariant. | Tech lead |
 | 9 | `price_summary` tự động tính lại từ SKU set (min base/sale của SKU `ACTIVE`) mỗi lần `PUT .../skus`; `price_override` chỉ override `sale_price`, không có override riêng cho `base_price`. | Nếu policy giá thật khác (VD override cả base), phải đổi schema `skus` và logic resolve giá ở API. | Product owner |
 | 10 | `rating_summary` là field mới bổ sung trên `products`, cache từ event `rating.aggregate.updated` của `rating-comment`; chỉ lưu `avg`/`count`, không lưu `distribution`. | Nếu PDP cần hiển thị distribution hoặc rating theo SKU, phải mở rộng field. | Product + Rating owner |
