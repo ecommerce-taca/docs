@@ -252,10 +252,8 @@ Projection stale sau 60 giây. Product không thực hiện reserve/deduct và k
 | `schema_version` | int | Có | Bắt đầu `1`. |
 | `payload` | object | Có | Không chứa secret/KYC document. |
 | `occurred_at` | Date | Có | Domain event time UTC. |
-| `published_at` | Date/null | Không | Null khi pending. |
-| `attempt_count` | int | Có | Retry tối đa 3. |
-| `last_error` | string/null | Không | Redact secret/token. |
-| `dead_lettered_at` | Date/null | Không | Sau khi exhausted retry. |
+
+Dưới CDC (Debezium MongoDB Outbox Event Router, xem `docs/lld/product-catalog.md` §1.1/§2.1/§6.6): collection này **write-only** với application. Connector đọc **change stream** của collection, không cập nhật ngược document nào — nên schema **không có** field trạng thái publish (`published_at`, `attempt_count`, `last_error`, `dead_lettered_at` như bản trước CDC đã bị bỏ). Muốn biết event đã tới Kafka hay chưa, theo dõi **connector lag/offset** ở tầng Kafka Connect, không phải query field trên document.
 
 ### 3.10 `catalog_audits`
 
@@ -296,12 +294,11 @@ Projection stale sau 60 giây. Product không thực hiện reserve/deduct và k
 | `shop_snapshots` | `{shop_status:1, kyc_status:1}` | Publish gate diagnostics. |
 | `inventory_projections` | `{sku_id:1}` unique | Detail projection lookup. |
 | `inventory_projections` | `{product_id:1, stock_status:1}` | Product card stock mapping. |
-| `outbox_events` | `{published_at:1, occurred_at:1}` partial null | Publisher polling. |
-| `outbox_events` | `{aggregate_type:1, aggregate_id:1, occurred_at:1}` | Aggregate replay/debug. |
+| `outbox_events` | `{aggregate_type:1, aggregate_id:1, occurred_at:1}` | Aggregate replay/debug — không cần index theo trạng thái publish vì app không polling (CDC connector đọc change stream trực tiếp). |
 | `catalog_audits` | `{target_type:1, target_id:1, occurred_at:-1}` | Target audit history. |
 | `catalog_audits` | `{actor_user_id:1, occurred_at:-1}` | Actor audit lookup. |
 
-TTL index không áp dụng cho domain data/audit trong v1. Retention outbox/DLQ phải do retention job hoặc Kafka policy chốt riêng, không tự xóa bằng TTL khi chưa có archive policy.
+TTL index không áp dụng cho domain data/audit trong v1. Retention của collection `outbox_events` (nếu có) chỉ dọn dữ liệu cũ trong MongoDB, **không quyết định khả năng replay** — cửa sổ replay thật bị giới hạn bởi MongoDB oplog retention + offset đã commit của Debezium connector (xem `docs/lld/product-catalog.md` giả định #24); DLQ (`product-catalog.events.dlq.v1`) thuộc retention của Kafka, chốt riêng theo Kafka topic policy.
 
 ## 5. Enum và database rules
 

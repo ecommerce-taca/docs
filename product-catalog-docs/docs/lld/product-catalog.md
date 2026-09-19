@@ -1,7 +1,7 @@
 # LLD — Product Catalog Service
 
 > Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-17`
-> Tech stack đã chốt: Node.js + NestJS · MongoDB/Mongoose · Kafka outbox · S3/MinIO cho media · REST nội bộ với Inventory/Search/Auth User
+> Tech stack đã chốt: Node.js + NestJS · MongoDB/Mongoose · Kafka outbox (relay bởi CDC — Debezium MongoDB Outbox Event Router, xem §1.1/giả định #25) · S3/MinIO cho media · REST nội bộ với Inventory/Search/Auth User
 
 ## 1. Phạm vi
 
@@ -15,7 +15,7 @@
 | Giá | `product-catalog` là source of truth cho `base_price`/`sale_price` hiển thị. Order-Commerce đọc giá qua API/event và lưu price snapshot khi checkout/order; voucher/discount rule thuộc Order-Commerce. |
 | Publish | Seller có thể tạo/cập nhật draft không cần product approval/censor. Publish yêu cầu shop có `kyc_status = APPROVED` (enum `KycStatus` của auth-user); không có trạng thái `PENDING_APPROVAL`. |
 | Inventory display | Product giữ read-only inventory projection từ event của Inventory để hiển thị `Còn hàng/Hết hàng` hoặc số lượng snapshot. Projection có thể eventual consistent và không dùng để trừ stock. |
-| Search | Search đồng bộ dữ liệu qua domain event trên `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`, được publish bởi **CDC (Debezium Outbox Event Router)** đọc outbox collection của Product Catalog — không đọc trực tiếp collection nghiệp vụ (`products`/`skus`/`categories`); search sở hữu search index. Product không đọc/ghi trực tiếp Elasticsearch. |
+| Search | Search đồng bộ dữ liệu qua domain event trên `product.events.v1`/`sku.events.v1`/`category.events.v1`/`catalog.events.v1`, được publish bởi **CDC (Debezium MongoDB Outbox Event Router)** đọc outbox collection của Product Catalog — không đọc trực tiếp collection nghiệp vụ (`products`/`skus`/`categories`); search sở hữu search index. Product không đọc/ghi trực tiếp Elasticsearch. |
 | Rating hiển thị | `rating-comment` là source of truth cho review/rating. Product chỉ cache `rating_summary` (`avg`/`count`) từ event `rating.aggregate.updated` để hiển thị PDP/Shop hero; không tự tính rating. |
 | Không thuộc service | User/profile/KYC decision, inventory deduction/reservation, cart/checkout/order, voucher calculation, payment, shipment, review, message và search index. |
 | Được gọi bởi | Các ứng dụng Micro-Frontends (`mfe-buyer`, `mfe-seller`, `mfe-admin`, `mfe-catalog` qua `mfe-shell`) thông qua API Gateway; Order/Inventory/Search dùng REST/event contract, không đọc MongoDB trực tiếp. |
@@ -32,7 +32,7 @@ API Gateway
 Product Catalog
   ├─ MongoDB: product, SKU, category, media, price, shop snapshot
   ├─ S3/MinIO: product media bytes qua signed URL
-  ├─ Kafka outbox (relay bởi CDC — Debezium Outbox Event Router) → Order, Inventory, Search và các consumer khác (domain event, topic/payload không đổi)
+  ├─ Kafka outbox (relay bởi CDC — Debezium MongoDB Outbox Event Router) → Order, Inventory, Search và các consumer khác (domain event, topic/payload không đổi)
   ├─ Kafka consumer ← Inventory stock snapshot
   ├─ Kafka consumer ← Auth User shop/KYC status event
   └─ Kafka consumer ← Rating-Comment rating aggregate event
@@ -88,7 +88,7 @@ src/
 | `ShopProjectionService` | Consume shop created/updated/status event và cập nhật local snapshot. | Không gọi Auth User trên mỗi product read. |
 | `InventoryProjectionService` | Consume stock snapshot event và cập nhật read-only display projection. | Projection không phải inventory ledger và không được dùng để confirm checkout. |
 | `CatalogQueryService` | Query public/seller/admin, pagination, filter status/category/shop. | Search full-text nâng cao thuộc Search Service; Product chỉ hỗ trợ query catalog cơ bản. |
-| `OutboxPublisher` | Ghi outbox record vào cùng MongoDB transaction sau commit (write-only — **không tự publish lên Kafka**). | Publish thật do CDC (Debezium Outbox Event Router) đảm nhiệm: connector đọc collection này và đẩy lên Kafka; retry/backoff/dead-letter (`product-catalog.events.dlq.v1`) thuộc tầng connector, không phải application. Consumer dedupe theo `event_id`. |
+| `OutboxPublisher` | Ghi outbox record vào cùng MongoDB transaction với domain mutation (write-only — **không tự publish lên Kafka**, không retry, không track attempt/dead-letter). | Publish thật do CDC (Debezium MongoDB Outbox Event Router) đảm nhiệm: connector đọc **change stream** của collection này và đẩy lên Kafka. Connector là **source connector** nên không có dead-letter queue kiểu Kafka Connect (`errors.deadletterqueue.*` chỉ áp dụng cho sink connector) — lỗi ở connector là restart/retry theo task (`retriable.restart.connector.wait.ms`) + alert trên connector lag, phục hồi bằng replay từ offset. `product-catalog.events.dlq.v1` chỉ dùng ở **phía consumer** (Search/Order/Inventory tự đẩy event họ không xử lý được vào, không phải nơi connector đẩy lỗi publish vào). |
 
 ### 2.2 MongoDB collections ở mức LLD
 
@@ -104,7 +104,7 @@ Chi tiết field type, validator, index và migration nằm ở `docs/db/product
 | `product_media` | `media_id`, `product_id`, `sku_id?`, `scope`, `object_key`, `content_type`, `size_bytes`, `sha256`, `sort_order`, `is_cover`, `status` | Product/scope/status, unique `object_key`; `(product_id, sha256)` chỉ là index phát hiện trùng, không unique |
 | `shop_snapshots` | `shop_id`, `name`, `slug`, `logo_url`, `kyc_status`, `shop_status`, `source_version`, `updated_at` | Unique shop ID, status |
 | `inventory_projections` | `sku_id`, `product_id`, `available_qty_snapshot`, `stock_status`, `as_of`, `source_event_id` | Unique SKU, product/status, `as_of` |
-| `outbox_events` | `event_id`, `aggregate_type`, `aggregate_id`, `event_type`, `schema_version`, `payload`, `published_at`, `attempt_count` | Published flag/time, aggregate, event type |
+| `outbox_events` | `event_id`, `aggregate_type`, `aggregate_id`, `event_type`, `schema_version`, `payload` | Aggregate, event type. Dưới CDC không có field trạng thái publish (`published_at`/`attempt_count`) — connector đọc change stream, không cần app đánh dấu đã publish; chi tiết xem `docs/db/product-catalog.md` §3.9. |
 | `catalog_audits` | `actor_user_id`, `shop_id?`, `action`, `target_type`, `target_id`, `reason`, `metadata`, `occurred_at` | Target/time, actor/time, action |
 
 ### 2.3 Aggregate và ownership
@@ -117,7 +117,7 @@ Chi tiết field type, validator, index và migration nằm ở `docs/db/product
 | Product media metadata | Product Catalog | Validate metadata/object; bytes do S3/MinIO lưu. |
 | Shop identity/KYC | Auth User | Lưu snapshot để đọc/gate; không quyết định KYC. |
 | Available/reserved stock | Inventory | Chỉ consume snapshot; không reserve/deduct. |
-| Search index | Search | Nguồn dữ liệu được đồng bộ qua Kafka outbox domain event; Product không ghi Elasticsearch. |
+| Search index | Search | Nguồn dữ liệu được đồng bộ qua domain event publish bởi CDC (Debezium MongoDB Outbox Event Router); Product không ghi Elasticsearch. |
 | Rating/review | Rating-Comment | Product chỉ cache `rating_summary` (`avg`/`count`) từ event; không tự tính hay lưu review. |
 | Voucher/discount | Order-Commerce | Product trả giá niêm yết; không tính voucher. |
 | Order price | Order-Commerce | Product cung cấp giá hiện tại; Order snapshot giá tại checkout. |
@@ -406,9 +406,7 @@ Ràng buộc tuyệt đối:
 | `INVENTORY_SNAPSHOT_STALE_AFTER` | 60 | giây | Sau thời gian này hiển thị `STALE`; không ảnh hưởng deduction. |
 | `LOW_STOCK_THRESHOLD` | 5 | quantity | Chỉ là display label; Inventory vẫn quyết định availability. |
 | `SHOP_PROJECTION_MAX_STALE` | 30 | phút | Quá hạn thì không cho publish nếu không có status chắc chắn. |
-| `MONGO_TRANSACTION_REQUIRED` | `true` | boolean | Deployment MongoDB phải là replica set/sharded transaction-capable. |
-| `OUTBOX_RETRY_COUNT` | 3 | lần | Sau đó dead-letter. |
-| `OUTBOX_RETRY_BACKOFF` | 2 | giây | Backoff baseline. |
+| `MONGO_TRANSACTION_REQUIRED` | `true` | boolean | Deployment MongoDB phải là replica set/sharded transaction-capable (bắt buộc cho change stream mà CDC connector dùng). |
 | `INTERNAL_REQUEST_TIMEOUT` | 5 | giây | Auth/media metadata adapter; không dùng cho stock deduction. |
 | `TIMESTAMP_STORAGE` | `UTC` | timezone | API/log ISO-8601. |
 | `OPTIMISTIC_VERSIONING` | `true` | boolean | Mutation seller/admin phải gửi version nếu update document. |
@@ -609,10 +607,10 @@ Ràng buộc:
 
 - Domain mutation và outbox event ghi trong cùng MongoDB transaction.
 - Kafka key theo `product_id`, `sku_id` hoặc `category_id` để giữ thứ tự trong aggregate.
-- Publish do CDC connector (Debezium Outbox Event Router) đảm nhiệm, không phải application; connector retry/backoff và dead-letter vào `product-catalog.events.dlq.v1` theo config Kafka Connect — số lần retry/backoff cụ thể của connector chưa chốt (xem giả định #22).
+- Publish do CDC connector (Debezium MongoDB Outbox Event Router) đảm nhiệm, không phải application; connector là **source connector** nên không có dead-letter queue kiểu Kafka Connect — retry ở mức task/connector (`retriable.restart.connector.wait.ms`, `errors.tolerance`), phục hồi bằng replay từ offset; `product-catalog.events.dlq.v1` chỉ dùng ở phía consumer. Tham số connector cụ thể chưa chốt (xem giả định #22). Cửa sổ replay thật bị giới hạn bởi **MongoDB oplog retention** + offset đã commit của connector, không phải retention của collection `outbox_events` (xem giả định #24).
 - Consumer ghi `processed_event_id` hoặc dùng unique event ID để dedupe; không xử lý lại event hoàn tất.
 - Inventory projection cho phép replay/resync từ Inventory snapshot; Product không dùng event replay để suy ra deduction.
-- Search có thể lag sau publish; Product response `ACTIVE` là source of truth catalog, Search eventually indexes thông qua outbox event do CDC (Debezium Outbox Event Router) publish.
+- Search có thể lag sau publish; Product response `ACTIVE` là source of truth catalog, Search eventually indexes thông qua outbox event do CDC (Debezium MongoDB Outbox Event Router) publish.
 
 ## 7. Mã lỗi
 
@@ -644,10 +642,11 @@ Ràng buộc:
 | `PRODUCT_ARCHIVED` | 409 | Mutation trên archived product | `Sản phẩm đã được lưu trữ.` |
 | `PRODUCT_EXPORT_TOO_LARGE` | 400 | Vượt `PRODUCT_EXPORT_MAX_ROWS` (10.000) khi export | `Kết quả xuất file quá lớn, vui lòng lọc hẹp hơn.` |
 | `INVENTORY_PROJECTION_STALE` | 200/metadata | Stock snapshot quá cũ | `Thông tin tồn kho đang được cập nhật.` |
-| `CATALOG_EVENT_PUBLISH_FAILED` | 503 | Outbox publisher chưa phát được event | `Hệ thống đang đồng bộ dữ liệu. Vui lòng thử lại sau.` |
 | `INTERNAL_ERROR` | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
 
 `INVENTORY_PROJECTION_STALE` không phải lỗi deduction; nó là metadata để frontend không hiểu nhầm số lượng display là realtime.
+
+`CATALOG_EVENT_PUBLISH_FAILED` (503) **đã bị bỏ khỏi error catalog** (Cecilia quyết định 2026-09-19, DOCS-CONSISTENCY-01): mã này được định nghĩa từ mô hình app tự publish; dưới CDC, publish lên Kafka tách rời hoàn toàn khỏi vòng đời request/response của API mutation, nên client không còn tình huống nào nhận được lỗi này một cách đồng bộ. Đã đồng bộ xoá ở `docs/api/product-catalog.md` §7 và `api-gateway-docs/docs/api/api-gateway.md` (allowlist 5xx business code).
 
 ## 8. Giả định & câu hỏi mở
 
@@ -664,7 +663,7 @@ Ràng buộc:
 | 9 | Media baseline là 12 ảnh + 3 video/product, S3/MinIO signed URL; virus scan provider và exact product media policy chưa chốt. | Ảnh hưởng upload UX, storage cost, publish readiness và security. | Product/Security/DevOps |
 | 10 | Admin `BLOCKED` là post-publication emergency action, không phải pre-approval/censor workflow. | Nếu cần review trước publish, phải thêm state machine, queue và SLA. | Product owner |
 | 11 | Shop snapshot nhận từ Auth User event; event schema/version và field allowlist cần align với auth-user API/event spec. | Product detail có thể hiển thị shop stale hoặc publish gate sai. | Auth-user owner |
-| 12 | Search eventual consistency qua domain event publish bởi CDC (Debezium Outbox Event Router đọc outbox collection); Product response ACTIVE không đợi Search index thành công. | User có thể thấy product detail trước khi tìm thấy qua search. | Search owner |
+| 12 | Search eventual consistency qua domain event publish bởi CDC (Debezium MongoDB Outbox Event Router đọc outbox collection); Product response ACTIVE không đợi Search index thành công. | User có thể thấy product detail trước khi tìm thấy qua search. | Search owner |
 | 13 | Product detail không gọi Inventory synchronous; snapshot stale sau 60 giây hiển thị metadata `STALE`. | Nếu UX bắt buộc số tồn realtime, phải bổ sung read API/timeout/fallback. | Product + frontend |
 | 14 | Realtime price history, promotion campaign, brand approval và AI content moderation chưa thuộc v1. Campaign/flash sale (giá theo thời gian) là service **`campaign` riêng ở v1.1** (`System_Overview.md` §6.3), không nhồi vào Product Catalog. | Nếu Penpot/HLD bổ sung sớm, cần thêm aggregate/permission/event riêng. | Product owner |
 | 15 | Đã chốt (`System_Overview.md` §6.3): admin catalog (Categories, Products/SKU, moderation) phục vụ qua `/api/v1/admin/catalog/**` **trên chính service này**, gác `CATALOG_ADMIN`/`SUPER_ADMIN` — không tách microservice admin. Product Catalog **cố ý** không có pre-approval, chỉ `BLOCKED` sau publish; màn "Product moderation queue" của Penpot render thành "danh sách product đã publish + hành động block", không phải hàng đợi duyệt trước. | Nếu bắt buộc duyệt trước, phải thêm state `PENDING_REVIEW` + queue + SLA + event — thay đổi logic lifecycle. | Product owner |
@@ -673,5 +672,7 @@ Ràng buộc:
 | 19 | Payload `product.published` đã chốt với Search (2026-09-18): gồm `category_path`, `visibility_status`, map giá `price.sale` → scalar long; `product.created`/`sku.*` vẫn là giả định, chưa có xác nhận chính thức từ Search/Inventory. | Nếu payload thật hẹp hơn, Search phải tự query bổ sung hoặc Product phải điều chỉnh event schema. | Product + Search + Inventory owner |
 | 20 | Payload event KYC/shop thật (không có `kyc_status`/`source_version`/`logo_url`) lấy từ `auth-user-docs/docs/lld/auth-user.md` §6.2 tại thời điểm viết; nếu Auth User đổi contract phải cập nhật lại theo. | Nếu Auth User đổi payload, `ShopProjectionService` suy sai `kyc_status`. | Auth-user owner |
 | 21 | `rating_summary` cache (avg/count) trên Product lấy từ event `rating.aggregate.updated` do `rating-comment` sở hữu; Product không lưu `distribution`. | Nếu PDP cần hiển thị distribution, phải mở rộng cache field. | Product + Rating owner |
-| 22 | Sau khi đổi sang CDC (DOCS-CONSISTENCY-01): số lần retry/backoff cụ thể của Debezium connector khi publish outbox lên Kafka **chưa chốt** — trước đây ghi "retry 3 lần, backoff 2 giây" là hành vi application, nay retry thuộc connector và chưa có con số chính thức. | Nếu incident xảy ra, không rõ SLA phục hồi; cần chốt config Kafka Connect trước khi vận hành production. | Platform/Search owner |
-| 23 | Mã lỗi `CATALOG_EVENT_PUBLISH_FAILED` (503, "Outbox publisher chưa phát được event") được định nghĩa từ thời app tự publish — với CDC, publish tách rời khỏi request/response nên client không còn cách nào đồng bộ biết "outbox publish that thất bại" tại thời điểm gọi API. Mã lỗi này cũng được `product-catalog-docs/docs/api/product-catalog.md` và `api-gateway-docs/docs/api/api-gateway.md` tham chiếu (contract liên service) — **không tự đổi/xoá trong batch này**, cần Cecilia xác nhận: (a) giữ nguyên mã lỗi nhưng đổi nghĩa thành "outbox transaction commit thất bại" (lỗi ghi, không phải lỗi publish), hay (b) bỏ hẳn khỏi error catalog và coi publish failure là vấn đề vận hành/observability, không phải lỗi API. | Sai lệch giữa 3 doc nếu không xử lý đồng bộ; gateway allowlist có thể pass-through một mã lỗi không còn ý nghĩa đúng. | Cecilia + Product + Gateway owner |
+| 22 | Sau khi đổi sang CDC (DOCS-CONSISTENCY-01): tham số connector cụ thể (`errors.tolerance`, `retriable.restart.connector.wait.ms`, `max.batch.size`/`poll.interval.ms`, ngưỡng alert connector lag) **chưa chốt** — connector Debezium (source) không có ngữ nghĩa "retry N lần/backoff X giây cho từng message" như app publisher cũ, nên "retry 3 lần, backoff 2 giây" trước đây không map 1:1 sang config connector. | Nếu incident xảy ra, không rõ SLA phục hồi; cần chốt config Kafka Connect trước khi vận hành production. | Platform/Search owner |
+| 23 | ~~Mã lỗi `CATALOG_EVENT_PUBLISH_FAILED`~~ — **đã chốt (Cecilia, 2026-09-19)**: bỏ hẳn khỏi error catalog API-facing, xem ghi chú cuối §7. | — | Đã đóng |
+| 24 | Dưới CDC, cửa sổ replay thật của event outbox bị giới hạn bởi **MongoDB oplog retention** (change stream chỉ đọc được trong khoảng oplog còn giữ) cộng với offset đã commit của connector — không phải retention/TTL của collection `outbox_events` như mô hình app-publish cũ. Retention job cho `outbox_events` (nếu có) chỉ dọn dữ liệu cũ, không ảnh hưởng khả năng replay của connector miễn offset còn hợp lệ. | Nếu oplog quá ngắn so với thời gian connector có thể downtime, resume sau downtime dài sẽ mất event mà không có cảnh báo rõ ràng. | Platform/DevOps owner |
+| 25 | `product-catalog` là service **duy nhất** trong 11 service dùng CDC relay (Debezium MongoDB Outbox Event Router) — 10 service còn lại đều dùng app-level outbox publisher (retry/backoff/DLQ ở tầng application). Đây là lựa chọn có chủ ý: chỉ product-catalog cần đồng bộ gần-real-time và đáng tin cậy cho Search (yêu cầu ban đầu của HLD), MongoDB replica set sẵn có hỗ trợ change stream tốt; 10 service kia dùng MySQL/khác và chưa có nhu cầu tương đương. | Nếu sau này platform muốn thống nhất 1 cơ chế, đây là điểm bất đối xứng cần cân nhắc lại — không phải lỗi, ghi nhận có chủ ý. | Architecture/Cecilia |

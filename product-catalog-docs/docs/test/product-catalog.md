@@ -24,7 +24,7 @@
 - Inventory projection `UNKNOWN`, `IN_STOCK`, `LOW_STOCK`, `OUT_OF_STOCK`, `STALE`, event source version cũ/mới.
 - Media `READY` cover, `UPLOADING`, `SCANNING`, `REJECTED`, checksum sai, vượt 12 ảnh/3 video.
 - Category root, child depth 5, parent inactive, parent cycle và assignment 1 primary + 2 secondary.
-- Outbox pending, retry lần 1–3, dead-letter, duplicate consumer event.
+- Outbox record ghi cùng transaction (verify tồn tại trong `outbox_events` ngay sau mutation, không có field trạng thái publish); connector CDC "down" (mô phỏng bằng dừng pipeline test) rồi resume → event replay đúng từ offset, không mất; duplicate consumer event (test idempotency phía consumer, không phải phía publisher).
 - Rating aggregate event `avg`/`count` mới/cũ và product chưa có review nào (`rating_summary=null`).
 
 ### 1.3 Tiêu chí chung
@@ -134,8 +134,8 @@
 | PC-INT-002 | Inventory | Duplicate `event_id` replay | Không double-write/không đổi quantity. |
 | PC-INT-003 | Inventory | Product endpoint bị gọi để reserve/deduct | Không tồn tại route; Product không mutate inventory. |
 | PC-INT-004 | Auth User | Shop/KYC approved/needs_info/`shop.status_changed=SUSPENDED` event với payload thật (không có `kyc_status`/`source_version`) | Snapshot upsert đúng; `kyc_status` được Product tự suy từ `event_type`; dedupe theo `event_id`+`occurred_at`; publish gate đúng. |
-| PC-INT-005 | Search | Product publish khi Kafka unavailable | Domain transaction giữ đúng; outbox retry/DLQ; không báo Search đã index. |
-| PC-INT-006 | Outbox | Retry 3 lần rồi fail | `attempt_count`, error redacted, dead-letter đúng; replay được. |
+| PC-INT-005 | Search | Product publish khi Kafka/Kafka Connect unavailable | Domain transaction + insert `outbox_events` vẫn thành công (app không gọi Kafka trực tiếp); response API không phụ thuộc trạng thái connector; không báo Search đã index. Test connector lag/replay thật thuộc phạm vi platform/ops integration test, ngoài Jest suite của service này. |
+| PC-INT-006 | Outbox | Shape của record vừa ghi khớp contract CDC | `outbox_events` document không có field trạng thái publish (`published_at`/`attempt_count`/`dead_lettered_at`); `payload` đúng schema `schema_version` hiện tại; ghi trong cùng transaction với domain mutation (trùng PC-INT-007 phần atomicity — case này chỉ verify shape, không verify transaction). |
 | PC-INT-007 | MongoDB | Fail giữa domain/outbox/audit | Transaction rollback toàn bộ hoặc recovery rõ ràng; không orphan event. |
 | PC-INT-008 | Rating-Comment | `rating.aggregate.updated` version mới/cũ, duplicate `event_id` | Upsert `products.rating_summary`; bỏ qua event cũ; dedupe đúng; không có rating thì `avg=null, count=0`. |
 | PC-SEC-001 | IDOR | Seller đổi productId shop khác, object key khác | `403 PRODUCT_FORBIDDEN`; không đọc/sửa/upload chéo tenant. |
@@ -157,7 +157,7 @@
 | `InventoryProjectionService` | Quantity non-negative, stock status threshold 5, stale after 60s, source version monotonic, dedupe. |
 | `ShopProjectionService` | Allowlist fields (`shop.updated` không có `logo_url` sẵn → resolve `logo_object_key` thành URL), suy `kyc_status` từ `event_type` (payload KYC không có field này), dedupe theo `event_id`+`occurred_at` (không có `source_version` ở event KYC), suspended status. |
 | `RatingProjectionService` | Upsert `rating_summary`, dedupe theo `event_id`, giá trị mặc định khi chưa có review (`avg=null, count=0`). |
-| `OutboxPublisher` | Retry 3/backoff 2s, redaction, DLQ, aggregate key, idempotent publish marker, envelope có `version` cho consumer order. |
+| `OutboxPublisher` | Write-only: ghi record đúng schema/aggregate key trong cùng transaction với domain mutation; **không** test retry/backoff/DLQ ở unit này (thuộc connector, không phải class này); redaction payload (không leak secret/KYC document); envelope có `version` cho consumer order. |
 | `AuthorizationPolicy` | Seller owner/staff scope, admin roles, step-up, public visibility. |
 | `PaginationMapper` | Default 20, max 100, page bounds, stable sort, no unbounded query. |
 

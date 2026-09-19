@@ -85,7 +85,7 @@ Product Catalog lấy `actor_user_id`, role và shop scope từ auth context do 
 | 23 | `PATCH /admin/catalog/categories/{categoryId}` | Admin | Sửa category/parent/status. |
 | 24 | `POST /admin/catalog/categories/{categoryId}/archive` | Admin | Soft archive category. |
 | 25 | `GET /health/live` | Internal/ops | Liveness process-only (Gateway active healthcheck gọi — bắt buộc). |
-| 26 | `GET /health/ready` | Internal/ops | Readiness: MongoDB/outbox consumer sẵn sàng. |
+| 26 | `GET /health/ready` | Internal/ops | Readiness: MongoDB sẵn sàng (app không có outbox consumer/publisher riêng dưới CDC — readiness của Debezium connector nằm ở Kafka Connect, ngoài phạm vi health endpoint của service này). |
 
 Không có endpoint Product để reserve/deduct stock. Cart/Checkout phải gọi Inventory contract để xác minh availability và reserve atomically.
 
@@ -557,8 +557,9 @@ Không hard-delete; không nhận assignment mới; phải có migration policy 
 | `CATEGORY_CYCLE_DETECTED` | 409 | Parent cycle. |
 | `PRODUCT_ARCHIVED` | 409 | Mutation archived product. |
 | `INVENTORY_PROJECTION_STALE` | 200 metadata | Snapshot stale; không phải deduction error. |
-| `CATALOG_EVENT_PUBLISH_FAILED` | 503 | Outbox chưa publish; request xử lý domain theo transaction nhưng integration đang retry. |
 | `INTERNAL_ERROR` | 500 | Unexpected error. |
+
+`CATALOG_EVENT_PUBLISH_FAILED` đã bị bỏ khỏi error catalog (Cecilia, 2026-09-19, DOCS-CONSISTENCY-01): dưới CDC, publish lên Kafka tách rời khỏi request/response của mutation API nên mã lỗi này không còn tình huống nào để trả về đồng bộ — xem `docs/lld/product-catalog.md` §7/giả định #23.
 
 Rate limit, trace ID, JWT invalid/expired và generic 401/403 có thể được API Gateway chuẩn hóa; Product vẫn phải log `request_id` và actor scope để audit.
 
