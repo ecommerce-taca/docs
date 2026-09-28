@@ -67,6 +67,10 @@ Product Catalog lấy `actor_user_id`, role và shop scope từ auth context do 
 | 6 | `POST /seller/products` | Seller | Tạo SPU draft. |
 | 7 | `GET /seller/products` | Seller | Seller product list. |
 | 7a | `GET /seller/products/export` | Seller | Xuất danh sách sản phẩm ra file (.xlsx/.csv). |
+| 7b | `POST /seller/products/import/template` | Seller | Tải file Excel template mẫu tùy biến theo bộ lọc (danh mục, sản phẩm, số dòng, layout). |
+| 7c | `POST /seller/products/import` | Seller | Upload file Excel (.xlsx, <= 100 SPUs, <= 2MB), phản hồi `202 Accepted` kèm `job_id`. |
+| 7d | `GET /seller/products/import/jobs/{jobId}` | Seller | Tra cứu tiến độ xử lý import theo thời gian thực. |
+| 7e | `GET /seller/products/import/jobs/{jobId}/result` | Seller | Tải file Excel báo cáo kết quả chi tiết các dòng lỗi. |
 | 8 | `GET /seller/products/{productId}` | Seller | Seller editor detail. |
 | 9 | `PATCH /seller/products/{productId}` | Seller | Cập nhật product fields. |
 | 10 | `PUT /seller/products/{productId}/skus` | Seller | Replace/update SKU set. |
@@ -253,6 +257,127 @@ Query giống `GET /seller/products` (`status?`, `q?`, `updated_from?`, `updated
 ```
 
 Đúng chuẩn hệ thống "file lớn dùng signed URL, không qua Gateway body" (`api-gateway-docs/docs/api/api-gateway.md` §1.1). File **không** stream qua endpoint này — client GET `export_url` riêng để tải. `export_url` hết hạn sau 30 phút (`expires_at`), gọi lại endpoint để có URL mới. Cột export theo thứ tự: `product_id, title, slug, status, primary_category, base_price, sale_price, sku_count, updated_at`. Chỉ export sản phẩm của shop trong token — không tham số `shop_id`. Vượt `PRODUCT_EXPORT_MAX_ROWS` (10.000) → `400 PRODUCT_EXPORT_TOO_LARGE`, seller phải lọc hẹp hơn bằng `updated_from`/`updated_to`.
+
+#### `POST /seller/products/import/template` (Đồng thời hỗ trợ `GET`)
+
+Sinh và tải về tệp bảng tính mẫu Excel (`.xlsx`) được tùy biến động theo bộ lọc và nhu cầu nhập liệu của người bán.
+
+Request Body (`application/json`):
+- `row_count` (integer, tuỳ chọn, 5..200, mặc định: 100): Số dòng dữ liệu trống khởi tạo sẵn định dạng (viền bảng, dropdown, prefill category). Người bán hoàn toàn không bắt buộc truyền trường này và không cần tự tính số dòng/biến thể; các dòng trống người bán không điền sẽ được worker tự động bỏ qua an toàn.
+- `category_ids` (string[], tuỳ chọn): Danh sách mã danh mục muốn tạo mẫu. Tự động hiển thị tên thân thiện dạng `Tên Danh Mục [UUID]`.
+- `product_ids` (string[], tuỳ chọn): Danh sách mã sản phẩm SPU hiện hữu muốn nhập bổ sung biến thể SKU.
+- `layout_mode` (string, tuỳ chọn, `'MULTI_SHEET' | 'SINGLE_SHEET'`):
+  - `MULTI_SHEET`: Tự động phân chia mỗi danh mục được chọn thành một tab sheet riêng mang tên danh mục đó (kèm cell protection `spinCount: 1`).
+  - `SINGLE_SHEET`: Tất cả sản phẩm nằm trong 1 sheet dữ liệu ("Sản phẩm & Biến thể") kèm Data Validation dropdown chọn danh mục.
+
+Cấu trúc Workbook:
+1. **Sheet Dữ liệu (Multi-sheet hoặc "Sản phẩm & Biến thể")**: Chứa các cột SPU/SKU cố định và các cột thuộc tính động của từng danh mục. Với thuộc tính `ENUM`, nhúng Data Validation dropdown danh sách giá trị (`allowed_values`).
+2. **Sheet "Ví dụ điền mẫu"**: Minh họa 3 sản phẩm thực tế với số lượng biến thể đa dạng theo Nguyên tắc Vàng (SPU 1 Polo 4 biến thể, SPU 2 Balo 1 biến thể đơn, SPU 3 Sneaker 3 biến thể; dòng đầu điền tên sản phẩm, các dòng sau để trống để kế thừa).
+3. **Sheet "Hướng dẫn & Danh mục"**: Nhấn mạnh bảng "Nguyên Tắc Vàng Phân Cụm Biến Thể" (Cùng mã tham chiếu = Các biến thể của cùng 1 sản phẩm; Đổi mã tham chiếu = Sản phẩm mới), chú giải chi tiết kiểu dữ liệu, các trường bắt buộc, quy tắc giá VND (>= 1.000).
+
+Content Negotiation:
+- **Mặc định** (hoặc `Accept: application/json`): Trả về JSON envelope chứa Presigned Download URL (lưu cache trên MinIO S3 với TTL 1 giờ):
+  ```json
+  {
+    "data": {
+      "download_url": "https://storage.example/signed-download/templates/product_import_template_0191ec4d.xlsx",
+      "filename": "product_import_template_0191ec4d.xlsx",
+      "expires_at": "2026-08-30T10:00:00Z"
+    },
+    "meta": { "request_id": "req-01912f69", "as_of": "2026-08-30T09:00:00Z" }
+  }
+  ```
+- **Binary Stream** (`Accept: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`): Stream trực tiếp file Excel nhị phân về client.
+
+Tương thích ngược: Hệ thống đồng thời tiếp nhận `GET /seller/products/import/template?category_id={categoryId}` cho các client cũ.
+
+Lỗi:
+- `400 PRODUCT_CATEGORY_INVALID`: `category_id` không tồn tại hoặc không ở trạng thái `ACTIVE`.
+- `403 PRODUCT_SHOP_SUSPENDED`: Shop đang bị đình chỉ hoạt động.
+
+#### `POST /seller/products/import`
+
+Tiếp nhận tệp Excel (`.xlsx`) do người bán tải lên để khởi tạo tiến trình nạp sản phẩm hàng loạt (Bulk Ingest).
+- Content-Type: `multipart/form-data` (Field: `file`, định dạng `.xlsx`, dung lượng $\le 2\text{ MB}$, số lượng $\le 100\text{ SPUs}$ / tối đa 200 dòng SKU).
+- Quá trình nạp là **Bất đồng bộ (Async Job)**: API lưu tệp tạm vào Object Storage (S3), tạo bản ghi `import_jobs` ở trạng thái `PENDING`, đưa vào hàng đợi xử lý và phản hồi ngay lập tức (`< 500ms`) kèm `job_id`.
+
+Response `202 Accepted`:
+
+```json
+{
+  "data": {
+    "job_id": "01912f70-7a1b-7c12-9c55-8b1c34a6d921",
+    "status": "PENDING",
+    "total_rows": null,
+    "created_at": "2026-08-30T09:00:00Z"
+  },
+  "meta": { "request_id": "req-01912f70" }
+}
+```
+
+Ràng buộc & Giới hạn:
+- **Tenant Throttle**: Mỗi shop tại một thời điểm chỉ được phép có tối đa **1 job ở trạng thái `PENDING` hoặc `PROCESSING`**. Nếu shop tải lên tệp mới khi job cũ chưa hoàn tất $\to$ trả lỗi `409 PRODUCT_IMPORT_JOB_RUNNING`.
+- **Global Concurrency Throttling**: Hệ thống khống chế tối đa **3 worker chạy đồng thời** trên toàn cụm máy chủ (`GLOBAL_MAX_CONCURRENT_WORKERS = 3`) để bảo vệ tài nguyên CPU 4 nhân 8 luồng và giữ trọn vẹn Connection Pool MongoDB cho luồng API chính.
+- Shop chưa hoàn tất KYC (`PENDING`) vẫn được phép import sản phẩm (toàn bộ sản phẩm tạo ra đều ở trạng thái `DRAFT`). Shop `SUSPENDED` bị chặn `403 PRODUCT_SHOP_SUSPENDED`.
+- Vượt dung lượng 2MB $\to$ `400 PRODUCT_IMPORT_FILE_TOO_LARGE`. Tệp sai định dạng (không phải `.xlsx`) $\to$ `400 PRODUCT_IMPORT_FILE_TYPE_INVALID`.
+
+#### `GET /seller/products/import/jobs/{jobId}`
+
+Tra cứu trạng thái và tiến độ xử lý của tiến trình import theo thời gian thực (Zero-Trust IDOR check: Chỉ xem được job thuộc `shop_id` của actor).
+
+Response `200`:
+
+```json
+{
+  "data": {
+    "job_id": "01912f70-7a1b-7c12-9c55-8b1c34a6d921",
+    "status": "PROCESSING",
+    "total_rows": 98,
+    "processed_rows": 45,
+    "success_count": 40,
+    "error_count": 5,
+    "started_at": "2026-08-30T09:00:02Z",
+    "completed_at": null,
+    "created_at": "2026-08-30T09:00:00Z"
+  },
+  "meta": { "request_id": "req-01912f71" }
+}
+```
+
+Trạng thái `status`: `'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'`.
+Khi `status` đạt `'COMPLETED'` hoặc `'FAILED'`, trường `completed_at` được cập nhật.
+
+Lỗi:
+- `404 PRODUCT_NOT_FOUND`: `jobId` không tồn tại hoặc không thuộc quyền sở hữu của gian hàng hiện tại.
+
+#### `GET /seller/products/import/jobs/{jobId}/result`
+
+Tải về tệp Excel báo cáo kết quả đối soát chi tiết sau khi job hoàn tất (Áp dụng chiến lược **Partial Success**).
+- Nếu `error_count == 0`: Trả về thông báo 100% sản phẩm đã được tạo thành công dạng `DRAFT`.
+- Nếu `error_count > 0`: Sinh tệp Excel chứa nguyên trạng các dòng bị lỗi kèm thêm cột **"Lý do lỗi"** giải thích cụ thể bằng tiếng Việt (Ví dụ: *"Dòng 14: Mã SKU 'AO-01' đã tồn tại trong gian hàng"*, *"Dòng 25: Lỗi tải ảnh từ URL (404 Not Found)"*).
+- **Phòng chống tấn công Formula Injection (CWE-1236)**: Mọi ô dữ liệu văn bản bắt đầu bằng ký tự `=`, `+`, `-`, `@` đều được tự động tiền tố thêm dấu nháy đơn `'` trước khi ghi vào tệp Excel kết quả.
+- Tệp kết quả được lưu trữ tạm thời trên Object Storage (S3/MinIO) và cấp phát đường dẫn tải về an toàn thông qua Presigned Download URL có hiệu lực trong 30 phút.
+
+Response `200`:
+
+```json
+{
+  "data": {
+    "job_id": "01912f70-7a1b-7c12-9c55-8b1c34a6d921",
+    "result_file_url": "https://storage.example/signed-download/import-result-01912f70.xlsx",
+    "total_rows": 98,
+    "success_count": 92,
+    "error_count": 6,
+    "expires_at": "2026-08-30T09:35:00Z"
+  },
+  "meta": { "request_id": "req-01912f72" }
+}
+```
+
+Lỗi:
+- `400 PRODUCT_IMPORT_JOB_NOT_FINISHED`: Job đang xử lý (`PENDING` hoặc `PROCESSING`), chưa có file kết quả.
+- `400 PRODUCT_IMPORT_NO_ERRORS`: Job hoàn thành 100% không có lỗi, không có tệp kết quả lỗi.
+- `404 PRODUCT_NOT_FOUND`: Job không tồn tại hoặc không thuộc sở hữu của shop.
 
 #### `GET /seller/products/{productId}`
 
@@ -556,6 +681,22 @@ Không hard-delete; không nhận assignment mới; phải có migration policy 
 | `CATEGORY_DEPTH_EXCEEDED` | 409 | Category >5 level. |
 | `CATEGORY_CYCLE_DETECTED` | 409 | Parent cycle. |
 | `PRODUCT_ARCHIVED` | 409 | Mutation archived product. |
+| `PRODUCT_IMPORT_FILE_TOO_LARGE` | 400 | Tệp Excel nạp vượt quá 2MB. |
+| `PRODUCT_IMPORT_FILE_TYPE_INVALID` | 400 | Tệp nạp không đúng định dạng Excel .xlsx hoặc sai magic bytes. |
+| `PRODUCT_IMPORT_JOB_RUNNING` | 409 | Shop đang có một import job khác đang chạy (Tenant Throttle). |
+| `PRODUCT_IMPORT_JOB_NOT_FINISHED` | 400 | Tải kết quả khi job chưa hoàn tất (PENDING/PROCESSING). |
+| `PRODUCT_IMPORT_NO_ERRORS` | 400 | Tải kết quả lỗi khi job thành công 100% không có lỗi. |
+| `PRODUCT_IMPORT_TOO_MANY_ROWS` | 400 | Tệp nạp vượt quá giới hạn 200 dòng SKU. |
+| `PRODUCT_IMPORT_TOO_MANY_SPUS` | 400 | Tệp nạp vượt quá giới hạn 100 SPUs. |
+| `PRODUCT_SKU_DUPLICATE_VARIANT` | 400 | Trùng lặp tổ hợp thuộc tính biến thể trong cùng một SPU. |
+| `PRODUCT_SPU_STATUS_INVALID` | 400 | Không thể nạp biến thể vào SPU đang ở trạng thái BLOCKED hoặc ARCHIVED. |
+| `PRODUCT_SPU_REJECTED` | 400 | Biến thể bị từ chối do SPU cha có lỗi không thể khởi tạo. |
+| `PRODUCT_IMPORT_EMPTY_FILE` | 400 | Tệp Excel không chứa dòng dữ liệu nào hợp lệ. |
+| `PRODUCT_IMPORT_FILE_CORRUPT` | 400 | Tệp trên bộ lưu trữ S3 bị hỏng hoặc không thể đọc. |
+| `PRODUCT_IMPORT_WORKER_TIMEOUT` | 500 / job error | Tiến trình xử lý import bị quá hạn do worker mất tín hiệu heartbeat hoặc sự cố hệ thống. |
+| `PRODUCT_IMPORT_SERVICE_UNAVAILABLE` | 400 / 503 | Dịch vụ xử lý/xuất kết quả Excel chưa sẵn sàng. |
+| `MEDIA_INVALID_URL_BLOCKED` | 400 | URL ảnh vi phạm an toàn SSRF (trỏ về IP nội bộ/metadata). |
+| `DATABASE_TRANSACTION_FAILED` | 500 | Giao dịch cơ sở dữ liệu hàng loạt thất bại và đã rollback an toàn. |
 | `INVENTORY_PROJECTION_STALE` | 200 metadata | Snapshot stale; không phải deduction error. |
 | `INTERNAL_ERROR` | 500 | Unexpected error. |
 
