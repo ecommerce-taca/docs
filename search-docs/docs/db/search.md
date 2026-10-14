@@ -28,6 +28,7 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
 {
   "product_id": "product-01912f31",
   "shop_id": "shop-01912f30",
+  "shop": {"shop_id": "shop-01912f30", "name": "Taca Shop"},
   "title": "Áo khoác cotton",
   "title_exact": "Áo khoác cotton",
   "slug": "ao-khoac-cotton",
@@ -37,6 +38,7 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
   "brand": "Taca Brand",
   "price": 249000,
   "currency": "VND",
+  "cover_url": "https://cdn.example/signed",
   "rating_avg": 4.5,
   "rating_count": 12,
   "sales_count": 48,
@@ -53,14 +55,16 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
 | Field | Mapping | Ràng buộc |
 |---|---|---|
 | `product_id`, `shop_id`, `slug` | `keyword` | Filter/identity. |
+| `shop` | `object` (`{shop_id: keyword, name: keyword}`) | Snapshot thông tin shop từ product/catalog event. Result card đọc trực tiếp, Search không gọi Product API trong request path. |
 | `title` | `text` analyzer tiếng Việt baseline | Full-text; exact dùng `title_exact`. |
 | `description` | `text` | Search relevance, không highlight raw HTML. |
 | `category_ids` | `keyword[]` | Chuỗi id từ gốc tới `primary_category_id`, resolve qua projection `search_categories` (§3.4). Facet category gộp theo field này; `name` lấy từ projection. |
 | `category_path`, `brand` | `keyword[]`/`keyword` | Filter; `category_path` giữ nguyên giá trị Product gửi. |
 | `price` | `long` | Range/sort VND. |
+| `cover_url` | `keyword` (`index: false`) | URL ảnh đầu tiên từ media event. Result card đọc trực tiếp, không index tìm kiếm. |
 | `rating_avg` | `double`; `rating_count` `integer`; `sales_count` `long` | Sort/analytics; event rating/sales contract cần chốt. |
 | `attributes` | `flattened` | **Chỉ** giá trị của attribute `is_variant_dimension=true`, gộp từ các SKU `ACTIVE` qua `sku.events.v1`. Dùng cho dynamic facet (api §3.1), không hard-code color/size. |
-| `spec_attributes` | `flattened` | Thuộc tính mô tả(ừ `product.published.attributes`. Chỉ hiển thị/full-text phụ, **không** tạo facet. |
+| `spec_attributes` | `flattened` | Thuộc tính mô tả từ `product.published.attributes`. Chỉ hiển thị/full-text phụ, **không** tạo facet. |
 | `suggest` | `completion` | Prefix autocomplete. |
 | `visibility_status` | `keyword` | Public query bắt buộc `PUBLISHED`. |
 | `source_version` | `long` | Bỏ event cũ/out-of-order. |
@@ -75,14 +79,15 @@ Persist bằng index hoặc operational store tùy deployment; tối thiểu ph�
 | Field | Type | Ràng buộc |
 |---|---|---|
 | `job_id` | keyword | Unique. |
-| `target_index` | keyword | Server-generated. |
+| `target_index` | keyword | Server-generated (`products-v{mapping_version}-{yyyyMMddHHmmss}`). |
 | `mapping_version` | integer | Immutable. |
 | `state` | keyword | `REQUESTED/RUNNING/VALIDATING/SWAPPED/FAILED/CANCELLED`. |
 | `checkpoint` | keyword | Resume token, không là public ID. |
+| `total_estimate` | long/null | Document count của active index tại thời điểm start job (null nếu chưa có active index). |
 | `processed_count`/`failed_count` | long | Non-negative. |
 | `started_at`/`finished_at` | date | UTC. |
 | `updated_at` | date | Timestamp cập nhật gần nhất của job. |
-| `error_code` | keyword/null | Mã lỗi allowlist khi `state=FAILED`, null nếu không lỗi. |
+| `error_code` | keyword/null | Mã lỗi allowlist khi `state=FAILED`, null nếu không lỗi. Allowlist: `REINDEX_GATE_COUNT_MISMATCH`, `REINDEX_GATE_VERSION_REGRESSION`, `REINDEX_GATE_SMOKE_FAILED`, `REINDEX_SOURCE_UNAVAILABLE`, `REINDEX_TIMEOUT`, `REINDEX_WORKER_ERROR`. |
 | `trace_id`/`request_id` | keyword | Correlation allowlist. |
 
 ### 3.4 `search_categories` (projection nội bộ)
@@ -170,3 +175,4 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 | 4 | Rating aggregate event là mock. | Không bật rating sort/facet production trước khi contract có. | Rating owner |
 | 5 | Product export/replay API chưa có; hiện dùng Kafka replay/mock fixture. | Ảnh hưởng full rebuild khi Kafka retention hết. | Product/Platform owner |
 | 6 | **Đã chốt 2026-10-14:** facet category dùng projection `search_categories` (§3.4); `attributes` chỉ chứa variant dimension từ SKU, thuộc tính mô tả tách sang `spec_attributes`. | Nếu Product thêm `name` vào event hoặc cờ `is_variant_dimension` vào `product.published`, có thể đơn giản hoá. | Search owner |
+| 7 | **Đã chốt 2026-10-14:** Document mang `shop: {shop_id, name}` và `cover_url` (D3) để result card đọc trực tiếp; chuẩn hoá allowlist `error_code` reindex job (D19) và target index precision giây (D18). | Tránh phụ thuộc Product API trong search path. | Techlead |

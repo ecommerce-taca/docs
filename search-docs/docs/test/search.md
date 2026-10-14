@@ -1,6 +1,6 @@
 # Test Plan — Search Service
 
-> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · `docs/api/search.md` · Cập nhật: `2026-09-18`
+> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · `docs/api/search.md` · Cập nhật: `2026-10-14`
 
 ## 1. Chuẩn bị
 
@@ -39,6 +39,7 @@
 | S-API-09 | `POST /admin/search/reindex` | Admin + step-up | `202`, job requested, target index server-generated. |
 | S-API-10 | `POST /admin/search/reindex` | Job conflict/no step-up | `409 SEARCH_REINDEX_CONFLICT`/`403`. |
 | S-API-11 | `GET /admin/search/reindex/{jobId}` | running/failed/not found | Đúng state/progress/`404 SEARCH_REINDEX_NOT_FOUND`. |
+| S-API-12 | `POST /admin/search/reindex/{jobId}/cancel` | Admin + step-up huỷ job (REQUESTED/RUNNING/VALIDATING); sai state / không step-up | Đúng `200` CANCELLED, xoá target index dở dang; `409 SEARCH_REINDEX_CONFLICT` nếu state khác; `403 SEARCH_ADMIN_FORBIDDEN` nếu thiếu step-up; `404 SEARCH_REINDEX_NOT_FOUND` nếu không tìm thấy jobId. |
 
 ## 4. Unit test
 
@@ -71,3 +72,4 @@ All API cases, visibility/state transitions, event idempotency, security/redacti
 | 2 | Event source dùng CDC (Debezium MongoDB Outbox Event Router đọc outbox collection của Product Catalog, publish nguyên topic/payload) — khớp `product-catalog-docs` §6.1–6.2. | Ảnh hưởng replay/recovery test — test phải seed qua event fixture mô phỏng output của connector, không viết trực tiếp vào index. | Platform owner |
 | 3 | Rating aggregate contract đã chốt (2026-09-18): topic `rating.events.v1`, payload `product_id`/`avg`/`count`/`distribution` — khớp `rating-comment` lld §6 và product-catalog §6.3. | Nếu chưa có event thật lúc chạy test, dùng fixture theo payload đã chốt. | Rating owner |
 | 4 | Browser matrix/Penpot visual regression chưa chốt. | Bổ sung test matrix khi frontend chốt. | Frontend lead |
+| 5 | **Đã chốt 2026-10-14:** Bổ sung test case S-API-12 cho cancel reindex job (D17); kiểm tra out-of-range input bị từ chối 400 không clamp (D8); health check trả 200 khi consumer degraded (D14). | Đã cập nhật vào test matrix §3. | QA / Techlead |
