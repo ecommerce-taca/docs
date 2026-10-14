@@ -1,6 +1,6 @@
 # API Spec — Search Service
 
-> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · HLD/Penpot · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · HLD/Penpot · Cập nhật: `2026-10-14`
 > Base path: `/api/v1` · External access qua API Gateway · Error envelope và observability đồng nhất `auth-user`
 
 ## 1. Quy ước API chung
@@ -31,6 +31,7 @@
 | 4 | `GET /admin/search/status` | `SEARCH_ADMIN` | Consumer lag/index status. |
 | 5 | `POST /admin/search/reindex` | `SEARCH_ADMIN` + step-up (header `X-MFA-Step-Up`) | Start versioned reindex. |
 | 6 | `GET /admin/search/reindex/{jobId}` | `SEARCH_ADMIN` | Reindex job status. |
+| 7 | `POST /admin/search/reindex/{jobId}/cancel` | `SEARCH_ADMIN` + step-up (header `X-MFA-Step-Up`) | Cancel running reindex job. |
 
 Search không có endpoint CRUD product, stock reserve/deduct hoặc arbitrary Elasticsearch query.
 
@@ -86,12 +87,18 @@ Response `200`:
 
 Ràng buộc: chỉ `visibility_status=PUBLISHED`; empty result `200 data=[]`; `q` optional để browse category; Search không hứa stock realtime hay giá checkout cuối.
 
+Quy tắc sort và validation:
+
+- Sort mặc định: `relevance` khi có `q`, `newest` khi không có `q`. `newest` sắp xếp theo `created_at desc`. Mọi kiểu sort đều kết thúc bằng tie-break `product_id asc` để đảm bảo phân trang ổn định (deterministic pagination).
+- Tham số out-of-range bị từ chối với lỗi `400`, tuyệt đối không clamp: `size > 100`, `page < 1` → `400 SEARCH_INVALID_INPUT`; `q > 200` ký tự → `400 SEARCH_QUERY_TOO_LONG`; tham số bắt buộc bị thiếu hoặc rỗng → `400 SEARCH_INVALID_INPUT`.
+
 `facets` phục vụ `Search / Filter sidebar` trên Penpot (đếm số bên cạnh mỗi lựa chọn category/brand/giá/thuộc tính). Quy tắc:
 
 - `count` trong mỗi facet là số kết quả **nếu áp thêm điều kiện đó lên trên các filter khác đang chọn** (kiểu "count after AND, before this facet" — chuẩn multi-select facet của Elasticsearch, dùng `post_filter` cho facet đang tính để nó không tự loại chính nó). Không tính `count` chỉ trên toàn tập chưa lọc — như vậy chọn thêm filter sẽ không bao giờ làm số ở facet khác giảm về 0 một cách khó hiểu.
+- `category` facet chỉ hiển thị danh mục con trực tiếp (direct children): khi không có filter category → trả các danh mục gốc (root categories); khi có filter `category_id=X` → trả các danh mục con trực tiếp của X. Tên danh mục (`name`) lấy từ projection `search_categories` (db §3.4). Chỉ trả các category có `count > 0`.
 - `attributes` chỉ trả các key có `is_variant_dimension=true` từ Product Catalog (`capacity_liter`, `color`...), **động theo category đang lọc** — category khác nhau có bộ attribute facet khác nhau, không có danh sách cố định.
-- `price` chia bucket cố định 3 khoảng theo baseline trên; bucket cuối `max: null` nghĩa là không giới hạn trên.
-- `include_facets=false` bỏ qua tính `facets` (giảm tải cho autocomplete-as-you-type, chỉ cần `data`), mặc định `true` cho trang search chính.
+- `price` chia bucket cố định 3 khoảng theo baseline trên (`[0, 5000000)`, `[5000000, 20000000)`, `[20000000, ∞)`); bucket cuối `max: null` nghĩa là không giới hạn trên.
+- `include_facets=false` bỏ qua tính `facets` và khoá `meta.facets` bị lược bỏ hoàn toàn (omitted) trong response (giảm tải cho autocomplete-as-you-type, chỉ cần `data`), mặc định `true` cho trang search chính.
 - Facet **không** tính lại khi chỉ đổi `page`/`sort` — client cache facet từ lần gọi đầu, chỉ tính lại facet khi filter/query đổi. Đây là tối ưu ở tầng client, Search server luôn trả facet khi `include_facets=true` bất kể `page`.
 
 ### 3.2 `GET /search/suggest`
@@ -111,6 +118,13 @@ Query: `prefix` bắt buộc max 100, `limit` default 10/max 10, optional `categ
 
 `type` ∈ `QUERY` (gợi ý từ khoá phổ biến) `| PRODUCT` (gợi ý thẳng vào 1 sản phẩm, kèm `product_id` để deep-link) `| BRAND`. Không lưu search history v1; prefix không được log raw.
 
+Quy tắc suggest:
+
+- Validation out-of-range bị từ chối, không clamp: `limit > 10` → `400 SEARCH_INVALID_INPUT`; `prefix > 100` ký tự → `400 SEARCH_QUERY_TOO_LONG`; thiếu hoặc rỗng `prefix` → `400 SEARCH_INVALID_INPUT`.
+- Nguồn gợi ý `QUERY`: sinh từ `title` của các sản phẩm `PUBLISHED` khớp với prefix (cụm từ chuẩn hóa = `title` được cắt ở ranh giới từ ngay sau prefix, tối đa 6 từ), xếp hạng theo số lượng sản phẩm khớp. Không lưu hay sử dụng search history.
+- Thứ tự và dedupe: Trong `data`, thứ tự ưu tiên là `QUERY` trước, đến `PRODUCT`, rồi đến `BRAND`. Loại bỏ trùng lặp không phân biệt hoa thường và dấu tiếng Việt (case/diacritic-insensitively) giữa các type, giữ lại bản ghi xuất hiện đầu tiên; tổng số phần tử ≤ `limit`.
+- Giới hạn theo category: Khi có `category_id`, phạm vi gợi ý của cả 3 type (`QUERY`, `PRODUCT`, `BRAND`) bị giới hạn trong các sản phẩm có `category_ids` chứa category đó.
+
 ### 3.3 `GET /search/health`
 
 Internal response `200`:
@@ -119,7 +133,9 @@ Internal response `200`:
 {"data":{"elasticsearch":"UP","alias":"products-read","consumer":"RUNNING","event_lag_seconds":2},"meta":{"request_id":"01912f91"}}
 ```
 
-Nếu index alias/cluster không sẵn sàng: `503 SEARCH_INDEX_NOT_READY`/`SEARCH_UNAVAILABLE`.
+Quy tắc health check:
+- Trả `200` khi Elasticsearch `UP` và alias `products-read` tồn tại, ngay cả khi consumer ở trạng thái `DEGRADED` hoặc lag > 60s (tình trạng vẫn được báo trong response body qua `consumer` và `event_lag_seconds`).
+- Trả `503` chỉ khi Elasticsearch down (`503 SEARCH_UNAVAILABLE`) hoặc alias bị thiếu / chưa sẵn sàng (`503 SEARCH_INDEX_NOT_READY`), dùng chuẩn error envelope `{error:{code,message,details,trace_id}}`.
 
 ### 3.4 `GET /admin/search/status`
 
@@ -148,10 +164,21 @@ Query optional `index`, `consumer_group`. Response `200`:
 Request:
 
 ```json
-{"source":"KAFKA_REPLAY","mapping_version":1,"reason":"mapping update"}
+{"source":"INDEX_COPY","mapping_version":1,"reason":"mapping update"}
 ```
 
-Response `202` `{data:{job_id,state:"REQUESTED",target_index:"products-v1-20260830"},meta}`. Chỉ `SEARCH_ADMIN` + step-up; không cho client chọn arbitrary target index; nếu job cùng mapping đang chạy trả `409 SEARCH_REINDEX_CONFLICT`.
+`source` ∈ `INDEX_COPY` | `KAFKA_REPLAY`, mặc định là `INDEX_COPY`:
+- `INDEX_COPY`: Chạy Elasticsearch `_reindex` từ index đứng sau alias `products-read` sang index versioned mới (mặc định, dùng cho thay đổi mapping/settings).
+- `KAFKA_REPLAY`: Replay các topic từ earliest offsets với consumer group riêng `search-reindex-<jobId>`.
+
+Target index được sinh tự động theo quy tắc `products-v{mapping_version}-{yyyyMMddHHmmss}` (độ chính xác theo giây, ví dụ: `products-v1-20261014120000`).
+
+Response `202` `{data:{job_id,state:"REQUESTED",target_index:"products-v1-20261014120000"},meta}`.
+
+Ràng buộc:
+- Yêu cầu quyền `SEARCH_ADMIN` + header `X-MFA-Step-Up: true|1` (Gateway xác thực step-up, Search kiểm tra header; nếu thiếu hoặc không hợp lệ trả `403 SEARCH_ADMIN_FORBIDDEN`).
+- Không cho client chọn arbitrary target index.
+- Chỉ duy nhất 1 job được active (`REQUESTED`, `RUNNING`, `VALIDATING`) tại một thời điểm bất kể mapping version; nếu đang có job active, trả `409 SEARCH_REINDEX_CONFLICT`.
 
 ### 3.6 `GET /admin/search/reindex/{jobId}`
 
@@ -162,21 +189,55 @@ Response `200`:
   "data": {
     "job_id": "job-01912fb8",
     "state": "RUNNING",
-    "target_index": "products-v1-20260830",
+    "target_index": "products-v1-20261014120000",
     "mapping_version": 1,
     "processed_count": 32000,
     "failed_count": 4,
     "total_estimate": 48213,
     "checkpoint": "product-01912f9a",
-    "started_at": "2026-08-30T09:00:00Z",
-    "updated_at": "2026-08-30T09:05:00Z",
+    "started_at": "2026-10-14T11:55:00Z",
+    "updated_at": "2026-10-14T12:00:00Z",
     "error_code": null
   },
   "meta": { "request_id": "01912fb9-7a1b-7c12-9c55-8b1c34a6d921" }
 }
 ```
 
-`state` ∈ `REQUESTED`/`RUNNING`/`VALIDATING`/`SWAPPED`/`FAILED`/`CANCELLED` (khớp `reindex_jobs.state` ở `docs/db/search.md` §3.3). `error_code` chỉ có giá trị khi `state=FAILED`, dùng allowlist đã redact (không raw exception). Job không tồn tại: `404 SEARCH_REINDEX_NOT_FOUND`.
+`state` ∈ `REQUESTED`/`RUNNING`/`VALIDATING`/`SWAPPED`/`FAILED`/`CANCELLED` (khớp `reindex_jobs.state` ở `docs/db/search.md` §3.3).
+
+Quy tắc:
+- `total_estimate`: Số lượng document của index active tại thời điểm job bắt đầu (nullable nếu chưa có active index).
+- `error_code`: Chỉ có giá trị khi `state=FAILED`, null khi không có lỗi. Allowlist cố định gồm: `REINDEX_GATE_COUNT_MISMATCH`, `REINDEX_GATE_VERSION_REGRESSION`, `REINDEX_GATE_SMOKE_FAILED`, `REINDEX_SOURCE_UNAVAILABLE`, `REINDEX_TIMEOUT`, `REINDEX_WORKER_ERROR`. Tuyệt đối không trả raw exception/stack trace.
+- Job không tồn tại: `404 SEARCH_REINDEX_NOT_FOUND`.
+
+### 3.7 `POST /admin/search/reindex/{jobId}/cancel`
+
+Yêu cầu quyền `SEARCH_ADMIN` kèm xác thực bước cao (header `X-MFA-Step-Up: true|1`; thiếu hoặc không hợp lệ trả `403 SEARCH_ADMIN_FORBIDDEN`).
+
+Chỉ cho phép huỷ khi job đang ở trạng thái `REQUESTED`, `RUNNING`, hoặc `VALIDATING`. Nếu job ở trạng thái khác (`SWAPPED`, `FAILED`, `CANCELLED`), trả `409 SEARCH_REINDEX_CONFLICT`. Nếu không tìm thấy job, trả `404 SEARCH_REINDEX_NOT_FOUND`.
+
+Khi huỷ thành công, target index đang tạo dở sẽ bị xoá, alias `products-read` được giữ nguyên vẹn không đổi, giải phóng active lock, và job chuyển sang `CANCELLED`.
+
+Response `200`:
+
+```json
+{
+  "data": {
+    "job_id": "job-01912fb8",
+    "state": "CANCELLED",
+    "target_index": "products-v1-20261014120000",
+    "mapping_version": 1,
+    "processed_count": 32000,
+    "failed_count": 0,
+    "total_estimate": 48213,
+    "checkpoint": "product-01912f9a",
+    "started_at": "2026-10-14T11:55:00Z",
+    "updated_at": "2026-10-14T12:00:00Z",
+    "error_code": null
+  },
+  "meta": { "request_id": "01912fba-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
 
 ## 4. Mã lỗi chung
 
@@ -202,3 +263,4 @@ Response `200`:
 | 3 | Search không trả stock — không consume event stock; khả năng mua do Cart/Checkout kiểm tra. | Tránh checkout dùng Search làm source stock. | Order/Inventory owner |
 | 4 | `sort=rating_desc` dùng `rating_avg` đồng bộ từ `rating.aggregate.updated` của `rating-comment`; chỉ cần chốt tên topic + schema registry. | Nếu chưa chốt topic, `rating_desc` trả `rating_avg` cũ/thiếu cho tới khi đồng bộ. | Search + Rating owner |
 | 5 | Exact analyzer/synonym/relevance chưa chốt. | Cần benchmark query tiếng Việt trước go-live. | Search owner |
+| 6 | **Đã chốt 2026-10-14:** Cấu trúc facet category direct children (D4), sort default + tie-break (D6), out-of-range input bị từ chối 400 không clamp (D8), QUERY suggest từ title sản phẩm PUBLISHED (D11–D13), /search/health degrade 200 (D14), cancel reindex (D17), reindex source INDEX_COPY/KAFKA_REPLAY (D16), target index precision giây (D18), và error_code allowlist (D19). | Đã hoàn thiện spec và test contract. | Techlead / Product owner |

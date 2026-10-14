@@ -1,6 +1,6 @@
 # LLD — Search Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
+> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-10-14`
 > Tech stack đã chốt: Node.js + NestJS · Elasticsearch · Kafka consumer (domain event do CDC — Debezium MongoDB Outbox Event Router — đọc outbox collection của Product Catalog và publish) · REST qua API Gateway
 
 ## 1. Phạm vi
@@ -62,7 +62,7 @@ src/
 | Thành phần | Trách nhiệm | Ràng buộc |
 |---|---|---|
 | `SearchController` | Public search/suggest/facet endpoint | Query bounded; không nhận arbitrary Elasticsearch DSL. |
-| `AdminSearchController` | Reindex/status/lag diagnostics | `SEARCH_ADMIN`/ops only; destructive alias action phải step-up. |
+| `AdminSearchController` | Reindex/cancel/status/lag diagnostics | `SEARCH_ADMIN`/ops only; destructive alias action hoặc cancel phải step-up (`X-MFA-Step-Up: true\|1`). |
 | `QueryParser` | Validate keyword/filter/sort/facet | Allowlist fields; reject script/query injection. |
 | `ProductDocumentBuilder` | Map Product event → index document | Map Product `ACTIVE` → index `PUBLISHED`; không ghi stock ledger. |
 | `KafkaProductConsumer` | Consume event theo aggregate key | Dedupe `event_id`, bỏ event có version cũ; retry/DLQ. |
@@ -103,11 +103,17 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 
 ### 3.3 Reindex và alias swap
 
-1. Tạo index version mới `products-v{timestamp}` với mapping/settings đã versioned.
-2. Backfill từ event replay hoặc approved Product export; checkpoint theo aggregate ID/version.
-3. Chạy count/checksum/sample comparison, kiểm document `PUBLISHED` visibility.
-4. Atomic alias swap `products-read` sang index mới; giữ index cũ theo retention.
-5. Không expose endpoint cho client tự chọn index name.
+1. **Kiểm soát đồng thời (Concurrency Lock)**: Chỉ duy nhất 1 job được active (`REQUESTED`, `RUNNING`, hoặc `VALIDATING`) tại một thời điểm trên toàn hệ thống (bất kể mapping version). Cơ chế enforced bằng document khoá create-only trong Elasticsearch index `search-reindex-jobs` (`_id = active-lock`, `op_type = create`). Khi job hoàn tất (`SWAPPED`, `FAILED`, hoặc `CANCELLED`), lock được giải phóng.
+2. **Tạo index mới**: Index version đích được đặt tên theo format `products-v{mapping_version}-{yyyyMMddHHmmss}` (độ chính xác theo giây) với mapping/settings versioned. Không cho client tự chọn tên index.
+3. **Thực thi backfill theo `source`**:
+   - `INDEX_COPY` (mặc định): Gọi Elasticsearch native `_reindex` API để sao chép toàn bộ document từ index đang đứng sau alias `products-read` sang index mới. Thường dùng khi thay đổi mapping/settings/analyzer.
+   - `KAFKA_REPLAY`: Replay các topic từ earliest offsets với dedicated consumer group `search-reindex-<jobId>`, ghi nhận checkpoint theo aggregate ID/version.
+4. **Validation gates**: Trước khi swap alias, thực hiện kiểm tra nghiêm ngặt:
+   - So sánh số lượng document giữa index mới và `total_estimate` của index active cũ (không lệch quá ngưỡng cho phép).
+   - Kiểm tra version regression (`source_version` không được lùi).
+   - Smoke test query (search cơ bản, facet, suggest).
+5. **Atomic alias swap**: Chuyển alias `products-read` trỏ sang index mới; index cũ giữ lại theo retention policy để rollback nếu cần.
+6. **Huỷ job (Cancel flow)**: Khi nhận yêu cầu cancel từ `POST /admin/search/reindex/{jobId}/cancel`, nếu job đang `REQUESTED`/`RUNNING`/`VALIDATING` thì tiến hành huỷ tác vụ đang chạy, xoá target index đang tạo dở, giữ nguyên alias `products-read`, giải phóng lock và cập nhật trạng thái job sang `CANCELLED`.
 
 ### 3.4 Autocomplete
 
@@ -123,7 +129,7 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | `SUGGEST_LIMIT` | 10 | Max suggestion/request. |
 | `QUERY_MAX_LENGTH` | 200 | Unicode characters. |
 | `PREFIX_MAX_LENGTH` | 100 | Autocomplete. |
-| `ES_REQUEST_TIMEOUT` | 2s | Search request; trả 503 khi quá hạn. |
+| `ES_REQUEST_TIMEOUT` | 2s | Search request; trả 504 SEARCH_TIMEOUT khi quá hạn. |
 | `ES_BULK_BATCH_SIZE` | 500 | Max documents/bulk request. |
 | `ES_REFRESH_INTERVAL` | 1s | Không refresh từng document. |
 | `EVENT_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
@@ -153,8 +159,8 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | Topic | Event | Xử lý |
 |---|---|---|
 | `product.events.v1` | `product.created`, `product.updated`, `product.published`, `product.unpublished`, `product.blocked`, `product.unblocked`, `product.archived` | Build/upsert/hide/delete logical document. `product.unblocked` mang `next_status`: nếu `ACTIVE` thì hiển thị lại document, nếu `INACTIVE` thì giữ ẩn — không bỏ qua event này, nếu không sản phẩm được gỡ chặn sẽ không bao giờ quay lại index. |
-| `sku.events.v1` | `sku.created`, `sku.updated`, `sku.status_changed` | Cập nhật SKU/variant/price searchable. |
-| `category.events.v1` | `category.created`, `category.updated`, `category.status_changed` | Cập nhật category path/facet hoặc reindex affected docs. |
+| `sku.events.v1` | `sku.created`, `sku.updated`, `sku.status_changed` | Cập nhật SKU/variant/price searchable; gộp giá trị variant dimension của các SKU `ACTIVE` vào `attributes` (db §3.1). |
+| `category.events.v1` | `category.created`, `category.updated`, `category.status_changed` | Upsert projection `search_categories` (db §3.4); đổi path thì reindex affected docs, đổi tên thì không. |
 | `catalog.events.v1` | `product.category_changed`, `product.media_updated`, `product.shop_snapshot_updated` | Reindex document affected. |
 | `rating.events.v1` | `rating.aggregate.updated` | Cập nhật `rating_avg`/`rating_count` của product; contract do `rating-comment` sở hữu (payload: `product_id`, `avg`, `count`, `distribution`). |
 
@@ -222,3 +228,4 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | 5 | Elasticsearch version, analyzer tiếng Việt, synonym và shard/replica chưa chốt. | Ảnh hưởng relevance, storage và query latency. | Search/DevOps |
 | 6 | Search không dùng stock projection realtime làm source availability. | Nếu cần sort theo stock, phải có event/contract và freshness SLA riêng. | Inventory/Product owner |
 | 7 | **Cấu trúc facet đã viết** ở `docs/api/search.md` §3.1 (category/brand/price bucket cố định/attribute động) là **thiết kế theo suy luận từ Penpot** (`Search / Filter sidebar`, `Chip / 256GB`, `Brand / Apple`), **chưa được Product xác nhận**. Count dùng semantics "multi-select facet" (post_filter). | Nếu Product muốn cấu trúc khác (VD không cần count, hoặc bucket giá động theo phân phối dữ liệu), phải đổi contract trước khi FE code filter sidebar. | Product owner |
+| 8 | **Đã chốt 2026-10-14:** Cấu trúc facet (category con trực tiếp D4, bucket giá cố định D9, multi-select post_filter D10), suggest QUERY từ title PUBLISHED (D11–D13), timeout trả 504 SEARCH_TIMEOUT (D5), cơ chế lock active job duy nhất và luồng INDEX_COPY/cancel reindex (D16, D17, D18, D21). | Đã đồng bộ vào spec API, LLD và DB. | Product owner / Techlead |
