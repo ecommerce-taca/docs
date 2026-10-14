@@ -44,6 +44,7 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
   "sales_count": 48,
   "attributes": {"color": ["Đen", "Trắng"], "size": ["M", "L"]},
   "spec_attributes": {"material": ["cotton"]},
+  "attribute_pairs": ["color=Đen", "color=Trắng", "size=M", "size=L"],
   "suggest": ["Áo khoác cotton", "Taca Brand"],
   "visibility_status": "PUBLISHED",
   "source_version": 8,
@@ -65,6 +66,8 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
 | `rating_avg` | `double`; `rating_count` `integer`; `sales_count` `long` | Sort/analytics; event rating/sales contract cần chốt. |
 | `attributes` | `flattened` | **Chỉ** giá trị của attribute `is_variant_dimension=true`, gộp từ các SKU `ACTIVE` qua `sku.events.v1`. Dùng cho dynamic facet (api §3.1), không hard-code color/size. |
 | `spec_attributes` | `flattened` | Thuộc tính mô tả từ `product.published.attributes`. Chỉ hiển thị/full-text phụ, **không** tạo facet. |
+| `attribute_pairs` | `keyword[]` | Giá trị "<key>=<value>" sinh từ `attributes`; dùng cho facet attribute trong 1 request ES. |
+| `variant_skus` | `object` (`enabled: false`) | Không index; trạng thái từng SKU {status, attributes, version} để tính lại `attributes` khi SKU đổi trạng thái. |
 | `suggest` | `completion` | Prefix autocomplete. |
 | `visibility_status` | `keyword` | Public query bắt buộc `PUBLISHED`. |
 | `source_version` | `long` | Bỏ event cũ/out-of-order. |
@@ -116,6 +119,8 @@ Nuôi từ `category.events.v1` (`category.created/updated/status_changed`); kh�
 | `category_path` | keyword array | Category filter/facet. |
 | `attributes` | flattened | Dynamic facets (chỉ variant dimension). |
 | `spec_attributes` | flattened | Thuộc tính mô tả, không facet. |
+| `attribute_pairs` | keyword array | Facet attribute trong 1 request ES (sinh từ `attributes`). |
+| `variant_skus` | object (`enabled: false`) | Không index; lưu trạng thái SKU để tính lại `attributes`. |
 | `search_categories` | index nội bộ | Projection category cho facet name và resolve `category_ids`. |
 | `suggest` | completion | Autocomplete. |
 | `visibility_status` | filter-first keyword | Không query hidden public. |
@@ -176,3 +181,4 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 | 5 | Product export/replay API chưa có; hiện dùng Kafka replay/mock fixture. | Ảnh hưởng full rebuild khi Kafka retention hết. | Product/Platform owner |
 | 6 | **Đã chốt 2026-10-14:** facet category dùng projection `search_categories` (§3.4); `attributes` chỉ chứa variant dimension từ SKU, thuộc tính mô tả tách sang `spec_attributes`. | Nếu Product thêm `name` vào event hoặc cờ `is_variant_dimension` vào `product.published`, có thể đơn giản hoá. | Search owner |
 | 7 | **Đã chốt 2026-10-14:** Document mang `shop: {shop_id, name}` và `cover_url` (D3) để result card đọc trực tiếp; chuẩn hoá allowlist `error_code` reindex job (D19) và target index precision giây (D18). | Tránh phụ thuộc Product API trong search path. | Techlead |
+| 8 | **Đã chốt 2026-10-14:** Document mang `attribute_pairs` (keyword[]) để facet attribute trong 1 request ES và `variant_skus` (object, `enabled: false`) lưu trạng thái từng SKU để tính lại `attributes` (D23). | Cần reindex khi cập nhật mapping products. | Techlead |
