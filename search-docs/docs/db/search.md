@@ -1,6 +1,6 @@
 # Database — Search Service
 
-> Nguồn: `docs/lld/search.md` · HLD `EcommercePlatform-v4(6).excalidraw` · Cập nhật: `2026-09-18`
+> Nguồn: `docs/lld/search.md` · HLD `EcommercePlatform-v4(6).excalidraw` · Cập nhật: `2026-10-14`
 > Baseline: Elasticsearch 8.x · index riêng, không dùng database Product làm query store
 
 ## 1. Quy ước chung
@@ -40,7 +40,8 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
   "rating_avg": 4.5,
   "rating_count": 12,
   "sales_count": 48,
-  "attributes": {"material": ["cotton"]},
+  "attributes": {"color": ["Đen", "Trắng"], "size": ["M", "L"]},
+  "spec_attributes": {"material": ["cotton"]},
   "suggest": ["Áo khoác cotton", "Taca Brand"],
   "visibility_status": "PUBLISHED",
   "source_version": 8,
@@ -54,10 +55,12 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
 | `product_id`, `shop_id`, `slug` | `keyword` | Filter/identity. |
 | `title` | `text` analyzer tiếng Việt baseline | Full-text; exact dùng `title_exact`. |
 | `description` | `text` | Search relevance, không highlight raw HTML. |
-| `category_ids`, `category_path`, `brand` | `keyword[]`/`keyword` | Facet/filter. |
+| `category_ids` | `keyword[]` | Chuỗi id từ gốc tới `primary_category_id`, resolve qua projection `search_categories` (§3.4). Facet category gộp theo field này; `name` lấy từ projection. |
+| `category_path`, `brand` | `keyword[]`/`keyword` | Filter; `category_path` giữ nguyên giá trị Product gửi. |
 | `price` | `long` | Range/sort VND. |
 | `rating_avg` | `double`; `rating_count` `integer`; `sales_count` `long` | Sort/analytics; event rating/sales contract cần chốt. |
-| `attributes` | `flattened` | Dynamic facet, không hard-code color/size. |
+| `attributes` | `flattened` | **Chỉ** giá trị của attribute `is_variant_dimension=true`, gộp từ các SKU `ACTIVE` qua `sku.events.v1`. Dùng cho dynamic facet (api §3.1), không hard-code color/size. |
+| `spec_attributes` | `flattened` | Thuộc tính mô tả(ừ `product.published.attributes`. Chỉ hiển thị/full-text phụ, **không** tạo facet. |
 | `suggest` | `completion` | Prefix autocomplete. |
 | `visibility_status` | `keyword` | Public query bắt buộc `PUBLISHED`. |
 | `source_version` | `long` | Bỏ event cũ/out-of-order. |
@@ -82,6 +85,22 @@ Persist bằng index hoặc operational store tùy deployment; tối thiểu ph�
 | `error_code` | keyword/null | Mã lỗi allowlist khi `state=FAILED`, null nếu không lỗi. |
 | `trace_id`/`request_id` | keyword | Correlation allowlist. |
 
+### 3.4 `search_categories` (projection nội bộ)
+
+Nuôi từ `category.events.v1` (`category.created/updated/status_changed`); không phục vụ public query trực tiếp. Dùng để resolve `category_ids` khi build product document và tra `name` cho facet category.
+
+| Field | Type | Ràng buộc |
+|---|---|---|
+| `category_id` | keyword | `_id` của document. |
+| `name` | keyword | Tên hiển thị hiện tại. |
+| `parent_id` | keyword/null | Null với node gốc. |
+| `path_ids` | keyword[] | Chuỗi id từ gốc tới chính nó. |
+| `status` | keyword | Theo Product Catalog. |
+| `source_version` | long | Bỏ event cũ. |
+| `updated_at` | date | UTC. |
+
+Đổi `name` chỉ cập nhật projection, không reindex product. Đổi `parent_id`/path thì reindex các product có `category_ids` chứa category đó.
+
 ## 4. Index và uniqueness
 
 | Index/alias | Mapping/setting | Mục đích |
@@ -90,7 +109,9 @@ Persist bằng index hoặc operational store tùy deployment; tối thiểu ph�
 | `{product_id}` | `_id` chính | Upsert/delete deterministic. |
 | `title` | Vietnamese analyzer + lowercase/ascii folding policy | Full-text. |
 | `category_path` | keyword array | Category filter/facet. |
-| `attributes` | flattened | Dynamic facets. |
+| `attributes` | flattened | Dynamic facets (chỉ variant dimension). |
+| `spec_attributes` | flattened | Thuộc tính mô tả, không facet. |
+| `search_categories` | index nội bộ | Projection category cho facet name và resolve `category_ids`. |
 | `suggest` | completion | Autocomplete. |
 | `visibility_status` | filter-first keyword | Không query hidden public. |
 
@@ -148,3 +169,4 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 | 3 | Consumer state/reindex job có thể dùng operational index, chưa chốt retention store. | Ảnh hưởng recovery/debug. | Platform owner |
 | 4 | Rating aggregate event là mock. | Không bật rating sort/facet production trước khi contract có. | Rating owner |
 | 5 | Product export/replay API chưa có; hiện dùng Kafka replay/mock fixture. | Ảnh hưởng full rebuild khi Kafka retention hết. | Product/Platform owner |
+| 6 | **Đã chốt 2026-10-14:** facet category dùng projection `search_categories` (§3.4); `attributes` chỉ chứa variant dimension từ SKU, thuộc tính mô tả tách sang `spec_attributes`. | Nếu Product thêm `name` vào event hoặc cờ `is_variant_dimension` vào `product.published`, có thể đơn giản hoá. | Search owner |

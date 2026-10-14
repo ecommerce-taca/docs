@@ -153,8 +153,8 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | Topic | Event | Xử lý |
 |---|---|---|
 | `product.events.v1` | `product.created`, `product.updated`, `product.published`, `product.unpublished`, `product.blocked`, `product.unblocked`, `product.archived` | Build/upsert/hide/delete logical document. `product.unblocked` mang `next_status`: nếu `ACTIVE` thì hiển thị lại document, nếu `INACTIVE` thì giữ ẩn — không bỏ qua event này, nếu không sản phẩm được gỡ chặn sẽ không bao giờ quay lại index. |
-| `sku.events.v1` | `sku.created`, `sku.updated`, `sku.status_changed` | Cập nhật SKU/variant/price searchable. |
-| `category.events.v1` | `category.created`, `category.updated`, `category.status_changed` | Cập nhật category path/facet hoặc reindex affected docs. |
+| `sku.events.v1` | `sku.created`, `sku.updated`, `sku.status_changed` | Cập nhật SKU/variant/price searchable; gộp giá trị variant dimension của các SKU `ACTIVE` vào `attributes` (db §3.1). |
+| `category.events.v1` | `category.created`, `category.updated`, `category.status_changed` | Upsert projection `search_categories` (db §3.4); đổi path thì reindex affected docs, đổi tên thì không. |
 | `catalog.events.v1` | `product.category_changed`, `product.media_updated`, `product.shop_snapshot_updated` | Reindex document affected. |
 | `rating.events.v1` | `rating.aggregate.updated` | Cập nhật `rating_avg`/`rating_count` của product; contract do `rating-comment` sở hữu (payload: `product_id`, `avg`, `count`, `distribution`). |
 
