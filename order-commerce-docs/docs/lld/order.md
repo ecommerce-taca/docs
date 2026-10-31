@@ -199,7 +199,7 @@ lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3
 | Shipment | `shipment.failed` | Ghi nhận delivery failed vào timeline/shipment projection; **giữ** `OrderStatus = SHIPPED` (enum không có FAILED) — xử lý tiếp qua refund/return workflow ở Payment/Support, không tự đổi order status. |
 | Auth User | `user.status_changed` (mock policy) | Chặn hành động account mới nếu suspended; không đổi order history. |
 
-> **Lệch với code producer (2026-10-31, xem `CONTRACT-MATRIX.md`):** Payment-Wallet (`payment-wallet-service@main`) hiện chỉ route `payment.created` và `wallet.allocated` ra Kafka; `payment.succeeded/failed/expired/refunded` chỉ nằm trong outbox. Payload Payment-Wallet là record camelCase phẳng (`eventId`, `occurredAt`, `paymentId`…), **không** có envelope `event_type`/`payload` như các topic khác — consumer Order phải chờ Payment-Wallet chuẩn hoá envelope (`payment-wallet-docs/docs/lld/payment-wallet.md` §6.1).
+> **Lệch với code producer (2026-10-31, xem `CONTRACT-MATRIX.md`):** Payment-Wallet (`payment-wallet-service@main`) hiện chỉ route `payment.created` và `wallet.allocated` ra Kafka; `payment.succeeded/failed/expired/refunded` chỉ nằm trong outbox. Payload Payment-Wallet là record camelCase phẳng (`eventId`, `occurredAt`, `paymentId`…), **không** có envelope `event_type`/`payload` như các topic khác. Format này là contract đã triển khai: consumer của Order phải parse đúng format record của Payment-Wallet (`payment-wallet-docs/docs/lld/payment-wallet.md` §6.1, `CONTRACT-MATRIX.md` §8.4).
 
 ## 7. Mã lỗi
 

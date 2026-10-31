@@ -168,7 +168,7 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `PENDING_COD → SUCCESS` (capture
 
 ### 6.1 Event phát ra
 
-Mọi domain event được ghi vào `outbox_events` trong cùng transaction. Payload là bản serialize JSON của record domain (field camelCase như `eventId`, `occurredAt`, `paymentId`…); header outbox mang `event_id`, `request_id`, `traceparent`, `tracestate`. Kafka key = `aggregate_id`. Value Kafka chính là record đó — **không** có envelope `event_id`/`event_type`/`occurred_at`/`payload` (snake_case) như auth-user, shipment, product-catalog; consumer chuẩn (Notification `DomainEventSchema`, Order) sẽ không parse được. Xem `CONTRACT-MATRIX.md` §2.
+Mọi domain event được ghi vào `outbox_events` trong cùng transaction. Payload là bản serialize JSON của record domain (field camelCase như `eventId`, `occurredAt`, `paymentId`…); header outbox mang `event_id`, `request_id`, `traceparent`, `tracestate`. Kafka key = `aggregate_id`. Value Kafka chính là record đó — **không** có envelope `event_id`/`event_type`/`occurred_at`/`payload` (snake_case) như auth-user, shipment, product-catalog; đây là format đã triển khai, consumer (Notification, Order) phải parse theo format này khi Payment-Wallet route thêm event. Xem `CONTRACT-MATRIX.md` §2, §8.
 
 **Chỉ hai event được `KafkaTopicRouter` route ra Kafka.** Các event còn lại nằm trong outbox, không có topic, chưa consumer nào nhận được.
 
