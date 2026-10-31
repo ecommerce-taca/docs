@@ -1,7 +1,8 @@
 # LLD — Search Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-10-14`
-> Tech stack đã chốt: Node.js + NestJS · Elasticsearch · Kafka consumer (domain event do CDC — Debezium MongoDB Outbox Event Router — đọc outbox collection của Product Catalog và publish) · REST qua API Gateway
+> Nguồn: `HighLevelDesign/HLD.md` · `FrontendDesign/Taca.penpot.zip` · Code: `ecommerce-taca/search-service` @ `develop` (`9750a2f`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ✅ Đã triển khai — search, suggest, readiness, admin status/reindex/cancel, Kafka consumer 5 topic, DLQ; nhánh `main` mới chỉ có README, code nằm ở `develop`.
+> Tech stack: Node.js + NestJS 11 · `@elastic/elasticsearch` 8.15 · `kafkajs` · `nestjs-pino` · `prom-client` · Elasticsearch · Kafka consumer (domain event do CDC — Debezium MongoDB Outbox Event Router — đọc outbox collection của Product Catalog và publish) · REST qua API Gateway
 
 ## 1. Phạm vi
 
@@ -49,14 +50,17 @@ Inventory ──(không gọi trực tiếp Search)──► Product stock proje
 
 ```text
 src/
-├── search-query/       # query parser, filter/facet/sort, result mapper
-├── autocomplete/       # completion suggester
-├── product-index/      # index mapping, document builder, bulk write
-├── event-consumer/     # Kafka consumer, dedupe, version ordering
-├── reindex/            # alias swap, backfill, resume checkpoint
-├── security/           # route role, query validation, redaction
-├── observability/      # shared JSON log/trace/metric contract
-└── health/             # liveness/readiness/index lag
+├── main.ts             # global prefix api/v1 (trừ health/live, metrics), ValidationPipe, SearchExceptionFilter
+├── common/             # constants, enums, errors (SearchException, error-codes), context (RequestContextMiddleware), es error mapper
+├── config/             # AppConfigService + env.validation (fail-fast)
+├── search-query/       # SearchController, QueryParser, SearchRequestBuilder, price-buckets, FacetMapper, ResultMapper
+├── autocomplete/       # SuggestController, SuggestService
+├── product-index/      # mappings (products/consumer-state/reindex-jobs/search-categories v1), ProductDocumentBuilder, VariantAggregator, EsIndexWriter, CategoryProjection, IndexBootstrapService
+├── event-consumer/     # KafkaEventConsumer, EventProcessor (dedupe/retry/park), DlqPublisher, handlers (product/sku/category/catalog/rating), ConsumerStatusService
+├── reindex/            # AdminSearchController, ReindexService, ReindexRunner, state-machine, validation-gate, IndexCopySource, KafkaReplaySource, JobRepository
+├── security/           # RolesGuard, StepUpGuard, @AdminOnly
+├── observability/      # MetricsController (/metrics), MetricsService, MetricsMiddleware
+└── health/             # HealthController (/health/live), ReadinessController (/api/v1/search/health)
 ```
 
 | Thành phần | Trách nhiệm | Ràng buộc |
@@ -65,8 +69,8 @@ src/
 | `AdminSearchController` | Reindex/cancel/status/lag diagnostics | `SEARCH_ADMIN`/ops only; destructive alias action hoặc cancel phải step-up (`X-MFA-Step-Up: true\|1`). |
 | `QueryParser` | Validate keyword/filter/sort/facet | Allowlist fields; reject script/query injection. |
 | `ProductDocumentBuilder` | Map Product event → index document | Map Product `ACTIVE` → index `PUBLISHED`; không ghi stock ledger. |
-| `KafkaProductConsumer` | Consume event theo aggregate key | Dedupe `event_id`, bỏ event có version cũ; retry/DLQ. |
-| `IndexWriter` | Bulk upsert/delete và refresh policy | Không refresh sau từng document; bulk bounded. |
+| `KafkaEventConsumer` + `EventProcessor` | Consume 5 topic, route theo topic tới handler | Dedupe `event_id` qua index `search-consumer-state`; retry 3 lần (backoff 2s) rồi DLQ `search.events.dlq.v1`; event của product chưa được index thì được "park" (`pending:<event_id>`) và replay khi product được index (tối đa 100/lần). |
+| `EsIndexWriter` | Bulk upsert/delete và refresh policy | Không refresh sau từng document; bulk bounded. |
 | `ReindexService` | Backfill index mới, alias swap | Chạy checkpoint, không làm mất index đang phục vụ. |
 | `ObservabilityModule` | Chuẩn hóa log/trace/metrics | Không log raw query có PII hoặc Authorization. |
 
@@ -138,6 +142,25 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 | `MAPPING_VERSION` | 1 | Đổi mapping phải reindex. |
 | `INTERNAL_TIMEOUT` | 5s | Admin/reindex adapter; không dùng trong public query. |
 | `TIMESTAMP_FORMAT` | ISO-8601 UTC | Log/response/event metadata. |
+| `MAX_RESULT_WINDOW` | 10000 | `page × size` tối đa. |
+| `MAX_QUERY_ATTRIBUTE_KEYS` / `_VALUES_PER_KEY` | 10 / 20 | Filter `attribute[key]`; key ≤64, value ≤100 ký tự. |
+| `MAX_ATTRIBUTE_FACET_KEYS` / `_VALUES` | 10 / 30 | Facet attribute trả về. |
+| `MAX_PRICE_VALUE` | 1 000 000 000 000 | `min_price`/`max_price`. |
+| `PRICE_BUCKETS` | `lt_5m`, `5m_20m`, `gte_20m` | Facet giá cố định. |
+
+Các hằng số trên ở `src/common/constants.ts` và `src/search-query/constants.ts`. Biến môi trường (`src/config/env.validation.ts`, thiếu biến bắt buộc → app không khởi động):
+
+| Biến | Mặc định | Ghi chú |
+|---|---|---|
+| `PORT` | `3000` | |
+| `SERVICE_NAME` | `search-service` | |
+| `APP_ENV` / `APP_VERSION` | `development` / `1.0.0` | Đưa vào log. |
+| `ES_NODE` | — (bắt buộc) | URL Elasticsearch. |
+| `ES_INDEX_PREFIX` | `""` | Tiền tố cho mọi index/alias. |
+| `KAFKA_BROKERS` | — (bắt buộc) | |
+| `KAFKA_CLIENT_ID` / `KAFKA_GROUP_ID` | `search-service` / `search-service-group` | Reindex `KAFKA_REPLAY` dùng group `search-reindex-<jobId>`. |
+| `KAFKA_TOPIC_PREFIX` | `""` | Tiền tố cho mọi topic. |
+| `KAFKA_CONSUMER_ENABLED` | `true` | |
 
 ## 5. Enum & trạng thái
 
@@ -156,11 +179,14 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 
 ### 6.1 Event lắng nghe
 
+Routing theo **topic** (không theo `event_type`), trừ `product.skus_updated`. `ProductHandler` xử lý mọi event trên `product.events.v1` qua `ProductDocumentBuilder` (visibility lấy từ `payload.visibility_status`/`next_status`); `product.media_updated` chỉ cập nhật `cover_url`. Search không phát event; chỉ publish DLQ `search.events.dlq.v1`.
+
 | Topic | Event | Xử lý |
 |---|---|---|
 | `product.events.v1` | `product.created`, `product.updated`, `product.published`, `product.unpublished`, `product.blocked`, `product.unblocked`, `product.archived` | Build/upsert/hide/delete logical document. `product.unblocked` mang `next_status`: nếu `ACTIVE` thì hiển thị lại document, nếu `INACTIVE` thì giữ ẩn — không bỏ qua event này, nếu không sản phẩm được gỡ chặn sẽ không bao giờ quay lại index. |
+| `product.events.v1` | `product.skus_updated` | Catalog gửi toàn bộ danh sách SKU của product trên topic product; route sang `SkuHandler.handleSkusUpdated`. |
 | `sku.events.v1` | `sku.created`, `sku.updated`, `sku.status_changed` | Cập nhật SKU/variant/price searchable; gộp giá trị variant dimension của các SKU `ACTIVE` vào `attributes` (db §3.1). |
-| `category.events.v1` | `category.created`, `category.updated`, `category.status_changed` | Upsert projection `search_categories` (db §3.4); đổi path thì reindex affected docs, đổi tên thì không. |
+| `category.events.v1` | `category.created`, `category.updated`, `category.status_changed` | (Code ghi chú: Product Catalog hiện chưa publish category event, nên khi projection chưa biết category thì index leaf id.) Upsert projection `search-categories` (db §3.4); đổi path thì reindex affected docs, đổi tên thì không. |
 | `catalog.events.v1` | `product.category_changed`, `product.media_updated`, `product.shop_snapshot_updated` | Reindex document affected. |
 | `rating.events.v1` | `rating.aggregate.updated` | Cập nhật `rating_avg`/`rating_count` của product; contract do `rating-comment` sở hữu (payload: `product_id`, `avg`, `count`, `distribution`). |
 
