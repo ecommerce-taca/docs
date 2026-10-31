@@ -123,7 +123,7 @@ Response `200`:
 
 Ràng buộc: `min_price/max_price` là integer VND; public không được query draft/blocked/archived; stock display có thể `UNKNOWN`/`STALE` và không phải purchase guarantee. Với `product_ids`, product không tồn tại/không visible bị bỏ khỏi kết quả (không lỗi) — caller tự phát hiện ID nào biến mất.
 
-`tax_rate_bps` là **thuế suất VAT của sản phẩm**, đơn vị basis point (10% = `1000`). Product Catalog đã giải quyết xong việc thừa kế theo cây danh mục và trả ra giá trị cuối cùng — caller không phải leo cây. Order-Commerce snapshot giá trị này vào `order_items` tại lúc checkout để tách thuế ghi hoá đơn (`order-commerce-docs/docs/lld/checkout.md` §5.2). Giá trong `price` **đã bao gồm** VAT.
+`tax_rate_bps` là **thuế suất VAT của sản phẩm**, đơn vị basis point (10% = `1000`). Product Catalog đã giải quyết xong việc thừa kế theo cây danh mục và trả ra giá trị cuối cùng — caller không phải leo cây. Order-Commerce snapshot giá trị này vào `order_items` tại lúc checkout để tách thuế ghi hoá đơn (`order-commerce-docs/docs/lld/checkout.md` §6.2). Giá trong `price` **đã bao gồm** VAT.
 
 `rating_summary` là cache **read-only** từ event `rating.aggregate.updated` (sở hữu bởi `rating-comment`); `avg: null, count: 0` nếu sản phẩm chưa có review nào.
 
@@ -640,7 +640,7 @@ Request: `{ "version": 1, "parent_id": "category-...", "name": "Điện tử gia
 
 Move subtree phải cập nhật `path/depth` atomically; không vượt depth 5; collision trả `PRODUCT_SLUG_CONFLICT` hoặc `PRODUCT_CATEGORY_INVALID`.
 
-`tax_rate_bps` bỏ trống trong PATCH giữ nguyên giá trị cũ (không set về `null`). Đổi `tax_rate_bps` **không hồi tố** đơn đã checkout — Order-Commerce đã snapshot thuế suất vào `order_items` tại thời điểm đặt hàng (`order-commerce-docs/docs/lld/checkout.md` §5.2). Đổi thuế suất của category có category con **không** tự đổi giá trị con đã set riêng — chỉ ảnh hưởng con đang thừa kế (con để `tax_rate_bps=null`).
+`tax_rate_bps` bỏ trống trong PATCH giữ nguyên giá trị cũ (không set về `null`). Đổi `tax_rate_bps` **không hồi tố** đơn đã checkout — Order-Commerce đã snapshot thuế suất vào `order_items` tại thời điểm đặt hàng (`order-commerce-docs/docs/lld/checkout.md` §6.2). Đổi thuế suất của category có category con **không** tự đổi giá trị con đã set riêng — chỉ ảnh hưởng con đang thừa kế (con để `tax_rate_bps=null`).
 
 #### `POST /admin/catalog/categories/{categoryId}/archive`
 

@@ -1,6 +1,8 @@
 # Test Plan — Order-Commerce Service
 
-> Nguồn: `docs/lld/order-commerce.md` · `docs/db/order-commerce.md` · `docs/api/order-commerce.md` · Cập nhật: `2026-10-31`
+> Nguồn: `docs/lld/order-commerce.md` · `docs/db/order-commerce.md` · `docs/api/order-commerce.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Môi trường: Spring Boot/Java 25, JUnit 5, MockMvc/Testcontainers (MySQL 8.4, Redis, Kafka)
 
 Tài liệu này là **tổng quan** test: chuẩn bị, manual QA, test chung, tiêu chí phát hành. Case chi tiết tách theo nghiệp vụ:
 
@@ -39,6 +41,8 @@ Tài liệu này là **tổng quan** test: chuẩn bị, manual QA, test chung, 
 Case API/event theo nghiệp vụ nằm ở các file trên. ID giữ nguyên để trace.
 
 ## 4. Unit test
+
+⏳ Repo chưa có test class nào; mọi module dưới đây là test còn thiếu.
 
 | Module | Cases |
 |---|---|

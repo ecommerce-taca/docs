@@ -1,7 +1,10 @@
-# API Spec — Order-Commerce · Order
+# API Spec — Order-Commerce Service · Order
 
-> Thuộc service Order-Commerce — quy ước chung, danh sách endpoint đầy đủ và mã lỗi ở `docs/api/order-commerce.md` · Cập nhật: `2026-10-31`
-> LLD: `docs/lld/order.md` · DB: `docs/db/order.md` · Test: `docs/test/order.md`
+> Nguồn: `docs/lld/order.md` · `docs/db/order.md` · `docs/test/order.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Base path: `/api/v1` · Spring Boot/Java 25 · Auth qua Gateway · `X-Request-ID`/W3C trace dùng chuẩn chung
+
+Phần **Order** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/api/order-commerce.md`.
 
 ## 1. Quy ước API
 
@@ -9,20 +12,20 @@ Theo `docs/api/order-commerce.md` §1 (base path `/api/v1`, auth qua Gateway, en
 
 ## 2. Danh sách endpoint
 
-| # | Method + path | Quyền | Mục đích |
-|---:|---|---|---|
-| 9 | `GET /orders` | Buyer | Own order list. |
-| 10 | `GET /orders/{orderId}` | Buyer | Own order detail. |
-| 11 | `GET /orders/{orderId}/status` | Buyer | Status timeline/projection. |
-| 12 | `PATCH /orders/{orderId}/cancel` | Buyer | Cancel trước shipping. |
-| 13 | `GET /orders/{orderId}/invoice` | Buyer | Invoice metadata/download URL. |
-| 14 | `GET /seller/orders` | Seller/staff | Shop order list. |
-| 14a | `GET /seller/orders/export` | Seller/staff | Xuất danh sách đơn ra file (.xlsx/.csv). |
-| 15 | `GET /seller/orders/{orderId}` | Seller/staff | Shop order detail. |
-| 16 | `PATCH /seller/orders/{orderId}/fulfill` | Seller/staff | Accept/ship flow (1 đơn). |
-| 16a | `POST /seller/orders/bulk-accept` | Seller/staff | Accept hàng loạt (chỉ ACCEPT, không ship). |
-| 17 | `POST /seller/orders/{orderId}/cancel` | Seller/staff | Seller cancel theo policy. |
-| 18 | `GET /seller/orders/{orderId}/invoice` | Seller/staff | Invoice. |
+| # | Method + path | Quyền | Mục đích | Trạng thái |
+|---:|---|---|---|---|
+| 9 | `GET /orders` | Buyer | Own order list. | ⏳ |
+| 10 | `GET /orders/{orderId}` | Buyer | Own order detail. | ⏳ |
+| 11 | `GET /orders/{orderId}/status` | Buyer | Status timeline/projection. | ⏳ |
+| 12 | `PATCH /orders/{orderId}/cancel` | Buyer | Cancel trước shipping. | ⏳ |
+| 13 | `GET /orders/{orderId}/invoice` | Buyer | Invoice metadata/download URL. | ⏳ |
+| 14 | `GET /seller/orders` | Seller/staff | Shop order list. | ⏳ |
+| 14a | `GET /seller/orders/export` | Seller/staff | Xuất danh sách đơn ra file (.xlsx/.csv). | ⏳ |
+| 15 | `GET /seller/orders/{orderId}` | Seller/staff | Shop order detail. | ⏳ |
+| 16 | `PATCH /seller/orders/{orderId}/fulfill` | Seller/staff | Accept/ship flow (1 đơn). | ⏳ |
+| 16a | `POST /seller/orders/bulk-accept` | Seller/staff | Accept hàng loạt (chỉ ACCEPT, không ship). | ⏳ |
+| 17 | `POST /seller/orders/{orderId}/cancel` | Seller/staff | Seller cancel theo policy. | ⏳ |
+| 18 | `GET /seller/orders/{orderId}/invoice` | Seller/staff | Invoice. | ⏳ |
 
 ## 3. Chi tiết endpoint
 
@@ -86,7 +89,7 @@ Theo `docs/api/order-commerce.md` §1 (base path `/api/v1`, auth qua Gateway, en
 }
 ```
 
-Cách đọc `amounts` (công thức đầy đủ ở `docs/lld/checkout.md` §2.2):
+Cách đọc `amounts` (công thức đầy đủ ở `docs/lld/checkout.md` §3.2):
 
 ```
 grand_total = subtotal − shop_discount − platform_discount + shipping_fee − freeship_discount
@@ -174,7 +177,7 @@ Với đơn COD, `payment.status` đi `PENDING_COD → SUCCESS` tại thời đi
 { "data": { "order_id": "order-01912f91", "status": "CANCELLED", "reason": "SELLER_REQUEST", "version": 5 }, "meta": { "request_id": "01912fc2-7a1b-7c12-9c55-8b1c34a6d921" } }
 ```
 
-Phải có policy/refund/stock release theo `CancellationReason` (`docs/lld/order.md` §4).
+Phải có policy/refund/stock release theo `CancellationReason` (`docs/lld/order.md` §5).
 
 ### 3.3 `GET /seller/orders/export`
 
@@ -264,7 +267,7 @@ Response `200` — **không atomic**, mỗi đơn có kết quả riêng:
 
 Một đơn lỗi (sai state, sai shop scope, version conflict) **không** chặn các đơn còn lại — mỗi order transition trong transaction riêng. FE hiển thị tổng kết theo `succeeded_count`/`failed_count`, cho phép retry riêng các đơn `failed`. Gửi lại cùng `Idempotency-Key` với **cùng** `order_ids` trả cùng kết quả; `order_ids` khác → `409 ORDER_IDEMPOTENCY_CONFLICT`.
 
-## 4. Mã lỗi
+## 4. Mã lỗi chung
 
 `ORDER_FORBIDDEN`, `ORDER_STATE_INVALID`, `ORDER_CANCEL_NOT_ALLOWED`, `ORDER_IDEMPOTENCY_CONFLICT`, `ORDER_INVOICE_NOT_READY`, `ORDER_EXPORT_TOO_LARGE`, `SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` (pass-through) — định nghĩa ở `docs/api/order-commerce.md` §4.
 

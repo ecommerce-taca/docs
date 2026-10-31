@@ -1,6 +1,7 @@
 # Database — Order-Commerce Service
 
-> Nguồn: `docs/lld/order-commerce.md` · HLD `EcommercePlatform-v4(6).excalidraw` · Cập nhật: `2026-10-31`
+> Nguồn: `docs/lld/order-commerce.md` · HLD `EcommercePlatform-v4(6).excalidraw` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
 > Baseline: MySQL 8.4/InnoDB `orderdb` + Redis cart
 
 Tài liệu này là **tổng quan** DB: quy ước, quan hệ, bảng dùng chung, migration và seed. Chi tiết bảng nghiệp vụ tách ra `docs/db/cart.md`, `docs/db/order.md`, `docs/db/voucher.md`.
@@ -67,6 +68,8 @@ Order transition, voucher usage, total reconciliation, one buyer/one shop scope 
 
 ### 6.1 Thứ tự migration
 
+⏳ Repo chưa có file migration; thứ tự dưới đây là thiết kế cho Flyway `V00x__*.sql`.
+
 | Thứ tự | Nội dung | Phụ thuộc |
 |---:|---|---|
 | 001 | Tạo database `orderdb`, charset/collation, migration metadata | — |
@@ -91,7 +94,7 @@ Redis cart (`docs/db/cart.md`) không có migration SQL — key theo TTL, không
 | `vouchers` | 1 `PLATFORM` `FIXED`; 1 `SHOP` `PERCENT` có `max_discount_amount`; 1 `FREESHIP`; 1 đã `EXPIRED`; 1 đã hết `usage_limit`. |
 | `orders` | 1 mỗi `OrderStatus` (`PENDING_PAYMENT`, `CONFIRMED` cả nhánh VNPAY lẫn COD, `PROCESSING`, `SHIPPED`, `DELIVERED`, `CANCELLED`) — xem golden test `O-COD-01..10` ở `docs/test/order.md`, `O-CALC-01..15` ở `docs/test/checkout.md`. |
 | `order_items` | Có `tax_rate_bps` khác nhau (10%, 5%, 0%) trên cùng 1 order — test tách thuế theo dòng. |
-| `order_vouchers` | Order mẫu có đủ 3 dòng (`PLATFORM`+`SHOP`+`FREESHIP`) khớp ví dụ golden ở `docs/lld/checkout.md` §2.2. |
+| `order_vouchers` | Order mẫu có đủ 3 dòng (`PLATFORM`+`SHOP`+`FREESHIP`) khớp ví dụ golden ở `docs/lld/checkout.md` §3.2. |
 | `invoices` | 1 `PENDING`; 1 `ISSUED` có `pdf_url`. |
 | `idempotency_keys` | 1 key đã dùng cho `POST /checkout`, còn hạn 24h. |
 
@@ -99,8 +102,8 @@ Không seed payment credential/address thật — dùng snapshot giả lập; kh
 
 ### 6.3 Kiểm tra bắt buộc trước khi chạy migration production
 
-1. Reconcile: mọi `order.grand_total` phải khớp công thức `docs/lld/checkout.md` §2.2 trên dữ liệu hiện có trước khi thêm CHECK constraint `grand_total >= 0`.
-2. Verify `Σ order_vouchers.discount_amount = orders.discount` cho mọi order — bất biến bắt buộc từ `docs/lld/checkout.md` §2.2.
+1. Reconcile: mọi `order.grand_total` phải khớp công thức `docs/lld/checkout.md` §3.2 trên dữ liệu hiện có trước khi thêm CHECK constraint `grand_total >= 0`.
+2. Verify `Σ order_vouchers.discount_amount = orders.discount` cho mọi order — bất biến bắt buộc từ `docs/lld/checkout.md` §3.2.
 3. Orphan detection: `order_items`/`invoices` không có `order_id` mồ côi trước khi thêm FK.
 
 ## 7. Giả định & câu hỏi mở
@@ -110,5 +113,5 @@ Không seed payment credential/address thật — dùng snapshot giả lập; kh
 | 1 | MySQL 8.4/InnoDB được chọn để giải quyết mâu thuẫn MySQL/PostgreSQL trong HLD. | Ảnh hưởng SQL/migration/lock. | Architecture/Tech lead |
 | 2 | Cart Redis TTL 30 ngày, không durable order state. | Ảnh hưởng cart recovery/cross-device. | Product owner |
 | 3 | Address snapshot lưu JSON trong order; Auth User vẫn source address. | Ảnh hưởng privacy/schema/report. | Security/Order owner |
-| 4 | ~~Chưa có stacking policy~~ → **Đã chốt**: mô hình 3 slot (`PLATFORM` + `SHOP`/shop + `FREESHIP`), tối đa 1 mã mỗi `scope`, thứ tự áp dụng và phân bổ ở `docs/lld/checkout.md` §2.2. Bảng `vouchers` **không có** cột audience/segment trong v1 (voucher chỉ theo mã); các màn Penpot Seller voucher targeting ngoài v1. | Nếu bật targeting cần bảng `voucher_audiences` mới. | Đã đóng |
+| 4 | ~~Chưa có stacking policy~~ → **Đã chốt**: mô hình 3 slot (`PLATFORM` + `SHOP`/shop + `FREESHIP`), tối đa 1 mã mỗi `scope`, thứ tự áp dụng và phân bổ ở `docs/lld/checkout.md` §3.2. Bảng `vouchers` **không có** cột audience/segment trong v1 (voucher chỉ theo mã); các màn Penpot Seller voucher targeting ngoài v1. | Nếu bật targeting cần bảng `voucher_audiences` mới. | Đã đóng |
 | 5 | Invoice PDF generation/storage provider chưa chốt. | Ảnh hưởng `pdf_url`, async state và retention. | Finance/DevOps |

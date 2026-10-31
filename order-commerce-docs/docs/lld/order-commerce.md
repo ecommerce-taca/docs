@@ -1,6 +1,7 @@
 # LLD — Order-Commerce Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-10-31`
+> Nguồn: HLD `EcommercePlatform-v4(6).excalidraw` · Penpot `New File 1.penpot.zip` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
 > Tech stack đã chốt: Java 25 · Spring Boot · MySQL 8.4 · Redis Cart · Kafka outbox · REST với Product/Inventory/Payment/Shipment/Auth
 
 Tài liệu này là **tổng quan** của Order-Commerce. Chi tiết từng nghiệp vụ tách ra các file cùng thư mục; mỗi file cùng tên ở `docs/api/`, `docs/db/`, `docs/test/` là phần API/DB/test tương ứng.
@@ -58,6 +59,8 @@ mfe-buyer/mfe-seller ──Gateway──► Order-Commerce
 
 ### 2.1 Module Spring Boot
 
+⏳ Repo chưa có code; cây package dưới đây là thiết kế. Mỗi package nghiệp vụ có tài liệu riêng: `cart/` → `cart.md`, `checkout/` → `checkout.md`, `order/` + `invoice/` → `order.md`, `voucher/` → `voucher.md`.
+
 ```text
 com.taca.order
 ├── cart/                 # Redis cart command/query
@@ -95,39 +98,39 @@ com.taca.order
 
 | Luồng | Tài liệu |
 |---|---|
-| Cart | `docs/lld/cart.md` §2 |
-| Checkout preview | `docs/lld/checkout.md` §2.1 |
-| Công thức tính tiền *(nguồn sự thật)* | `docs/lld/checkout.md` §2.2 |
-| Place checkout (VNPAY/COD) | `docs/lld/checkout.md` §2.3 |
-| Order lifecycle | `docs/lld/order.md` §2.1 |
-| Invoice | `docs/lld/order.md` §2.2 |
-| Voucher discovery/validate | `docs/lld/voucher.md` §2.1 |
-| Cộng dồn voucher — mô hình 3 slot | `docs/lld/voucher.md` §2.2 |
-| Huỷ một phần nhóm đơn — tính lại voucher | `docs/lld/voucher.md` §2.3 |
+| Cart | `docs/lld/cart.md` §3 |
+| Checkout preview | `docs/lld/checkout.md` §3.1 |
+| Công thức tính tiền *(nguồn sự thật)* | `docs/lld/checkout.md` §3.2 |
+| Place checkout (VNPAY/COD) | `docs/lld/checkout.md` §3.3 |
+| Order lifecycle | `docs/lld/order.md` §3.1 |
+| Invoice | `docs/lld/order.md` §3.2 |
+| Voucher discovery/validate | `docs/lld/voucher.md` §3.1 |
+| Cộng dồn voucher — mô hình 3 slot | `docs/lld/voucher.md` §3.2 |
+| Huỷ một phần nhóm đơn — tính lại voucher | `docs/lld/voucher.md` §3.3 |
 
 Không dùng distributed transaction giữa MySQL/Inventory/Payment; dùng idempotency, saga compensation và event reconciliation.
 
 ## 4. Hằng số & cấu hình dùng chung
 
-| Tên | Giá trị baseline | Ghi chú |
-|---|---:|---|
-| `PAGE_SIZE_DEFAULT` | 20 | Max 100. |
-| `VND_MIN/MAX` | 1/999999999999 | Integer; snapshot không float. |
-| `OUTBOX_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
-| `INTEGRATION_TIMEOUT` | 5s | Checkout dependency baseline; Payment/Shipment có route override. |
-| `IDEMPOTENCY_RETENTION` | 24h | Place/cancel/fulfill response snapshot. |
-| `AUDIT_RETENTION` | 365 ngày | Không lưu payment credential/raw address ngoài snapshot nghiệp vụ cần thiết. |
-| `TIMESTAMP_FORMAT` | UTC ISO-8601 | DB DATETIME(6), API/event UTC. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---:|---|---|
+| `PAGE_SIZE_DEFAULT` | 20 | ⏳ chưa có | Max 100. |
+| `VND_MIN/MAX` | 1/999999999999 | ⏳ chưa có | Integer; snapshot không float. |
+| `OUTBOX_RETRY_COUNT` | 3 | ⏳ chưa có | Backoff 2s rồi DLQ. |
+| `INTEGRATION_TIMEOUT` | 5s | ⏳ chưa có | Checkout dependency baseline; Payment/Shipment có route override. |
+| `IDEMPOTENCY_RETENTION` | 24h | ⏳ chưa có | Place/cancel/fulfill response snapshot. |
+| `AUDIT_RETENTION` | 365 ngày | ⏳ chưa có | Không lưu payment credential/raw address ngoài snapshot nghiệp vụ cần thiết. |
+| `TIMESTAMP_FORMAT` | UTC ISO-8601 | ⏳ chưa có | DB DATETIME(6), API/event UTC. |
 
-Hằng số riêng của từng nghiệp vụ nằm trong file tương ứng: cart (`CART_*`, `ITEM_QTY_*`) ở `cart.md` §3, checkout (`CHECKOUT_PREVIEW_TTL`, `INVENTORY_RESERVATION_TTL`) ở `checkout.md` §3, order (`ORDER_NUMBER_MAX_LENGTH`, `ORDER_EXPORT_*`, `SELLER_BULK_ACCEPT_MAX_ORDERS`) ở `order.md` §3.
+Hằng số riêng của từng nghiệp vụ nằm trong file tương ứng: cart (`CART_*`, `ITEM_QTY_*`) ở `cart.md` §4, checkout (`CHECKOUT_PREVIEW_TTL`, `INVENTORY_RESERVATION_TTL`) ở `checkout.md` §4, order (`ORDER_NUMBER_MAX_LENGTH`, `ORDER_EXPORT_*`, `SELLER_BULK_ACCEPT_MAX_ORDERS`) ở `order.md` §4.
 
 ## 5. Enum & trạng thái
 
 | Enum | Định nghĩa tại |
 |---|---|
-| `CartStatus` | `docs/lld/cart.md` §4 |
-| `OrderStatus`, `PaymentStatusProjection`, `InvoiceStatus`, `CancellationReason` | `docs/lld/order.md` §4 |
-| `VoucherStatus`, `DiscountType`, `VoucherScope` | `docs/lld/voucher.md` §4 |
+| `CartStatus` | `docs/lld/cart.md` §5 |
+| `OrderStatus`, `PaymentStatusProjection`, `InvoiceStatus`, `CancellationReason` | `docs/lld/order.md` §5 |
+| `VoucherStatus`, `DiscountType`, `VoucherScope` | `docs/lld/voucher.md` §5 |
 
 Order state là source of truth của Order-Commerce; payment/shipment/inventory statuses được projection và không cho client tự set.
 
@@ -135,16 +138,18 @@ Order state là source of truth của Order-Commerce; payment/shipment/inventory
 
 | Topic / nguồn | Hướng | Chi tiết |
 |---|---|---|
-| `order.events.v1` | Phát ra | `docs/lld/order.md` §5.1, payload §5.2 |
-| `invoice.events.v1` | Phát ra | `docs/lld/order.md` §5.1, payload §5.2 |
-| `voucher.events.v1` | Phát ra | `docs/lld/voucher.md` §5 |
-| Payment-Wallet / Inventory / Shipment / Auth User | Lắng nghe | `docs/lld/order.md` §5.3 |
-| Inventory reserve (REST, đồng bộ) | Gọi ra | `docs/lld/checkout.md` §5.1 |
-| Thuế suất từ Product Catalog (REST) | Gọi ra | `docs/lld/checkout.md` §5.2 |
+| `order.events.v1` | Phát ra | `docs/lld/order.md` §6.1, payload §6.2 |
+| `invoice.events.v1` | Phát ra | `docs/lld/order.md` §6.1, payload §6.2 |
+| `voucher.events.v1` | Phát ra | `docs/lld/voucher.md` §6 |
+| Payment-Wallet / Inventory / Shipment / Auth User | Lắng nghe | `docs/lld/order.md` §6.3 |
+| Inventory reserve (REST, đồng bộ) | Gọi ra | `docs/lld/checkout.md` §6.1 |
+| Thuế suất từ Product Catalog (REST) | Gọi ra | `docs/lld/checkout.md` §6.2 |
 
 Mọi event đi qua transactional outbox (`OUTBOX_RETRY_COUNT`, backoff 2s rồi DLQ — §4).
 
 ## 7. Mã lỗi
+
+⏳ Chưa có code: mọi mã dưới đây là thiết kế.
 
 | Mã | HTTP | Ý nghĩa |
 |---|---:|---|

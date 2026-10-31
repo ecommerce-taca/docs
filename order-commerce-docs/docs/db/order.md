@@ -1,7 +1,10 @@
-# Database — Order-Commerce · Order
+# Database — Order-Commerce Service · Order
 
-> Thuộc service Order-Commerce — quy ước chung, ER, migration và seed ở `docs/db/order-commerce.md` · Cập nhật: `2026-10-31`
-> LLD: `docs/lld/order.md` · API: `docs/api/order.md`
+> Nguồn: `docs/lld/order.md` · `docs/api/order.md` · `docs/test/order.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Baseline: MySQL 8.4/InnoDB `orderdb` + Redis cart
+
+Phần **Order** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/db/order-commerce.md`.
 
 ## 1. Quy ước
 
@@ -36,7 +39,7 @@ Xem ER ở `docs/db/order-commerce.md` §2.
 
 | Field thuế/giảm giá | Kiểu | Ý nghĩa |
 |---|---|---|
-| `tax_rate_bps` | INT | Thuế suất VAT snapshot từ category của product tại lúc checkout (10% = `1000`). Bất biến sau khi đặt — đổi thuế suất danh mục không hồi tố. Xem `docs/lld/checkout.md` §5.2. |
+| `tax_rate_bps` | INT | Thuế suất VAT snapshot từ category của product tại lúc checkout (10% = `1000`). Bất biến sau khi đặt — đổi thuế suất danh mục không hồi tố. Xem `docs/lld/checkout.md` §6.2. |
 | `tax_amount` | BIGINT | Phần VAT **đã nằm trong** `line_total` (giá gồm VAT), tách ra để ghi hoá đơn: `line_net × rate_bps / (10000 + rate_bps)`. Không cộng thêm vào `grand_total`. |
 | `discount_allocated` | BIGINT | Tổng giảm giá (shop + platform) phân bổ về dòng này. Cần để tính `tax_amount` đúng và để hoàn tiền theo dòng khi huỷ một phần. |
 
@@ -54,7 +57,7 @@ Xem ER ở `docs/db/order-commerce.md` §2.
 
 ## 5. Enum và rules
 
-Order transition, total reconciliation (`orders.discount = Σ order_vouchers.discount_amount`) và one buyer/one shop scope enforce ở service transaction; schema enum chỉ là lớp đầu. Enum ở `docs/lld/order.md` §4.
+Order transition, total reconciliation (`orders.discount = Σ order_vouchers.discount_amount`) và one buyer/one shop scope enforce ở service transaction; schema enum chỉ là lớp đầu. Enum ở `docs/lld/order.md` §5.
 
 ## 6. Migration và seed
 

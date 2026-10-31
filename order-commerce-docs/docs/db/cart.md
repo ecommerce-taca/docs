@@ -1,7 +1,10 @@
-# Database — Order-Commerce · Cart
+# Database — Order-Commerce Service · Cart
 
-> Thuộc service Order-Commerce — quy ước chung, ER, migration và seed ở `docs/db/order-commerce.md` · Cập nhật: `2026-10-31`
-> LLD: `docs/lld/cart.md` · API: `docs/api/cart.md`
+> Nguồn: `docs/lld/cart.md` · `docs/api/cart.md` · `docs/test/cart.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Baseline: MySQL 8.4/InnoDB `orderdb` + Redis cart
+
+Phần **Cart** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/db/order-commerce.md`.
 
 ## 1. Quy ước
 
@@ -32,7 +35,7 @@ Không có index — truy cập trực tiếp theo key `cart:{buyer_user_id}`.
 
 ## 5. Enum và rules
 
-`CartStatus` ở `docs/lld/cart.md` §4. Redis không có migration SQL.
+`CartStatus` ở `docs/lld/cart.md` §5. Redis không có migration SQL.
 
 ## 6. Migration và seed
 

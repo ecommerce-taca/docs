@@ -1,7 +1,10 @@
-# API Spec — Order-Commerce · Checkout
+# API Spec — Order-Commerce Service · Checkout
 
-> Thuộc service Order-Commerce — quy ước chung, danh sách endpoint đầy đủ và mã lỗi ở `docs/api/order-commerce.md` · Cập nhật: `2026-10-31`
-> LLD: `docs/lld/checkout.md` (công thức tính tiền §2.2) · Test: `docs/test/checkout.md`
+> Nguồn: `docs/lld/checkout.md` · `docs/test/checkout.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Base path: `/api/v1` · Spring Boot/Java 25 · Auth qua Gateway · `X-Request-ID`/W3C trace dùng chuẩn chung
+
+Phần **Checkout** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/api/order-commerce.md`.
 
 ## 1. Quy ước API
 
@@ -9,11 +12,11 @@ Theo `docs/api/order-commerce.md` §1 (base path `/api/v1`, auth qua Gateway, en
 
 ## 2. Danh sách endpoint
 
-| # | Method + path | Quyền | Mục đích |
-|---:|---|---|---|
-| 6 | `GET /checkout/shipping-fee` | Buyer | Preview shipping fee. |
-| 7 | `POST /checkout/preview` | Buyer | Tính preview tổng tiền. |
-| 8 | `POST /checkout` | Buyer + Idempotency | Reserve Inventory và tạo order split. |
+| # | Method + path | Quyền | Mục đích | Trạng thái |
+|---:|---|---|---|---|
+| 6 | `GET /checkout/shipping-fee` | Buyer | Preview shipping fee. | ⏳ |
+| 7 | `POST /checkout/preview` | Buyer | Tính preview tổng tiền. | ⏳ |
+| 8 | `POST /checkout` | Buyer + Idempotency | Reserve Inventory và tạo order split. | ⏳ |
 
 ## 3. Chi tiết endpoint
 
@@ -110,7 +113,7 @@ Headers: `Idempotency-Key` bắt buộc. Request:
 }
 ```
 
-`voucher_codes` là mảng, tối đa **3 phần tử**, mỗi phần tử thuộc một `scope` khác nhau (`PLATFORM` / `SHOP` / `FREESHIP`) — xem mô hình 3 slot ở `docs/lld/voucher.md` §2.2. Giỏ nhiều shop được gửi nhiều mã `SHOP` (mỗi shop một mã), khi đó mảng dài hơn 3.
+`voucher_codes` là mảng, tối đa **3 phần tử**, mỗi phần tử thuộc một `scope` khác nhau (`PLATFORM` / `SHOP` / `FREESHIP`) — xem mô hình 3 slot ở `docs/lld/voucher.md` §3.2. Giỏ nhiều shop được gửi nhiều mã `SHOP` (mỗi shop một mã), khi đó mảng dài hơn 3.
 
 | Lỗi | HTTP | Khi nào |
 |---|---:|---|
@@ -144,7 +147,7 @@ Order revalidates Product/price, calls Inventory atomic reserve, then commits lo
 
 Với COD, Inventory `commit` được gọi ngay trong luồng checkout (không có bước chờ tiền), nên `reservation_expires_at` là `null` và đơn không bị job payment-timeout đụng tới. FE **không** được hiển thị đồng hồ đếm ngược thanh toán cho đơn COD.
 
-## 4. Mã lỗi
+## 4. Mã lỗi chung
 
 `ORDER_FORBIDDEN`, `ORDER_CART_EMPTY`, `ORDER_PRODUCT_UNAVAILABLE`, `ORDER_PRICE_CHANGED`, `ORDER_STOCK_UNAVAILABLE`, `ORDER_RESERVATION_EXPIRED`, `ORDER_VOUCHER_INVALID`, `ORDER_VOUCHER_SLOT_CONFLICT`, `ORDER_VOUCHER_LIMIT_REACHED`, `ORDER_ADDRESS_INVALID`, `ORDER_IDEMPOTENCY_CONFLICT`, `ORDER_DEPENDENCY_UNAVAILABLE` — định nghĩa ở `docs/api/order-commerce.md` §4.
 

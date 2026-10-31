@@ -110,7 +110,7 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 ### 3.3 COD
 
 - Create payment với method `COD` tạo `PENDING_COD`; không gọi VNPAY.
-- **`PENDING_COD` không chặn fulfillment.** Order-Commerce cho đơn COD vào `CONFIRMED` ngay tại checkout và không chờ event nào từ Payment-Wallet để giao hàng (xem `order-commerce-docs/docs/lld/order.md` §2.1). Payment-Wallet **không** phát `payment.succeeded` tại thời điểm đặt đơn COD, và Order-Commerce **không** chờ event đó.
+- **`PENDING_COD` không chặn fulfillment.** Order-Commerce cho đơn COD vào `CONFIRMED` ngay tại checkout và không chờ event nào từ Payment-Wallet để giao hàng (xem `order-commerce-docs/docs/lld/order.md` §3.1). Payment-Wallet **không** phát `payment.succeeded` tại thời điểm đặt đơn COD, và Order-Commerce **không** chờ event đó.
 - Capture: khi nhận `shipment.delivered` (hoặc collection event tương đương từ carrier adapter), Payment transition `PENDING_COD → SUCCESS`, post ledger và phát `payment.succeeded`. Đây là **sau** khi order đã `DELIVERED`, nên event này chỉ phục vụ đối soát/settlement, không mở luồng giao hàng. **Amount capture = `grand_total` của order (gồm `shipping_fee`)**: carrier thu hộ cả tiền hàng lẫn phí ship; Payment hạch toán phần phí ship vào shipment payable (xem §3.4), không credit seller phần phí.
 - `shipment.failed` hoặc order cancelled trước khi giao: `PENDING_COD → FAILED` (enum PaymentStatus **không có** `CANCELLED` — chốt dùng `FAILED`), không post ledger, không tạo allocation.
 - COD failure/cancel không tạo seller payout; exact cash collection event cần Shipment/Finance contract.

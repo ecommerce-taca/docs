@@ -1,7 +1,10 @@
-# LLD — Order-Commerce · Order
+# LLD — Order-Commerce Service · Order
 
-> Thuộc service Order-Commerce — tổng quan, quy ước chung và mã lỗi đầy đủ ở `docs/lld/order-commerce.md` · Cập nhật: `2026-10-31`
-> API: `docs/api/order.md` · DB: `docs/db/order.md` · Test: `docs/test/order.md`
+> Nguồn: `docs/api/order.md` · `docs/db/order.md` · `docs/test/order.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Tech stack đã chốt: Java 25 · Spring Boot · MySQL 8.4 · Redis Cart · Kafka outbox · REST với Product/Inventory/Payment/Shipment/Auth
+
+Phần **Order** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/lld/order-commerce.md`.
 
 ## 1. Phạm vi
 
@@ -10,11 +13,15 @@
 | Trách nhiệm | Order aggregate và state machine; buyer order read/cancel; seller order read/fulfill/bulk-accept/export/cancel; invoice metadata; event order/invoice; xử lý event từ Payment/Inventory/Shipment. |
 | Module | `com.taca.order.order` — `OrderController`, `SellerOrderController`, `OrderStateMachine`; `com.taca.order.invoice`. |
 | Ràng buộc | Buyer chỉ thấy own orders; seller filter theo shop scope; snapshot immutable; không client nào tự set payment/shipment/inventory status. |
-| Tạo order | Order được tạo ở place checkout — `checkout.md` §2.3. |
+| Tạo order | Order được tạo ở place checkout — `checkout.md` §3.3. |
 
-## 2. Luồng xử lý
+## 2. Cấu trúc bên trong
 
-### 2.1 Order lifecycle
+Package `com.taca.order.order` và `com.taca.order.invoice` trong cây module ở `order-commerce.md` §2.1. ⏳ Repo chưa có code nên chưa có cây package thật.
+
+## 3. Luồng xử lý
+
+### 3.1 Order lifecycle
 
 `OrderStatus` là trạng thái **fulfillment**, không phải trạng thái tiền. Trạng thái tiền nằm ở `PaymentStatusProjection` và do Payment-Wallet sở hữu. Hai phương thức thanh toán vào cùng một cửa fulfillment (`CONFIRMED`) nhưng thu tiền ở hai thời điểm khác nhau.
 
@@ -48,34 +55,34 @@ Ràng buộc bổ sung:
 - Event `order.paid` vẫn giữ nguyên ngữ nghĩa **tiền đã về** và vẫn phát khi `payment.succeeded` — với VNPAY là lúc vào `CONFIRMED`, với COD là sau `DELIVERED`. Consumer nào cần "đơn đã chốt, chuẩn bị giao" phải dùng `order.confirmed`, không dùng `order.paid`.
 - Không service nào được suy ra quyền fulfillment từ `payment_status`; chỉ đọc `OrderStatus`.
 
-### 2.2 Invoice
+### 3.2 Invoice
 
 - Invoice có số unique, total/tax breakdown snapshot và `pdf_url` nullable; PDF generation/notification có thể async.
 - Invoice tạo `PENDING` cùng transaction place checkout; `invoice.issued` phát khi chuyển `ISSUED`. Buyer/seller gọi invoice khi còn `PENDING` → `409 ORDER_INVOICE_NOT_READY`.
 
-## 3. Hằng số & cấu hình
+## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Ghi chú |
-|---|---:|---|
-| `ORDER_NUMBER_MAX_LENGTH` | 32 | Unique. |
-| `ORDER_EXPORT_MAX_ROWS` | 10000 | Vượt trả `400 ORDER_EXPORT_TOO_LARGE`, seller lọc hẹp hơn. |
-| `ORDER_EXPORT_URL_TTL` | 30 phút | Signed download URL hết hạn, gọi lại endpoint để có URL mới. |
-| `SELLER_BULK_ACCEPT_MAX_ORDERS` | 100 | `POST /seller/orders/bulk-accept` — tối đa order_id/lần gọi. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---:|---|---|
+| `ORDER_NUMBER_MAX_LENGTH` | 32 | ⏳ chưa có | Unique. |
+| `ORDER_EXPORT_MAX_ROWS` | 10000 | ⏳ chưa có | Vượt trả `400 ORDER_EXPORT_TOO_LARGE`, seller lọc hẹp hơn. |
+| `ORDER_EXPORT_URL_TTL` | 30 phút | ⏳ chưa có | Signed download URL hết hạn, gọi lại endpoint để có URL mới. |
+| `SELLER_BULK_ACCEPT_MAX_ORDERS` | 100 | ⏳ chưa có | `POST /seller/orders/bulk-accept` — tối đa order_id/lần gọi. |
 
-## 4. Enum & trạng thái
+## 5. Enum & trạng thái
 
 | Enum | Giá trị |
 |---|---|
 | `OrderStatus` | `PENDING_PAYMENT`, `CONFIRMED`, `PROCESSING`, `SHIPPED`, `DELIVERED`, `CANCELLED`. Trạng thái fulfillment; `PENDING_PAYMENT` chỉ dùng cho phương thức trả trước (VNPAY). |
-| `PaymentStatusProjection` | `PENDING`, `PENDING_COD`, `SUCCESS`, `FAILED`, `EXPIRED`, `REFUNDED`, `PARTIALLY_REFUNDED`. `EXPIRED` → order ở `PENDING_PAYMENT` chuyển sang `CANCELLED` (xem `payment.expired` ở §5.3). `PARTIALLY_REFUNDED` → order giữ nguyên `OrderStatus` hiện tại, chỉ cập nhật số tiền đã hoàn, không tự đổi order status. |
+| `PaymentStatusProjection` | `PENDING`, `PENDING_COD`, `SUCCESS`, `FAILED`, `EXPIRED`, `REFUNDED`, `PARTIALLY_REFUNDED`. `EXPIRED` → order ở `PENDING_PAYMENT` chuyển sang `CANCELLED` (xem `payment.expired` ở §6.3). `PARTIALLY_REFUNDED` → order giữ nguyên `OrderStatus` hiện tại, chỉ cập nhật số tiền đã hoàn, không tự đổi order status. |
 | `InvoiceStatus` | `PENDING`, `ISSUED`, `VOIDED`. |
 | `CancellationReason` | `BUYER_REQUEST`, `SELLER_REQUEST`, `PAYMENT_TIMEOUT`, `STOCK_FAILURE`, `SYSTEM`. |
 
 Order state là source of truth của Order-Commerce; payment/shipment/inventory statuses được projection và không cho client tự set.
 
-## 5. Event phát ra / lắng nghe
+## 6. Event phát ra / lắng nghe
 
-### 5.1 Event phát ra
+### 6.1 Event phát ra
 
 | Topic | Event | Payload chính |
 |---|---|---|
@@ -97,7 +104,7 @@ Phân biệt bắt buộc giữa hai event dễ nhầm:
 
 Với VNPAY hai event trùng thời điểm; với COD chúng cách nhau cả vòng đời giao hàng. Consumer nào cần "đơn sẵn sàng giao" mà dùng `order.paid` sẽ bỏ sót toàn bộ đơn COD.
 
-### 5.2 Payload chi tiết — `order.confirmed` / `order.paid` / `order.cancelled` / `invoice.issued` / `order.delivered`
+### 6.2 Payload chi tiết — `order.confirmed` / `order.paid` / `order.cancelled` / `invoice.issued` / `order.delivered`
 
 Field `buyer` **đã chốt** cho các consumer cần recipient (đặc biệt Notification Service —
 xem `notification-docs/docs/lld/notification.md` §6.2) — **gồm** `order.delivered`: `buyer.user_id` bắt buộc, `buyer.email`
@@ -140,7 +147,7 @@ lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3
 }
 ```
 
-> `compensation action` (nhắc ở bảng §5.1) chưa có schema field cụ thể — phụ thuộc seller
+> `compensation action` (nhắc ở bảng §6.1) chưa có schema field cụ thể — phụ thuộc seller
 > cancel/refund policy chưa chốt (xem `order-commerce.md` §8 mục 7), nên chưa đưa vào ví dụ JSON để tránh set field
 > giả không đúng thực tế.
 
@@ -180,7 +187,7 @@ lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3
 }
 ```
 
-### 5.3 Event lắng nghe
+### 6.3 Event lắng nghe
 
 | Nguồn | Event | Xử lý |
 |---|---|---|
@@ -192,10 +199,10 @@ lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3
 | Shipment | `shipment.failed` | Ghi nhận delivery failed vào timeline/shipment projection; **giữ** `OrderStatus = SHIPPED` (enum không có FAILED) — xử lý tiếp qua refund/return workflow ở Payment/Support, không tự đổi order status. |
 | Auth User | `user.status_changed` (mock policy) | Chặn hành động account mới nếu suspended; không đổi order history. |
 
-## 6. Mã lỗi
+## 7. Mã lỗi
 
-`ORDER_FORBIDDEN`, `ORDER_STATE_INVALID`, `ORDER_CANCEL_NOT_ALLOWED`, `ORDER_IDEMPOTENCY_CONFLICT`, `ORDER_INVOICE_NOT_READY`, `ORDER_EXPORT_TOO_LARGE`, `SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` (pass-through) — định nghĩa ở `order-commerce.md` §7.
+⏳ Chưa có code. `ORDER_FORBIDDEN`, `ORDER_STATE_INVALID`, `ORDER_CANCEL_NOT_ALLOWED`, `ORDER_IDEMPOTENCY_CONFLICT`, `ORDER_INVOICE_NOT_READY`, `ORDER_EXPORT_TOO_LARGE`, `SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` (pass-through) — định nghĩa ở `order-commerce.md` §7.
 
-## 7. Giả định & câu hỏi mở
+## 8. Giả định & câu hỏi mở
 
 Xem `order-commerce.md` §8 mục 4 (split theo shop), 7 (seller cancel policy, return/dispute ngoài v1).

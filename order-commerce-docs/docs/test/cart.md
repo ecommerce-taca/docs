@@ -1,7 +1,10 @@
-# Test Plan — Order-Commerce · Cart
+# Test Plan — Order-Commerce Service · Cart
 
-> Thuộc service Order-Commerce — chuẩn bị, contract/security chung và tiêu chí phát hành ở `docs/test/order-commerce.md` · Cập nhật: `2026-10-31`
-> LLD: `docs/lld/cart.md` · API: `docs/api/cart.md`
+> Nguồn: `docs/lld/cart.md` · `docs/api/cart.md` · `docs/db/cart.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Môi trường: Spring Boot/Java 25, JUnit 5, MockMvc/Testcontainers (MySQL 8.4, Redis, Kafka)
+
+Phần **Cart** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/test/order-commerce.md`.
 
 ## 1. Chuẩn bị
 
@@ -23,6 +26,8 @@ Theo `docs/test/order-commerce.md` §1.
 
 
 ## 4. Unit test
+
+⏳ Repo chưa có test class nào; mọi module dưới đây là test còn thiếu.
 
 | Module | Cases |
 |---|---|

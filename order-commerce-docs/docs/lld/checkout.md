@@ -1,7 +1,10 @@
-# LLD — Order-Commerce · Checkout
+# LLD — Order-Commerce Service · Checkout
 
-> Thuộc service Order-Commerce — tổng quan, quy ước chung và mã lỗi đầy đủ ở `docs/lld/order-commerce.md` · Cập nhật: `2026-10-31`
-> API: `docs/api/checkout.md` · Test: `docs/test/checkout.md` · Checkout không có bảng riêng — ghi vào `orders`/`order_items`/`order_vouchers`/`invoices` (`docs/db/order.md`, `docs/db/voucher.md`)
+> Nguồn: `docs/api/checkout.md` · `docs/test/checkout.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Tech stack đã chốt: Java 25 · Spring Boot · MySQL 8.4 · Redis Cart · Kafka outbox · REST với Product/Inventory/Payment/Shipment/Auth
+
+Phần **Checkout** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/lld/order-commerce.md`.
 
 ## 1. Phạm vi
 
@@ -11,9 +14,13 @@
 | Module | `com.taca.order.checkout` — `CheckoutController`; gọi `integrations/` (Product, Inventory, Payment, Shipment, Auth). |
 | Ràng buộc | Place idempotency; reserve Inventory trước khi commit order; không distributed transaction — dùng saga compensation. |
 
-## 2. Luồng xử lý
+## 2. Cấu trúc bên trong
 
-### 2.1 Checkout preview
+Package `com.taca.order.checkout` trong cây module ở `order-commerce.md` §2.1. ⏳ Repo chưa có code nên chưa có cây package thật.
+
+## 3. Luồng xử lý
+
+### 3.1 Checkout preview
 
 ```text
 Cart → load selected items → Product validate active SKU/price
@@ -25,7 +32,7 @@ Cart → load selected items → Product validate active SKU/price
 
 Preview không đảm bảo giá/stock đến lúc place; response ghi `expires_at` ngắn và Checkout place phải tính lại.
 
-### 2.2 Công thức tính tiền *(nguồn sự thật — mọi nơi khác tham chiếu về đây)*
+### 3.2 Công thức tính tiền *(nguồn sự thật — mọi nơi khác tham chiếu về đây)*
 
 Đây là phép tính quan trọng nhất của hệ thống. Preview, place checkout, invoice và hiển thị FE **phải dùng chung đúng một cài đặt**; lệch một đồng là lệch đối soát.
 
@@ -33,7 +40,7 @@ Preview không đảm bảo giá/stock đến lúc place; response ghi `expires_
 
 - Mọi số tiền là **số nguyên VND**. Cấm float/double ở mọi bước trung gian.
 - Giá sản phẩm **đã bao gồm VAT** (chuẩn bán lẻ VN). Thuế được **tách ra để ghi hoá đơn**, không cộng thêm vào `grand_total`.
-- Thứ tự áp dụng là cố định: shop voucher → platform voucher → freeship voucher → tách thuế. Quy tắc slot voucher ở `voucher.md` §2.2.
+- Thứ tự áp dụng là cố định: shop voucher → platform voucher → freeship voucher → tách thuế. Quy tắc slot voucher ở `voucher.md` §3.2.
 
 #### Bước 0 — Gom theo shop
 
@@ -98,7 +105,7 @@ Phân bổ về từng shop theo tỉ lệ `shipping_s / base_ship`, cùng phư�
 
 #### Bước 4 — Tách thuế theo danh mục
 
-Mỗi item mang `tax_rate` **snapshot tại thời điểm checkout**, lấy từ category của sản phẩm (Product Catalog cung cấp, xem §5.2). Vì giá đã gồm VAT, thuế được tách ngược ra:
+Mỗi item mang `tax_rate` **snapshot tại thời điểm checkout**, lấy từ category của sản phẩm (Product Catalog cung cấp, xem §6.2). Vì giá đã gồm VAT, thuế được tách ngược ra:
 
 ```
 line_net_i = line_total_i − (phần discount phân bổ về item i)
@@ -136,14 +143,14 @@ Voucher: `APPLE300K` (SHOP A, FIXED 300.000) · `TACA200K` (PLATFORM, FIXED 200.
 Kiểm tra bước 2: `raw_A = 200000 × 500000/900000 = 111111,11` → `floor` = 111.111; `raw_B = 88888,89` → `floor` = 88.888. Tổng 199.999, thiếu 1 VND. Phần thập phân của B (0,89) lớn hơn của A (0,11) nên B nhận thêm 1 → 88.889. Tổng khớp 200.000 ✓
 
 
-### 2.3 Place checkout
+### 3.3 Place checkout
 
 1. Validate JWT, cart ownership, idempotency key và selected items.
 2. Re-read Product fields và giá; snapshot `title`, `sku`, `shop`, `unit_price`, `currency=VND`.
 3. Validate/redeem voucher trong transaction hoặc reservation protocol; không vượt usage limit.
 4. Gọi Inventory `reserve` với `reservation_id`, `order_intent_id`, item SKU/qty và TTL.
 5. Nếu reserve fail: rollback order intent/voucher hold, trả `ORDER_STOCK_UNAVAILABLE`.
-6. Tạo orders split theo shop + order_items + address snapshot + invoice pending + outbox `order.created` trong MySQL transaction. Trạng thái khởi tạo phụ thuộc payment method — xem bước 7 và vòng đời ở `order.md` §2.1.
+6. Tạo orders split theo shop + order_items + address snapshot + invoice pending + outbox `order.created` trong MySQL transaction. Trạng thái khởi tạo phụ thuộc payment method — xem bước 7 và vòng đời ở `order.md` §3.1.
 7. Rẽ nhánh theo payment method:
    - **VNPAY**: order khởi tạo `PENDING_PAYMENT`, payment projection `PENDING`. Tạo payment intent qua Payment-Wallet sau order commit/idempotency. Reservation giữ nguyên `RESERVED`, chỉ commit khi nhận `payment.succeeded`.
    - **COD**: order khởi tạo thẳng `CONFIRMED` (**không** đi qua `PENDING_PAYMENT`), payment projection `PENDING_COD`. Gọi Inventory `commit` ngay trong luồng checkout vì không có bước chờ tiền; phát `order.confirmed` cùng `order.created`.
@@ -153,22 +160,22 @@ Kiểm tra bước 2: `raw_A = 200000 × 500000/900000 = 111111,11` → `floor` 
 
 Không dùng distributed transaction giữa MySQL/Inventory/Payment; dùng idempotency, saga compensation và event reconciliation.
 
-## 3. Hằng số & cấu hình
+## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Ghi chú |
-|---|---:|---|
-| `CHECKOUT_PREVIEW_TTL` | 5 phút | Chỉ warning/UX, không giữ stock. |
-| `INVENTORY_RESERVATION_TTL` | 15 phút | Exact TTL phải align Inventory. |
-| `VND_MIN/MAX` | 1/999999999999 | Integer; snapshot không float. |
-| `INTEGRATION_TIMEOUT` | 5s | Checkout dependency baseline; Payment/Shipment có route override. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---:|---|---|
+| `CHECKOUT_PREVIEW_TTL` | 5 phút | ⏳ chưa có | Chỉ warning/UX, không giữ stock. |
+| `INVENTORY_RESERVATION_TTL` | 15 phút | ⏳ chưa có | Exact TTL phải align Inventory. |
+| `VND_MIN/MAX` | 1/999999999999 | ⏳ chưa có | Integer; snapshot không float. |
+| `INTEGRATION_TIMEOUT` | 5s | ⏳ chưa có | Checkout dependency baseline; Payment/Shipment có route override. |
 
-## 4. Enum & trạng thái
+## 5. Enum & trạng thái
 
-Checkout không có enum riêng. Trạng thái order/payment khởi tạo dùng `OrderStatus`/`PaymentStatusProjection` (`order.md` §4); voucher dùng `VoucherScope`/`DiscountType` (`voucher.md` §4).
+Checkout không có enum riêng. Trạng thái order/payment khởi tạo dùng `OrderStatus`/`PaymentStatusProjection` (`order.md` §5); voucher dùng `VoucherScope`/`DiscountType` (`voucher.md` §5).
 
-## 5. Contract với service khác
+## 6. Event phát ra / lắng nghe
 
-### 5.1 Contract — Inventory reserve request
+### 6.1 Contract — Inventory reserve request
 
 Contract thật do Inventory sở hữu (`inventory-docs/docs/api/inventory.md` §3.2). Correlation đi ở **header**, không nằm trong body; item chỉ có `sku_id` + `quantity` (Inventory không nhận `product_id`).
 
@@ -190,7 +197,7 @@ Content-Type: application/json
 
 Response `201`: `{ "data": { "reservation_id", "status": "RESERVED", "expires_at", "items": [...] } }`. Commit/release theo `POST /internal/inventory/reservations/{reservationId}/commit|release`. `expires_at` do Order đặt phải khớp `INVENTORY_RESERVATION_TTL` (15 phút) đã align với Inventory.
 
-### 5.2 Contract — thuế suất từ Product Catalog
+### 6.2 Contract — thuế suất từ Product Catalog
 
 Thuế tính **theo danh mục**, mà danh mục do Product Catalog sở hữu. Order-Commerce không tự suy ra thuế suất và không lưu bảng thuế riêng.
 
@@ -212,14 +219,14 @@ Quy tắc:
 
 - Checkout **snapshot** `tax_rate_bps` vào từng `order_items` tại thời điểm đặt hàng. Admin đổi thuế suất danh mục về sau **không** hồi tố đơn cũ — hoá đơn đã phát hành phải bất biến.
 - Thiếu `tax_rate_bps` trong response (product cũ chưa migrate) → coi như `0`, ghi log cảnh báo, **không** chặn checkout. Chặn đặt hàng vì thiếu cấu hình thuế là đánh đổi sai.
-- Giá đã gồm VAT nên thuế **không** cộng thêm vào `grand_total`; xem §2.2 bước 4.
+- Giá đã gồm VAT nên thuế **không** cộng thêm vào `grand_total`; xem §3.2 bước 4.
 
-Event `order.created`/`order.confirmed` phát ra tại checkout được mô tả ở `order.md` §5.
+Event `order.created`/`order.confirmed` phát ra tại checkout được mô tả ở `order.md` §6.
 
-## 6. Mã lỗi
+## 7. Mã lỗi
 
-`ORDER_CART_EMPTY`, `ORDER_PRODUCT_UNAVAILABLE`, `ORDER_PRICE_CHANGED`, `ORDER_STOCK_UNAVAILABLE`, `ORDER_RESERVATION_EXPIRED`, `ORDER_VOUCHER_INVALID`, `ORDER_VOUCHER_SLOT_CONFLICT`, `ORDER_VOUCHER_LIMIT_REACHED`, `ORDER_ADDRESS_INVALID`, `ORDER_IDEMPOTENCY_CONFLICT`, `ORDER_DEPENDENCY_UNAVAILABLE` — định nghĩa ở `order-commerce.md` §7.
+⏳ Chưa có code. `ORDER_CART_EMPTY`, `ORDER_PRODUCT_UNAVAILABLE`, `ORDER_PRICE_CHANGED`, `ORDER_STOCK_UNAVAILABLE`, `ORDER_RESERVATION_EXPIRED`, `ORDER_VOUCHER_INVALID`, `ORDER_VOUCHER_SLOT_CONFLICT`, `ORDER_VOUCHER_LIMIT_REACHED`, `ORDER_ADDRESS_INVALID`, `ORDER_IDEMPOTENCY_CONFLICT`, `ORDER_DEPENDENCY_UNAVAILABLE` — định nghĩa ở `order-commerce.md` §7.
 
-## 7. Giả định & câu hỏi mở
+## 8. Giả định & câu hỏi mở
 
 Xem `order-commerce.md` §8 mục 3 (reserve trước tạo order, payment tách saga), 4 (split theo shop), 5 (shipping fee mock), 8 (tax provider).

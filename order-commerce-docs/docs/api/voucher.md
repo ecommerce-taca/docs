@@ -1,7 +1,10 @@
-# API Spec — Order-Commerce · Voucher
+# API Spec — Order-Commerce Service · Voucher
 
-> Thuộc service Order-Commerce — quy ước chung, danh sách endpoint đầy đủ và mã lỗi ở `docs/api/order-commerce.md` · Cập nhật: `2026-10-31`
-> LLD: `docs/lld/voucher.md` · DB: `docs/db/voucher.md` · Test: `docs/test/voucher.md`
+> Nguồn: `docs/lld/voucher.md` · `docs/db/voucher.md` · `docs/test/voucher.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Base path: `/api/v1` · Spring Boot/Java 25 · Auth qua Gateway · `X-Request-ID`/W3C trace dùng chuẩn chung
+
+Phần **Voucher** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/api/order-commerce.md`.
 
 ## 1. Quy ước API
 
@@ -9,19 +12,19 @@ Theo `docs/api/order-commerce.md` §1 (base path `/api/v1`, auth qua Gateway, en
 
 ## 2. Danh sách endpoint
 
-| # | Method + path | Quyền | Mục đích |
-|---:|---|---|---|
-| 5 | `GET /vouchers/validate` | Buyer | Preview voucher trên cart (buyer đã biết mã). |
-| 5a | `GET /vouchers` | **Public (auth tuỳ chọn)** | Danh sách voucher khả dụng (PDP/Shop voucher strip cho khách chưa đăng nhập); có JWT thì service tính thêm `eligible`. |
-| 5b | `GET /vouchers/redemptions` | Buyer | Lịch sử voucher đã dùng + tổng tiền đã tiết kiệm. |
-| 19 | `POST /seller/vouchers` | Seller | Tạo shop voucher. |
-| 20 | `GET /seller/vouchers` | Seller | List voucher. |
-| 21 | `PUT /seller/vouchers/{voucherId}` | Seller | Update voucher. |
-| 22 | `DELETE /seller/vouchers/{voucherId}` | Seller | Soft archive/inactivate. |
-| 23 | `POST /admin/vouchers` | Admin (`VOUCHER_MANAGE`) | Tạo platform voucher (`scope=PLATFORM`). |
-| 24 | `GET /admin/vouchers` | Admin | List platform voucher + usage metric. |
-| 25 | `PUT /admin/vouchers/{voucherId}` | Admin | Update platform voucher. |
-| 26 | `DELETE /admin/vouchers/{voucherId}` | Admin | Soft archive/inactivate. |
+| # | Method + path | Quyền | Mục đích | Trạng thái |
+|---:|---|---|---|---|
+| 5 | `GET /vouchers/validate` | Buyer | Preview voucher trên cart (buyer đã biết mã). | ⏳ |
+| 5a | `GET /vouchers` | **Public (auth tuỳ chọn)** | Danh sách voucher khả dụng (PDP/Shop voucher strip cho khách chưa đăng nhập); có JWT thì service tính thêm `eligible`. | ⏳ |
+| 5b | `GET /vouchers/redemptions` | Buyer | Lịch sử voucher đã dùng + tổng tiền đã tiết kiệm. | ⏳ |
+| 19 | `POST /seller/vouchers` | Seller | Tạo shop voucher. | ⏳ |
+| 20 | `GET /seller/vouchers` | Seller | List voucher. | ⏳ |
+| 21 | `PUT /seller/vouchers/{voucherId}` | Seller | Update voucher. | ⏳ |
+| 22 | `DELETE /seller/vouchers/{voucherId}` | Seller | Soft archive/inactivate. | ⏳ |
+| 23 | `POST /admin/vouchers` | Admin (`VOUCHER_MANAGE`) | Tạo platform voucher (`scope=PLATFORM`). | ⏳ |
+| 24 | `GET /admin/vouchers` | Admin | List platform voucher + usage metric. | ⏳ |
+| 25 | `PUT /admin/vouchers/{voucherId}` | Admin | Update platform voucher. | ⏳ |
+| 26 | `DELETE /admin/vouchers/{voucherId}` | Admin | Soft archive/inactivate. | ⏳ |
 
 ## 3. Chi tiết endpoint
 
@@ -244,7 +247,7 @@ Response `201` cùng shape với `POST /seller/vouchers` nhưng `shop_id: null`.
 
 `PUT /admin/vouchers/{voucherId}` cùng field với create cộng `version`, response `200` cùng shape. `DELETE /admin/vouchers/{voucherId}` body `{version}` → `200 { data: { voucher_id, status: "INACTIVE" }, meta }`, soft `INACTIVE/ARCHIVED`, redemption history giữ nguyên. Validation, usage increment và scope-check khi checkout dùng chung code path với shop voucher.
 
-## 4. Mã lỗi
+## 4. Mã lỗi chung
 
 `ORDER_INVALID_INPUT`, `ORDER_FORBIDDEN`, `ORDER_VOUCHER_INVALID`, `ORDER_VOUCHER_CODE_EXISTS`, `ORDER_VOUCHER_CODE_LOCKED`, `ORDER_VOUCHER_LIMIT_REACHED` — định nghĩa ở `docs/api/order-commerce.md` §4.
 

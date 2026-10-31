@@ -1,7 +1,10 @@
-# Test Plan — Order-Commerce · Checkout
+# Test Plan — Order-Commerce Service · Checkout
 
-> Thuộc service Order-Commerce — chuẩn bị, contract/security chung và tiêu chí phát hành ở `docs/test/order-commerce.md` · Cập nhật: `2026-10-31`
-> LLD: `docs/lld/checkout.md` · API: `docs/api/checkout.md`
+> Nguồn: `docs/lld/checkout.md` · `docs/api/checkout.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Môi trường: Spring Boot/Java 25, JUnit 5, MockMvc/Testcontainers (MySQL 8.4, Redis, Kafka)
+
+Phần **Checkout** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/test/order-commerce.md`.
 
 ## 1. Chuẩn bị
 
@@ -36,7 +39,7 @@ Theo `docs/test/order-commerce.md` §1.
 
 ### 3.2 Golden test phép tính tiền *(bắt buộc — đây là nghiệp vụ lõi)*
 
-Mọi case dưới đây là **số cụ thể**, không phải mô tả. Cài đặt sai một quy tắc làm tròn là lệch đối soát. Công thức ở `docs/lld/checkout.md` §2.2.
+Mọi case dưới đây là **số cụ thể**, không phải mô tả. Cài đặt sai một quy tắc làm tròn là lệch đối soát. Công thức ở `docs/lld/checkout.md` §3.2.
 
 | ID | Giỏ hàng + voucher | Kỳ vọng |
 |---|---|---|
@@ -57,6 +60,8 @@ Mọi case dưới đây là **số cụ thể**, không phải mô tả. Cài �
 | O-CALC-15 | Giỏ 3 shop, 3 mã `SHOP` khác nhau | Mỗi mã chỉ ăn vào shop của nó; không rò sang shop khác |
 
 ## 4. Unit test
+
+⏳ Repo chưa có test class nào; mọi module dưới đây là test còn thiếu.
 
 | Module | Cases |
 |---|---|
