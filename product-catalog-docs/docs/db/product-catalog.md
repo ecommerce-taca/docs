@@ -1,6 +1,7 @@
 # Database — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` (đối chiếu với HLD `EcommercePlatform-v4(6).excalidraw` và Penpot `New File 1.penpot.zip`) · Cập nhật: `2026-09-17`
+> Nguồn: `docs/lld/product-catalog.md` · `HighLevelDesign/HLD.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ✅ Đã triển khai — schema Mongoose ở `src/database/schemas/*.schema.ts` (11 collection, gồm `import_jobs`); index do Mongoose tạo.
 > Baseline: MongoDB 8.x + Mongoose · database riêng `product_catalog`
 
 ## 1. Quy ước chung
@@ -31,7 +32,7 @@
 
 `created_at`, `updated_at`, `version` là field bắt buộc với aggregate/read model có mutation. Event projection thêm `source_version` và `source_event_id` để chống event cũ/out-of-order.
 
-## 2. Quan hệ dữ liệu
+## 2. Quan hệ
 
 ```mermaid
 erDiagram
@@ -276,11 +277,30 @@ Dưới CDC (Debezium MongoDB Outbox Event Router, xem `docs/lld/product-catalog
 | `metadata` | object | Không | Không lưu secret; có thể lưu changed field names. |
 | `occurred_at` | Date | Có | UTC, immutable. |
 
-## 4. Index và uniqueness
+### 3.11 `import_jobs`
+
+Job import Excel của seller (`src/database/schemas/import-job.schema.ts`, `timestamps: created_at/updated_at`).
+
+| Field | Kiểu | Ràng buộc |
+|---|---|---|
+| `_id` | string UUIDv7 | Job ID. |
+| `shop_id`, `actor_user_id` | string UUIDv7 | Bắt buộc. |
+| `category_id` | string/null | UUIDv7 hoặc `category_code` hợp lệ. |
+| `status` | enum `ImportJobStatus` | `PENDING` (mặc định), `PROCESSING`, `COMPLETED`, `FAILED`. |
+| `file_url` | string | Object file upload. |
+| `result_file_url` | string/null | File báo cáo lỗi. |
+| `total_rows` | number/null | |
+| `processed_rows`, `success_count`, `error_count` | number | Mặc định 0. |
+| `error_summary[]` | `{sheet_name?, row_index, product_ref_id, seller_sku?, error_code, error_message}` | |
+| `locked_until`, `started_at`, `completed_at` | Date/null | Lease worker và mốc thời gian. |
+
+## 4. Index
 
 | Collection | Index | Loại/mục đích |
 |---|---|---|
 | `products` | `{shop_id:1, slug:1}` | Unique slug trong shop. |
+| `products` | `{shop_id:1, product_code:1}` unique, partial `product_code` là string | Mã nghiệp vụ product (`^[A-Z0-9_-]{6,32}$`) unique trong shop. |
+| `products` | `{shop_id:1, status:1}`; `{status:1}` | Lọc trạng thái. |
 | `products` | `{shop_id:1, status:1, updated_at:-1}` | Seller listing. |
 | `products` | `{status:1, primary_category_id:1, published_at:-1}` | Public category listing; filter `ACTIVE`. |
 | `products` | `{shop_id:1, status:1, published_at:-1}` | Shop listing. |
@@ -289,6 +309,8 @@ Dưới CDC (Debezium MongoDB Outbox Event Router, xem `docs/lld/product-catalog
 | `skus` | `{product_id:1, status:1}` | Product SKU read. |
 | `attribute_definitions` | `{scope_type:1, scope_id:1, key:1}` | Unique definition key/scope. |
 | `categories` | `{slug:1}` | Unique taxonomy slug baseline. |
+| `categories` | `{category_code:1}` unique, partial `category_code` là string | Mã nghiệp vụ category (`^[A-Z0-9_-]{3,32}$`). |
+| `categories` | `{parent_id:1, name:1}` unique | Không trùng tên trong cùng parent. |
 | `categories` | `{parent_id:1, status:1, sort_order:1}` | Tree navigation. |
 | `categories` | `{path:1}` | Descendant lookup bằng materialized path. |
 | `product_categories` | `{product_id:1, category_id:1}` | Unique assignment. |
@@ -297,17 +319,23 @@ Dưới CDC (Debezium MongoDB Outbox Event Router, xem `docs/lld/product-catalog
 | `product_media` | `{product_id:1, scope:1, status:1, sort_order:1}` | Media read/order. |
 | `product_media` | `{object_key:1}` unique | Prevent object reuse. |
 | `product_media` | `{product_id:1, sha256:1}` | Detect duplicate upload. |
+| `product_media` | `{product_id:1}` unique, partial `is_cover=true, status=READY` | Tối đa 1 cover READY/product. |
 | `shop_snapshots` | `{shop_id:1}` unique | Snapshot lookup. |
 | `shop_snapshots` | `{shop_status:1, kyc_status:1}` | Publish gate diagnostics. |
 | `inventory_projections` | `{sku_id:1}` unique | Detail projection lookup. |
 | `inventory_projections` | `{product_id:1, stock_status:1}` | Product card stock mapping. |
+| `outbox_events` | `{event_id:1}` unique | Chống ghi trùng event. |
+| `outbox_events` | `{occurred_at:1}` TTL 1 209 600 s (14 ngày) | Dọn outbox sau khi CDC đã đọc. |
 | `outbox_events` | `{aggregate_type:1, aggregate_id:1, occurred_at:1}` | Aggregate replay/debug — không cần index theo trạng thái publish vì app không polling (CDC connector đọc change stream trực tiếp). |
 | `catalog_audits` | `{target_type:1, target_id:1, occurred_at:-1}` | Target audit history. |
 | `catalog_audits` | `{actor_user_id:1, occurred_at:-1}` | Actor audit lookup. |
+| `import_jobs` | `{shop_id:1, created_at:-1}`; `{shop_id:1, status:1}`; `{status:1, created_at:1}` | Tra cứu job. |
+| `import_jobs` | `{shop_id:1}` unique, partial `status ∈ {PENDING, PROCESSING}` | Mỗi shop tối đa 1 job đang chạy (`PRODUCT_IMPORT_JOB_RUNNING`). |
+| `import_jobs` | `{created_at:1}` TTL 604 800 s (7 ngày) | Tự xoá job cũ. |
 
-TTL index không áp dụng cho domain data/audit trong v1. Retention của collection `outbox_events` (nếu có) chỉ dọn dữ liệu cũ trong MongoDB, **không quyết định khả năng replay** — cửa sổ replay thật bị giới hạn bởi MongoDB oplog retention + offset đã commit của Debezium connector (xem `docs/lld/product-catalog.md` giả định #24); DLQ (`product-catalog.events.dlq.v1`) thuộc retention của Kafka, chốt riêng theo Kafka topic policy.
+TTL index không áp dụng cho domain data/audit trong v1; chỉ có TTL cho `outbox_events` (14 ngày) và `import_jobs` (7 ngày). Retention của collection `outbox_events` (nếu có) chỉ dọn dữ liệu cũ trong MongoDB, **không quyết định khả năng replay** — cửa sổ replay thật bị giới hạn bởi MongoDB oplog retention + offset đã commit của Debezium connector (xem `docs/lld/product-catalog.md` giả định #24); DLQ (`product-catalog.events.dlq.v1`) thuộc retention của Kafka, chốt riêng theo Kafka topic policy.
 
-## 5. Enum và database rules
+## 5. Enum và rules
 
 | Enum/rule | Giá trị/ràng buộc |
 |---|---|
@@ -317,6 +345,7 @@ TTL index không áp dụng cho domain data/audit trong v1. Retention của coll
 | `MediaScope` | `SPU`, `SKU`. |
 | `MediaStatus` | `UPLOADING`, `SCANNING`, `READY`, `REJECTED`, `DELETED`. |
 | `CategoryStatus` | `ACTIVE`, `INACTIVE`, `ARCHIVED`. |
+| `ImportJobStatus` | `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`. |
 | `InventoryStockStatus` | `UNKNOWN`, `IN_STOCK`, `LOW_STOCK`, `OUT_OF_STOCK`, `STALE`. |
 | Primary category | Tối đa 1; khi publish phải đúng 1 `ACTIVE`. |
 | Secondary categories | Tối đa 2; tổng assignment tối đa 3/product. |
@@ -329,7 +358,9 @@ MongoDB validator nên enforce kiểu dữ liệu, enum, non-negative quantity v
 
 ## 6. Migration và seed
 
-### 6.1 Migration sequence
+### 6.1 Thứ tự migration
+
+Không có framework migration: collection và index được Mongoose tạo khi khởi động; `scripts/mongo-init.sh` khởi tạo replica set/DB local; `scripts/backfill-business-codes.ts` backfill `product_code`/`category_code` idempotent. Các bước dưới là quy trình vận hành.
 
 1. Tạo database/collection và validator cho `products`, `skus`, `categories`, `product_categories`, `product_media`.
 2. Tạo unique indexes sau khi chạy duplicate preflight; migration phải fail nếu còn collision, không tự xóa dữ liệu.

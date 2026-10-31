@@ -1,8 +1,8 @@
 # LLD — API Gateway Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
+> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Code: chưa có repo · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — chưa có repo Gateway trong `ecommerce-taca`; toàn bộ nội dung là thiết kế (Kong DB-less).
 > Tech stack đã chốt: **Kong Gateway 3.x OSS** (DB-less declarative, quản lý bằng decK trong Git) · plugin built-in + 5 custom Lua plugin (`taca-*`) · REST/HTTP · Redis cho distributed rate limit · JWT RS256/JWKS · internal REST qua domain/IP nội bộ
->
 > **Lưu ý migration:** v1 trước đây thiết kế Gateway tự viết bằng Node.js + NestJS. Toàn bộ **contract đối ngoại giữ nguyên** (route family, error envelope, mã lỗi, header context, rate-limit baseline, WebSocket handshake) — chỉ thay đổi cơ chế thực thi. Xem §2.1 để biết yêu cầu nào do plugin built-in đáp ứng và yêu cầu nào bắt buộc phải viết custom plugin.
 
 ## 1. Phạm vi

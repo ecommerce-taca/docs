@@ -1,7 +1,8 @@
 # Database — Auth User Service
 
-> Nguồn: `docs/lld/auth-user.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
-> Engine: MySQL 8.4 · Database/schema: `userdb` · Mỗi service một database riêng
+> Nguồn: `docs/lld/auth-user.md` · `docs/api/auth-user.md` · Code: `ecommerce-taca/user-auth-service` @ `develop` (`7c268a0`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ✅ Đã triển khai — 24 bảng qua Flyway `V001`–`V024` (`src/main/resources/db/migration`), JPA `ddl-auto=validate`.
+> Engine/DB: MySQL 8.4/InnoDB · Database/schema: `userdb` · Mỗi service một database riêng
 
 ## 1. Quy ước chung
 
@@ -53,7 +54,7 @@ users ──1:n──► addresses
   │             └──1:n──► kyc_cases ──1:n──► kyc_documents
   │
   ├──1:1──► two_factor_credentials ──1:n──► two_factor_recovery_codes
-  ├──1:n──► favorites            (reference product_id, không FK)
+  ├──1:n──► user_favorites       (reference product_id, không FK)
   ├──1:n──► shop_follows ──n:1──► shops
   └──1:n──► mfa_challenges / login_attempts / audit_logs
 
@@ -64,7 +65,7 @@ mọi domain event ──1:n──► outbox_events
 | Quan hệ | Kiểu | Khoá nội bộ | Khi cha bị xoá |
 |---|---|---|---|
 | `users → addresses` | 1:n | `addresses.user_id → users.id` | Không hard delete user; address soft delete. FK `RESTRICT`. |
-| `users → favorites` | 1:n | `favorites.user_id → users.id` | Xóa cứng row khi bỏ yêu thích. FK `RESTRICT`. `product_id` là reference, không FK. |
+| `users → user_favorites` | 1:n | `user_favorites.user_id → users.id` | Xóa cứng row khi bỏ yêu thích. FK `RESTRICT`. `product_id` là reference, không FK. |
 | `users → shop_follows` | 1:n | `shop_follows.user_id → users.id` | Xóa cứng row khi unfollow. FK `RESTRICT`. |
 | `shops → shop_follows` | 1:n | `shop_follows.shop_id → shops.id` | Đếm follower theo `shop_id`. FK `RESTRICT`. |
 | `users → refresh_tokens` | 1:n | `refresh_tokens.user_id → users.id` | Revoke trước; cleanup job mới xóa token hết hạn. FK `RESTRICT`. |
@@ -122,9 +123,12 @@ Khoá & ràng buộc:
 | `phone` | `VARCHAR(16)` | N | — | E.164 | Phone giao hàng. |
 | `line1` | `VARCHAR(255)` | N | — | Length 1–255 | Số nhà/đường. |
 | `line2` | `VARCHAR(255)` | Y | `NULL` | — | Căn hộ/tòa nhà. |
-| `ward` | `VARCHAR(120)` | N | — | — | Phường/xã. |
-| `district` | `VARCHAR(120)` | N | — | — | Quận/huyện. |
-| `province` | `VARCHAR(120)` | N | — | — | Tỉnh/thành. |
+| `country_code` | `CHAR(2)` | N | `'VN'` | CHECK `= 'VN'` (V021) | Quốc gia. |
+| `province_code` | `CHAR(2)` | Y | `NULL` | Cặp với `ward_code` (V021) | Mã tỉnh theo catalog. |
+| `province` | `VARCHAR(120)` | N | — | — | Tên tỉnh/thành (service resolve từ mã). |
+| `ward_code` | `CHAR(5)` | Y | `NULL` | Cặp với `province_code` (V021) | Mã phường/xã. |
+| `ward` | `VARCHAR(120)` | N | — | — | Tên phường/xã (service resolve từ mã). |
+| `district` | `VARCHAR(120)` | Y | `NULL` | Legacy (V021 đổi sang nullable) | Mô hình mới 2 cấp không dùng. |
 | `postal_code` | `VARCHAR(12)` | Y | `NULL` | — | Optional. |
 | `is_default` | `TINYINT(1)` | N | `0` | `0/1` | Tối đa một default/user ở application transaction. |
 | `created_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | UTC. |
@@ -134,6 +138,7 @@ Khoá & ràng buộc:
 Ràng buộc nghiệp vụ:
 
 - Tối đa 20 record sống/user.
+- `ck_addresses_location_codes_pair`: `province_code` và `ward_code` cùng NULL (bản ghi trước V021) hoặc cùng có giá trị.
 - Khi tạo address đầu tiên, set `is_default=1`.
 - Set default phải clear default cũ trong cùng transaction.
 - Không xóa address cuối nếu user có checkout session active; Order lưu snapshot riêng.
@@ -213,7 +218,7 @@ Ràng buộc:
 | `purpose` | `VARCHAR(32)` | N | — | `EMAIL_VERIFY/PHONE_VERIFY` | Mục đích. |
 | `token_hash` | `CHAR(64)` | N | — | Index | SHA-256 token/OTP challenge secret. |
 | `recipient_masked` | `VARCHAR(254)` | N | — | Không raw OTP | Email/phone masked để support. |
-| `expires_at` | `DATETIME(6)` | N | — | — | Email 24h, phone 5m. |
+| `expires_at` | `DATETIME(6)` | N | — | — | Email 30 phút (cấu hình), phone 5 phút. |
 | `used_at` | `DATETIME(6)` | Y | `NULL` | — | One-time use. |
 | `revoked_at` | `DATETIME(6)` | Y | `NULL` | Resend revoke | Token cũ không dùng lại. |
 | `attempt_count` | `TINYINT UNSIGNED` | N | `0` | `0–5` | OTP attempts. |
@@ -422,18 +427,17 @@ Không update/delete audit log qua application API.
 | `last_error_code` | `VARCHAR(64)` | Y | `NULL` | Sanitized | Không raw stack trace. |
 | `created_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | UTC. |
 
-### 3.21 `favorites` — sản phẩm yêu thích (wishlist) của user
+### 3.21 `user_favorites` — sản phẩm yêu thích (wishlist) của user
 
 | Cột | Kiểu | Null | Default | Ràng buộc | Mô tả |
 |---|---|---:|---|---|---|
-| `id` | `BINARY(16)` | N | — | PK | UUIDv7. |
-| `user_id` | `BINARY(16)` | N | — | FK `users.id` (`RESTRICT`) | Chủ danh sách. |
+| `user_id` | `BINARY(16)` | N | — | PK `(user_id, product_id)`, FK `users.id` (`RESTRICT`) | Chủ danh sách. |
 | `product_id` | `BINARY(16)` | N | — | Reference ID, **không FK** | Sản phẩm; Product Catalog là nguồn. |
 | `created_at` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | — | UTC. |
 
 Ràng buộc:
 
-- UNIQUE `(user_id, product_id)`; thêm trùng là idempotent (không lỗi).
+- PK `(user_id, product_id)` (không có cột `id`); index `ix_user_favorites_user_created (user_id, created_at, product_id)`; thêm trùng là idempotent (không lỗi).
 - Không soft delete; bỏ yêu thích xóa cứng row.
 - Không validate product tồn tại/visible; không đồng bộ khi product bị archive/block — frontend/BFF tự lọc khi hydrate qua Product Catalog.
 - Tối đa `MAX_FAVORITES_PER_USER = 500` row/user (đếm trong transaction trước insert).
@@ -454,6 +458,47 @@ Ràng buộc:
 - Không soft delete; unfollow xóa cứng row.
 - Tối đa `MAX_FOLLOWED_SHOPS_PER_USER = 1000` row/user.
 - `follower_count` = `COUNT(*)` theo `shop_id` (có index); có thể thay bằng counter cache eventual sau nếu cần.
+
+### 3.23 `mfa_step_up_tokens` — step-up token sau khi verify 2FA (V014)
+
+| Cột | Kiểu | Null | Ràng buộc | Mô tả |
+|---|---|---:|---|---|
+| `id` | `BINARY(16)` | N | PK | UUIDv7. |
+| `user_id` | `BINARY(16)` | N | FK `users.id` | Chủ token. |
+| `session_id` | `BINARY(16)` | N | — | Session đã verify. |
+| `challenge_id` | `BINARY(16)` | N | UNIQUE, FK `mfa_challenges.id` | Challenge sinh token. |
+| `token_hash` | `CHAR(64)` | N | UNIQUE | Hash của header `X-MFA-Step-Up`, không lưu raw. |
+| `expires_at` | `DATETIME(6)` | N | — | Hết hạn. |
+| `revoked_at` | `DATETIME(6)` | Y | — | Thu hồi. |
+| `created_at` | `DATETIME(6)` | N | default now | UTC. |
+
+V014 cũng thêm `mfa_challenges.session_id` và index `ix_mfa_challenge_user_purpose_session`.
+
+### 3.24 `external_identities` — liên kết Google (V024)
+
+| Cột | Kiểu | Null | Ràng buộc | Mô tả |
+|---|---|---:|---|---|
+| `id` | `BINARY(16)` | N | PK | UUIDv7. |
+| `user_id` | `BINARY(16)` | N | FK `users.id`, index `ix_external_identities_user` | User. |
+| `provider` | `VARCHAR(32)` | N | CHECK `IN ('GOOGLE')` | Provider. |
+| `provider_subject` | `VARCHAR(255)` | N | UNIQUE `(provider, provider_subject)` | `sub` của Google. |
+| `provider_email` | `VARCHAR(254)` | N | — | Email từ Google. |
+| `linked_at` | `DATETIME(6)` | N | — | Thời điểm liên kết. |
+| `last_authenticated_at` | `DATETIME(6)` | Y | — | Lần đăng nhập Google gần nhất. |
+| `updated_at` | `DATETIME(6)` | N | on update now | UTC. |
+
+V024 đổi `users.password_hash` sang nullable (tài khoản chỉ dùng Google).
+
+### 3.25 Cột bổ sung ở migration sau
+
+| Migration | Bảng | Thay đổi |
+|---|---|---|
+| `V013` | `verification_tokens` | Thêm `recipient_value VARCHAR(254)`. |
+| `V016` | `two_factor_credentials` | Thêm `last_totp_step BIGINT` (chống replay TOTP). |
+| `V019` | `outbox_events` | Thêm `actor_user_id BINARY(16)` + index `ix_outbox_actor_user (actor_user_id, created_at)`. |
+| `V020` | `shops` | Thêm `version BIGINT NOT NULL DEFAULT 0` (optimistic lock). |
+| `V022` | `refresh_tokens` | `revoke_reason` thêm giá trị `PASSWORD_CHANGE` (`ROTATED, SIGNOUT, RESET, PASSWORD_CHANGE, REUSE, SUSPEND, EXPIRED`). |
+| `V023` | `kyc_documents` | Thêm `deleted_by BINARY(16)` FK `users.id`. |
 
 ## 4. Index
 
@@ -504,15 +549,15 @@ Ràng buộc:
 | `ix_audit_actor_time` | `audit_logs` | `actor_user_id, occurred_at` | B-tree | Admin audit query. |
 | `ix_outbox_pending` | `outbox_events` | `published_at, failed_at, next_retry_at, created_at` | B-tree | Publisher polling. |
 | `ix_outbox_aggregate` | `outbox_events` | `aggregate_type, aggregate_id, created_at` | B-tree | Replay/order per aggregate. |
-| `uk_favorites_user_product` | `favorites` | `user_id, product_id` | UNIQUE | Chống trùng; upsert idempotent. |
-| `ix_favorites_user_created` | `favorites` | `user_id, created_at` | B-tree | List favorites sort mới nhất. |
+| `pk_user_favorites` | `user_favorites` | `user_id, product_id` | PK | Chống trùng; upsert idempotent. |
+| `ix_user_favorites_user_created` | `user_favorites` | `user_id, created_at, product_id` | B-tree | List favorites sort mới nhất. |
 | `uk_shop_follows_user_shop` | `shop_follows` | `user_id, shop_id` | UNIQUE | Chống follow trùng. |
 | `ix_shop_follows_shop_created` | `shop_follows` | `shop_id, created_at` | B-tree | `follower_count`, danh sách follower. |
 | `ix_shop_follows_user_created` | `shop_follows` | `user_id, created_at` | B-tree | `GET /users/me/following`. |
 
 Không tạo index trên raw JSON `warehouse_snapshot`, `metadata` hoặc encrypted ciphertext nếu không có truy vấn thật.
 
-## 5. Enum & quy tắc dữ liệu
+## 5. Enum và rules
 
 ### 5.1 Enum lưu trong database
 
@@ -559,27 +604,38 @@ Không tạo index trên raw JSON `warehouse_snapshot`, `metadata` hoặc encryp
 | `order_id`/`payment_id` trong audit metadata | Order/Payment | JSON masked reference nếu cần | Không join/query runtime. |
 | `shop_id` ở Product/Payment/Order | Auth User | ID + event projection ở service đó | Không tạo FK từ database khác. |
 
-## 6. Migration & seed
+## 6. Migration và seed
 
-### 6.1 Thứ tự migration
+### 6.1 Flyway migration (thật trong repo)
 
-| Thứ tự | Nội dung | Phụ thuộc |
-|---:|---|---|
-| 001 | Tạo database `userdb`, charset/collation và migration metadata | — |
-| 002 | Tạo `users` | — |
-| 003 | Tạo `roles`, `permissions`, `role_permissions` | — |
-| 004 | Tạo `addresses` | `users` |
-| 005 | Tạo `shops`, `seller_onboarding` | `users` |
-| 006 | Tạo `user_roles`, `shop_staff` | `users`, `roles`, `shops` |
-| 007 | Tạo `refresh_tokens`, `verification_tokens`, `password_reset_tokens` | `users` |
-| 008 | Tạo `kyc_cases`, `kyc_documents` | `shops` |
-| 009 | Tạo `two_factor_credentials`, `two_factor_recovery_codes`, `mfa_challenges` | `users` |
-| 010 | Tạo `login_attempts`, `audit_logs`, `outbox_events` | `users` |
-| 011 | Tạo `favorites`, `shop_follows` | `users`, `shops` |
-| 012 | Thêm CHECK constraints, indexes và scheduled cleanup metadata | Tất cả bảng liên quan |
-| 013 | Seed RBAC baseline và permission matrix | `roles`, `permissions` |
+| Version | Nội dung |
+|---:|---|
+| `V001` | Configure `userdb` |
+| `V002` | Create `users` |
+| `V003` | Create RBAC catalog (`roles`, `permissions`, `role_permissions`) |
+| `V004` | Create `addresses` |
+| `V005` | Create `shops`, `seller_onboarding` |
+| `V006` | Create `user_roles`, `shop_staff` |
+| `V007` | Create auth tokens (`refresh_tokens`, `verification_tokens`, `password_reset_tokens`) |
+| `V008` | Create KYC persistence (`kyc_cases`, `kyc_documents`) |
+| `V009` | Create MFA persistence (`two_factor_credentials`, `two_factor_recovery_codes`, `mfa_challenges`) |
+| `V010` | Create `login_attempts`, `audit_logs`, `outbox_events` |
+| `V011` | Harden schema + cleanup support |
+| `V012` | Seed RBAC baseline |
+| `V013` | `verification_tokens.recipient_value` |
+| `V014` | `mfa_step_up_tokens`, `mfa_challenges.session_id` |
+| `V015` | MFA login audit context |
+| `V016` | TOTP replay protection |
+| `V017` | Create `user_favorites` |
+| `V018` | Create `shop_follows` |
+| `V019` | `outbox_events.actor_user_id` |
+| `V020` | `shops.version` |
+| `V021` | Mã địa chỉ VN (`country_code`, `province_code`, `ward_code`), `district` nullable |
+| `V022` | `refresh_tokens.revoke_reason` thêm `PASSWORD_CHANGE` |
+| `V023` | `kyc_documents.deleted_by` |
+| `V024` | `external_identities`, `users.password_hash` nullable |
 
-Mỗi migration phải có `up` và `down` cho local/test. Production rollback destructive phải có migration kế tiếp hoặc backup plan; không drop bảng trực tiếp khi có dữ liệu thật.
+Flyway chỉ có migration tiến (không có `down`). Rollback production dùng migration kế tiếp hoặc backup plan.
 
 ### 6.2 Seed bắt buộc
 
@@ -601,8 +657,8 @@ Mỗi migration phải có `up` và `down` cho local/test. Production rollback d
 | `unlock_accounts` | Mỗi 5 phút | Reset `LOCKED → ACTIVE` khi `locked_until` đã qua, trừ account bị suspend. |
 | `expire_verification_tokens` | Mỗi giờ | Mark expired qua query; không log token. |
 | `expire_refresh_tokens` | Hàng ngày | Xóa/revoke token quá hạn theo retention đã duyệt. |
-| `expire_kyc_documents` | `00:05 UTC` mỗi ngày | Mark document/case expired, phát event idempotent. |
-| `outbox_reaper` | Mỗi phút | Retry pending theo `next_retry_at`; sau 3 lần đưa DLQ. |
+| `expire_kyc_documents` | Fixed delay 60 s (`AUTH_KYC_EXPIRY_FIXED_DELAY_MS`) | Mark document/case expired, phát event idempotent. |
+| `outbox_reaper` | Publisher fixed delay 2 s | Retry pending; sau 3 lần đưa DLQ `auth-user.events.dlq.v1`. Cleanup: published 7 ngày, failed 30 ngày, mỗi 1h. |
 | `audit_archive` | Hàng ngày | Archive theo retention 365 ngày, không xóa audit đang cần compliance. |
 | `login_attempts_archive` | Hàng ngày | Partition/archive theo policy security, giữ aggregate cần thiết. |
 
@@ -618,6 +674,6 @@ Mỗi migration phải có `up` và `down` cho local/test. Production rollback d
 | 6 | `kyc_cases` chỉ enforce một case hiện hành bằng transaction/application lock, chưa dùng partial unique index. | Concurrent submit/review cần integration test và row lock đúng. | Backend lead |
 | 7 | `mfa_challenges` lưu MySQL thay vì Redis vì HLD chưa chốt Redis cho auth-user. | Có thể tăng DB write; đổi sang Redis sẽ cần TTL/HA contract. | Architecture owner |
 | 8 | Audit retention baseline 365 ngày; compliance retention dài hơn cần partition/archive policy riêng. | Ảnh hưởng storage cost và legal hold. | Security/Compliance |
-| 9 | `favorites`/`shop_follows` là bảng nhẹ, xóa cứng, không audit, không soft delete; `favorites.product_id` không FK. | Nếu cần lịch sử wishlist hoặc feed follower, phải thêm bảng event/soft-delete. | Product owner |
+| 9 | `user_favorites`/`shop_follows` là bảng nhẹ, xóa cứng, không audit, không soft delete; `user_favorites.product_id` không FK. | Nếu cần lịch sử wishlist hoặc feed follower, phải thêm bảng event/soft-delete. | Product owner |
 | 10 | `follower_count` tính bằng `COUNT(*)` trên index `ix_shop_follows_shop_created`; chấp nhận eventual khi hiển thị. | Nếu shop có hàng triệu follower, chuyển sang counter cache/materialized. | Backend lead |
 | 11 | KYC object storage dùng private S3/MinIO, max 10 MiB/file và signed URL 10 phút; virus scan chưa có provider. | Ảnh hưởng trạng thái `SCANNING` và publish readiness. | Security/DevOps |

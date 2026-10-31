@@ -1,6 +1,7 @@
 # API Spec — Message Service
 
-> Nguồn: `docs/lld/message.md` · `docs/db/message.md` · HLD/Penpot · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/message.md` · `docs/db/message.md` · HLD/Penpot · Code: `ecommerce-taca/message-service` @ `main` (`bb00012`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo chỉ có `README.md`; toàn bộ nội dung là thiết kế.
 > Base path: `/api/v1` · REST + WebSocket · Buyer–seller/support
 
 ## 1. Quy ước API chung

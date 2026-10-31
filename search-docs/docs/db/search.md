@@ -1,9 +1,12 @@
 # Database — Search Service
 
-> Nguồn: `docs/lld/search.md` · HLD `EcommercePlatform-v4(6).excalidraw` · Cập nhật: `2026-10-14`
+> Nguồn: `docs/lld/search.md` · `HighLevelDesign/HLD.md` · Code: `ecommerce-taca/search-service` @ `develop` (`9750a2f`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ✅ Đã triển khai — mapping ở `src/product-index/mappings/*.v1.ts`, tạo bởi `IndexBootstrapService` khi khởi động.
 > Baseline: Elasticsearch 8.x · index riêng, không dùng database Product làm query store
 
 ## 1. Quy ước chung
+
+Tên index thật (có thể thêm tiền tố `ES_INDEX_PREFIX`): alias `products-read` → index `products-v{mapping_version}-{yyyyMMddHHmmss}`; `search-consumer-state`; `search-reindex-jobs`; `search-categories` (`src/common/constants.ts` `BASE_INDEXES`).
 
 | Quy ước | Quyết định | Ràng buộc |
 |---|---|---|
@@ -16,11 +19,11 @@
 | Alias | `products-read` | Client không truyền index name. |
 | Observability | OpenTelemetry-compatible JSON log/trace/metric | Redact query/token/PII; field chuẩn giống auth-user/Gateway. |
 
-## 2. Quan hệ dữ liệu
+## 2. Quan hệ
 
 Search chỉ có quan hệ logic: một product document chứa denormalized shop/category/SKU/attribute/media display data; Product Catalog và Rating là source event. Không có FK hoặc transaction join.
 
-## 3. Chi tiết index/document
+## 3. Chi tiết index
 
 ### 3.1 `products-v{mapping_version}`
 
@@ -59,7 +62,7 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
 | `shop` | `object` (`{shop_id: keyword, name: keyword}`) | Snapshot thông tin shop từ product/catalog event. Result card đọc trực tiếp, Search không gọi Product API trong request path. |
 | `title` | `text` analyzer tiếng Việt baseline | Full-text; exact dùng `title_exact`. |
 | `description` | `text` | Search relevance, không highlight raw HTML. |
-| `category_ids` | `keyword[]` | Chuỗi id từ gốc tới `primary_category_id`, resolve qua projection `search_categories` (§3.4). Facet category gộp theo field này; `name` lấy từ projection. |
+| `category_ids` | `keyword[]` | Chuỗi id từ gốc tới `primary_category_id`, resolve qua projection `search-categories` (§3.4). Facet category gộp theo field này; `name` lấy từ projection. |
 | `category_path`, `brand` | `keyword[]`/`keyword` | Filter; `category_path` giữ nguyên giá trị Product gửi. |
 | `price` | `long` | Range/sort VND. |
 | `cover_url` | `keyword` (`index: false`) | URL ảnh đầu tiên từ media event. Result card đọc trực tiếp, không index tìm kiếm. |
@@ -73,11 +76,11 @@ Search chỉ có quan hệ logic: một product document chứa denormalized sho
 | `source_version` | `long` | Bỏ event cũ/out-of-order. |
 | `source_event_id` | `keyword` | Dedupe/audit. |
 
-### 3.2 `search_consumer_state`
+### 3.2 `search-consumer-state`
 
 Persist bằng index hoặc operational store tùy deployment; tối thiểu phải giữ `event_id`, `aggregate_id`, `source_version`, `processed_at`, `status`, `error_code`. Nếu dùng Elasticsearch, index này không phục vụ public query.
 
-### 3.3 `reindex_jobs`
+### 3.3 `search-reindex-jobs`
 
 | Field | Type | Ràng buộc |
 |---|---|---|
@@ -93,7 +96,7 @@ Persist bằng index hoặc operational store tùy deployment; tối thiểu ph�
 | `error_code` | keyword/null | Mã lỗi allowlist khi `state=FAILED`, null nếu không lỗi. Allowlist: `REINDEX_GATE_COUNT_MISMATCH`, `REINDEX_GATE_VERSION_REGRESSION`, `REINDEX_GATE_SMOKE_FAILED`, `REINDEX_SOURCE_UNAVAILABLE`, `REINDEX_TIMEOUT`, `REINDEX_WORKER_ERROR`. |
 | `trace_id`/`request_id` | keyword | Correlation allowlist. |
 
-### 3.4 `search_categories` (projection nội bộ)
+### 3.4 `search-categories` (projection nội bộ)
 
 Nuôi từ `category.events.v1` (`category.created/updated/status_changed`); không phục vụ public query trực tiếp. Dùng để resolve `category_ids` khi build product document và tra `name` cho facet category.
 
@@ -109,7 +112,7 @@ Nuôi từ `category.events.v1` (`category.created/updated/status_changed`); kh�
 
 Đổi `name` chỉ cập nhật projection, không reindex product. Đổi `parent_id`/path thì reindex các product có `category_ids` chứa category đó.
 
-## 4. Index và uniqueness
+## 4. Index
 
 | Index/alias | Mapping/setting | Mục đích |
 |---|---|---|
@@ -121,7 +124,7 @@ Nuôi từ `category.events.v1` (`category.created/updated/status_changed`); kh�
 | `spec_attributes` | flattened | Thuộc tính mô tả, không facet. |
 | `attribute_pairs` | keyword array | Facet attribute trong 1 request ES (sinh từ `attributes`). |
 | `variant_skus` | object (`enabled: false`) | Không index; lưu trạng thái SKU để tính lại `attributes`. |
-| `search_categories` | index nội bộ | Projection category cho facet name và resolve `category_ids`. |
+| `search-categories` | index nội bộ | Projection category cho facet name và resolve `category_ids`. |
 | `suggest` | completion | Autocomplete. |
 | `visibility_status` | filter-first keyword | Không query hidden public. |
 
@@ -147,7 +150,7 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 |---:|---|---|
 | 001 | Tạo index mới `products-v{mapping_version+1}` với explicit mapping/settings (không dynamic mapping không kiểm soát) | Mapping version hiện tại |
 | 002 | Validate analyzer tiếng Việt, `attributes` flattened, `suggest` completion, `price` numeric range trên index rỗng bằng test document | 001 |
-| 003 | Backfill: replay toàn bộ event từ Kafka (hoặc Product export snapshot) theo checkpoint vào index mới, ghi tiến trình vào `reindex_jobs` | 001, 002 |
+| 003 | Backfill: replay toàn bộ event từ Kafka (hoặc Product export snapshot) theo checkpoint vào index mới, ghi tiến trình vào `search-reindex-jobs` | 001, 002 |
 | 004 | Chạy count/sample/version comparison giữa index cũ và mới; query smoke test (search cơ bản + facet + suggest) | 003 |
 | 005 | Atomic alias swap `products-read` → index mới | 004 đạt |
 | 006 | Giữ index cũ theo retention (không xoá ngay) — rollback bằng swap alias ngược nếu phát hiện lỗi sau swap | 005 |
@@ -162,7 +165,7 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 | Product | 1 `PUBLISHED` đủ field facet (category, brand, attribute, price); 1 `HIDDEN`; 1 `DELETED` (test bị loại khỏi kết quả). |
 | Category | Cây category khớp fixture của `product-catalog` (để `category_path` test đúng). |
 | Rating | 1 event `rating.aggregate.updated` cập nhật `rating_avg`/`rating_count` — test sort `rating_desc`. |
-| `reindex_jobs` | 1 job `SWAPPED` (thành công); 1 job `FAILED` (test hiển thị lỗi qua `GET /admin/search/reindex/{jobId}`). |
+| `search-reindex-jobs` | 1 job `SWAPPED` (thành công); 1 job `FAILED` (test hiển thị lỗi qua `GET /admin/search/reindex/{jobId}`). |
 
 ### 6.3 Kiểm tra bắt buộc trước khi alias swap production
 
@@ -179,6 +182,6 @@ Search không dùng SQL/NoSQL schema migration truyền thống — "migration" 
 | 3 | Consumer state/reindex job có thể dùng operational index, chưa chốt retention store. | Ảnh hưởng recovery/debug. | Platform owner |
 | 4 | Rating aggregate event là mock. | Không bật rating sort/facet production trước khi contract có. | Rating owner |
 | 5 | Product export/replay API chưa có; hiện dùng Kafka replay/mock fixture. | Ảnh hưởng full rebuild khi Kafka retention hết. | Product/Platform owner |
-| 6 | **Đã chốt 2026-10-14:** facet category dùng projection `search_categories` (§3.4); `attributes` chỉ chứa variant dimension từ SKU, thuộc tính mô tả tách sang `spec_attributes`. | Nếu Product thêm `name` vào event hoặc cờ `is_variant_dimension` vào `product.published`, có thể đơn giản hoá. | Search owner |
+| 6 | **Đã chốt 2026-10-14:** facet category dùng projection `search-categories` (§3.4); `attributes` chỉ chứa variant dimension từ SKU, thuộc tính mô tả tách sang `spec_attributes`. | Nếu Product thêm `name` vào event hoặc cờ `is_variant_dimension` vào `product.published`, có thể đơn giản hoá. | Search owner |
 | 7 | **Đã chốt 2026-10-14:** Document mang `shop: {shop_id, name}` và `cover_url` (D3) để result card đọc trực tiếp; chuẩn hoá allowlist `error_code` reindex job (D19) và target index precision giây (D18). | Tránh phụ thuộc Product API trong search path. | Techlead |
 | 8 | **Đã chốt 2026-10-14:** Document mang `attribute_pairs` (keyword[]) để facet attribute trong 1 request ES và `variant_skus` (object, `enabled: false`) lưu trạng thái từng SKU để tính lại `attributes` (D23). | Cần reindex khi cập nhật mapping products. | Techlead |

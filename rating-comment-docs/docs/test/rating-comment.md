@@ -1,6 +1,8 @@
 # Test Plan — Rating & Comment Service
 
-> Nguồn: `docs/lld/rating-comment.md` · `docs/db/rating-comment.md` · `docs/api/rating-comment.md` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/rating-comment.md` · `docs/db/rating-comment.md` · `docs/api/rating-comment.md` · Code: `ecommerce-taca/rating-comment-service` @ `main` (`355daa3`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo chỉ có `README.md`; toàn bộ nội dung là thiết kế.
+> Môi trường: (dự kiến) Jest + Supertest, MongoDB/Kafka Testcontainers
 
 ## 1. Chuẩn bị
 
@@ -42,16 +44,6 @@
 | R-API-11 | Reply edit/delete/version | State/version correct, buyer rating unchanged. |
 | R-API-12 | Health live/ready | Correct Mongo/Kafka/S3 readiness. |
 
-### 3.1 Contract/security/reliability
-
-| ID | Case | Expected |
-|---|---|---|
-| R-INT-01 | Order delivered event duplicate/out-of-order | Eligibility projection idempotent. |
-| R-INT-02 | Product archived/shop update | Review history retained; public policy respected. |
-| R-SEC-01 | Client sets `is_verified_purchase=true` | Ignored; server eligibility required. |
-| R-SEC-02 | XSS/NoSQL injection/comment log scan | Sanitize/reject; no raw comment/PII/token logs. |
-| R-RES-01 | Kafka/S3/Mongo failure | No partial review/aggregate; outbox/retry. |
-
 ## 4. Unit test
 
 | Module | Cases |
@@ -63,7 +55,22 @@
 | `MediaService` | Signed URL ownership, checksum, SCANNING/READY. |
 | `Observability` | JSON fields, W3C/request propagation, redaction, bounded metrics. |
 
-## 5. Giả định & câu hỏi mở
+## 5. Contract/security/resilience
+
+| ID | Case | Expected |
+|---|---|---|
+| R-INT-01 | Order delivered event duplicate/out-of-order | Eligibility projection idempotent. |
+| R-INT-02 | Product archived/shop update | Review history retained; public policy respected. |
+| R-SEC-01 | Client sets `is_verified_purchase=true` | Ignored; server eligibility required. |
+| R-SEC-02 | XSS/NoSQL injection/comment log scan | Sanitize/reject; no raw comment/PII/token logs. |
+| R-RES-01 | Kafka/S3/Mongo failure | No partial review/aggregate; outbox/retry. |
+
+## 6. Tiêu chí pass/phát hành
+
+- Service chưa có code: các case ở §3–§5 là đặc tả để viết test khi triển khai.
+- Khi triển khai: unit + API integration xanh trên CI, contract test với service liên quan pass, không lỗi bảo mật mức cao.
+
+## 7. Giả định & câu hỏi mở
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|

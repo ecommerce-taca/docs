@@ -1,8 +1,8 @@
 # Database — API Gateway Service
 
-> Nguồn: `docs/lld/api-gateway.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
-> Trạng thái: N/A — API Gateway không sở hữu domain database
-> Runtime: **Kong Gateway 3.x OSS chạy DB-less** (`database = off`). Kong cũng **không** dùng PostgreSQL của riêng nó — cấu hình đến từ file declarative, nên kết luận "Gateway không có database" vẫn đúng nguyên vẹn sau khi migrate.
+> Nguồn: `docs/lld/api-gateway.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Code: chưa có repo · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — chưa có repo Gateway trong `ecommerce-taca`; toàn bộ nội dung là thiết kế (Kong DB-less).
+> Engine/DB: không có domain database. Runtime: **Kong Gateway 3.x OSS chạy DB-less** (`database = off`). Kong cũng **không** dùng PostgreSQL của riêng nó — cấu hình đến từ file declarative, nên kết luận "Gateway không có database" vẫn đúng nguyên vẹn sau khi migrate.
 
 ## 1. Quy ước chung
 
@@ -35,7 +35,7 @@ API Gateway
 | Gateway → domain services | REST proxy | Không lưu response business | Trả `502/503/504` theo upstream state; không trả dữ liệu cache chưa được chốt. |
 | Gateway → observability | Log/metric/trace stream | Platform sink | Request vẫn chạy nếu exporter lỗi, nhưng readiness/alert ghi degraded. |
 
-## 3. Chi tiết dữ liệu được dùng tạm thời
+## 3. Chi tiết bảng (dữ liệu tạm thời, không có database)
 
 ### 3.1 Redis key — không phải domain table
 
@@ -94,7 +94,7 @@ Redis chỉ cần:
 - Không dùng `KEYS *` hoặc scan toàn bộ Redis trong request path.
 - Metric theo prefix/bucket, không truy vấn business key.
 
-## 5. Enum & quy tắc dữ liệu
+## 5. Enum và rules
 
 ### 5.1 State lưu ngoài database
 
@@ -119,7 +119,7 @@ Các state này chỉ sống trong process/metrics và không phải record có 
 | Không persist refresh token/access token | Code review + secret scan. |
 | Không tạo cross-service FK | Database N/A policy; Gateway không có schema. |
 
-## 6. Migration & seed
+## 6. Migration và seed
 
 | Hạng mục | Trạng thái |
 |---|---|

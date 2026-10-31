@@ -1,6 +1,8 @@
 # Test Plan — Inventory Service
 
-> Nguồn: `docs/lld/inventory.md` · `docs/db/inventory.md` · `docs/api/inventory.md` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/inventory.md` · `docs/db/inventory.md` · `docs/api/inventory.md` · Code: `ecommerce-taca/inventory-service` @ `develop` (`92c1454`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai nghiệp vụ — mới có test cho khung (health, error envelope, security, logging, metrics, trace); toàn bộ test case nghiệp vụ dưới đây là kế hoạch.
+> Môi trường: JUnit 5, Spring Boot test, Testcontainers MySQL/Kafka; CI chạy `./mvnw -B -ntp verify`
 
 ## 1. Chuẩn bị
 
@@ -54,6 +56,10 @@
 | I-INT-05 | Order cancel reconciliation duplicate | Release idempotent, no negative reserved. |
 
 ## 4. Unit test
+
+Test class đã có (✅): `GlobalExceptionHandlerTest`, `HealthProbeIntegrationTest`, `HealthProbeServiceTest`, `JsonStructuredLogFormatterTest`, `SensitiveDataMaskerTest`, `InventoryMetricsTest`, `KafkaTracePropagatorTest`, `TraceContextFilterTest`, `ActorContextFilterTest`, `AuthorizationPolicyTest`.
+
+Kế hoạch (⏳):
 
 | Module | Cases |
 |---|---|

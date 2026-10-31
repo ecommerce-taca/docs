@@ -1,10 +1,11 @@
-# API — API Gateway Service
+# API Spec — API Gateway Service
 
-> Nguồn: `docs/lld/api-gateway.md` · `docs/db/api-gateway.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
+> Nguồn: `docs/lld/api-gateway.md` · `docs/db/api-gateway.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Code: chưa có repo · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — chưa có repo Gateway trong `ecommerce-taca`; toàn bộ nội dung là thiết kế (Kong DB-less).
 > Base path: `/api/v1` · Gateway không sở hữu business endpoint; các route business được proxy tới domain service
 > Runtime: **Kong Gateway 3.x OSS** (DB-less + decK). Toàn bộ contract đối ngoại trong tài liệu này **không đổi** khi chuyển từ bản NestJS sang Kong — ngoại lệ duy nhất là tên metric ở §3.3.
 
-## 1. Quy ước chung
+## 1. Quy ước API chung
 
 ### 1.1 HTTP, security và request context
 
@@ -89,7 +90,7 @@ Route match ưu tiên exact path policy → method/path policy → family policy
 
 Gateway chỉ thực hiện coarse gate trong bảng; service đích kiểm tra ownership, KYC, business state, amount, stock và 2FA cuối cùng.
 
-## 2. Danh sách endpoint của Gateway
+## 2. Danh sách endpoint
 
 | # | Method | Path | Mục đích | Quyền | Response |
 |---:|---|---|---|---|---|
@@ -116,7 +117,7 @@ Gateway chỉ thực hiện coarse gate trong bảng; service đích kiểm tra 
 | 18 | `ANY` | `/api/v1/conversations/**`, `/api/v1/messages/**`, `/api/v1/attachments/**` | Proxy messaging (gồm conversation `type=SUPPORT`) | Authenticated/admin | Upstream pass-through/mapped error |
 | 19 | `GET` | `/ws/messages` | WebSocket upgrade cho realtime chat | Authenticated (JWT ở handshake) | `101 Switching Protocols` hoặc `401/429/503` |
 
-## 3. Chi tiết endpoint và contract
+## 3. Chi tiết endpoint
 
 ### 3.1 `GET /health/live` — liveness
 
@@ -406,7 +407,7 @@ Sau khi upgrade:
 - Đóng socket khi: client/upstream đóng, quá `WS_IDLE_TIMEOUT` không có frame, hoặc user bị revoke (Redis `revoked_user:{user_id}`).
 - Reconnect và đồng bộ message bị miss là trách nhiệm client (`conversation.sync` qua REST cursor của Message Service).
 
-## 4. Bảng mã lỗi dùng chung
+## 4. Mã lỗi chung
 
 | Code | HTTP | Ý nghĩa | Thông điệp hiển thị |
 |---|---:|---|---|

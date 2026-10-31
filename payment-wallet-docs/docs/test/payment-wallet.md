@@ -1,6 +1,8 @@
 # Test Plan — Payment-Wallet Service
 
-> Nguồn: `docs/lld/payment-wallet.md` · `docs/db/payment-wallet.md` · `docs/api/payment-wallet.md` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/payment-wallet.md` · `docs/db/payment-wallet.md` · `docs/api/payment-wallet.md` · Code: `ecommerce-taca/payment-wallet-service` @ `main` (`859b7b1`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: 🟡 Triển khai một phần — 190 test class (unit, MockMvc controller, Testcontainers MySQL/Kafka, HTTP E2E); chưa có test cho payout API và publish `payment.succeeded` vì code chưa có.
+> Môi trường: JUnit 5, Spring Boot Test/MockMvc, Testcontainers MySQL 8.4 + Kafka, `ArchitectureTest` (ArchUnit)
 
 ## 1. Chuẩn bị
 
@@ -34,30 +36,36 @@
 | P-API-04 | Same idempotency payload/different payload | Same result / `409 PAYMENT_IDEMPOTENCY_CONFLICT`. |
 | P-API-05 | `GET /payments/{paymentId}` own/other scope | Correct data or `403 PAYMENT_FORBIDDEN`; no secret. |
 | P-API-06 | Webhook valid success | `200`, payment success, balanced ledger/outbox once. |
-| P-API-07 | Webhook wrong signature/amount/old timestamp | `400 PAYMENT_WEBHOOK_INVALID`; no state change. |
-| P-API-08 | Duplicate provider event | Idempotent ACK; no duplicate ledger/allocation. |
+| P-API-07 | Webhook sai chữ ký / amount lệch / attempt không tồn tại | `400 INVALID_VNPAY_SIGNATURE` / `409 PAYMENT_AMOUNT_MISMATCH` / `404 PAYMENT_ATTEMPT_NOT_FOUND`; không đổi state. |
+| P-API-08 | Duplicate provider event | `200`, `action: "DUPLICATE"`; không ghi ledger/allocation lần hai. |
 | P-API-09 | Refund partial/full/over amount | Correct state; over amount `REFUND_AMOUNT_INVALID`. |
 | P-API-10 | Seller wallet/ledger scope | Own shop only; masked fields/pagination. |
 | P-API-10b | `GET /seller/revenue?from=&to=&granularity=` | Summary `gross = commission + tax + net` khớp `payment_allocations` (refund kiểm ở ledger reversal, không phải hạng tử trong công thức gross); reconcile với ledger; chỉ shop của actor; range >366 ngày → `400`; không tạo ledger mới. |
-| P-API-11 | Payout KYC not approved/frozen/low balance | `403/409`; no debit/provider call. |
-| P-API-12 | Payout retry same idempotency | One payout/debit; same result. |
+| P-API-11 | ⏳ Payout KYC not approved/frozen/low balance | `403/409`; no debit/provider call. Chưa test được: chưa có `POST /seller/payouts`. |
+| P-API-12 | ⏳ Payout retry same idempotency | One payout/debit; same result. Chưa có API. |
 | P-API-13 | Reconciliation/admin permission | `FINANCE_OPS` sees mismatch summary; non-admin/không đủ permission denied. |
-| P-API-13b | `PUT /admin/fees`/`/admin/taxes` tạo version, `effective_from` quá khứ | Version mới append (không sửa bản cũ); quá khứ → `409 FEE_CONFIG_INVALID`; thiếu 2FA → `401 AUTH_MFA_REQUIRED`; allocation cũ giữ nguyên rate. |
+| P-API-13b | `PUT /admin/fees`/`/admin/taxes` tạo version, `effective_from` quá khứ | Version mới append (không sửa bản cũ); quá khứ: code hiện **không** chặn (`FEE_CONFIG_INVALID` chỉ là mã dự phòng) — cần quyết định; thiếu 2FA → `401 AUTH_MFA_REQUIRED`; allocation cũ giữ nguyên rate. |
 | P-API-13c | `GET /admin/settlements` + `{batchId}` + `retry` | List/detail đúng breakdown theo shop; `retry` batch `COMPLETED` → `409 SETTLEMENT_BATCH_INVALID_STATE`; `retry` batch `FAILED` idempotent; non-`FINANCE_OPS` denied. |
 | P-API-13d | `GET /admin/finance/summary` | Read-only aggregate khớp tổng `payment_allocations`/`payouts`; range >366 ngày → `400`; không tạo ledger. |
-| P-API-14 | Health live/ready | Live independent DB; ready checks dependencies. |
-
-### 3.1 Contract/security/reliability
-
-| ID | Case | Expected |
-|---|---|---|
-| P-INT-01 | Payment event duplicate/out-of-order | One order transition/ledger posting. |
-| P-INT-02 | Kafka down after DB commit | Outbox retry/DLQ; local payment correct. |
-| P-SEC-01 | Signature algorithm/key injection | Reject; only configured VNPAY algorithm/key. |
-| P-SEC-02 | Log scan | No secret, card/bank credential, callback raw, token, PII. |
-| P-RES-01 | DB deadlock/provider timeout | Bounded recovery; no duplicate charge/posting. |
+| P-API-14 | `/health/live`, `/health/liveness`, `/health/ready`, `/health/readiness`, `/prometheus` | Live chỉ `livenessState`; ready gồm `db`, `kafkaReadiness`, `outboxBacklog`, `vnpayReadiness` (`HealthEndpointHttpIntegrationTest`, `HealthReadinessFailureHttpIntegrationTest`). |
 
 ## 4. Unit test
+
+Đã có trong `src/test/java/com/taca/paymentwallet` (190 class):
+
+| Nhóm | Số class | Ví dụ |
+|---|---:|---|
+| `integration/` (Testcontainers, HTTP E2E) | 16 | `CreatePaymentHttpE2ETest`, `VnpayWebhookHttpE2ETest`, `RequestRefundHttpE2ETest`, `SellerFinanceHttpE2ETest`, `ProcessCodPaymentIntegrationTest`, `ShipmentCodKafkaIntegrationTest`, `KafkaInboxIntegrationTest`, `HealthEndpointHttpIntegrationTest`, `HealthReadinessFailureHttpIntegrationTest`, `PrometheusEndpointHttpIntegrationTest`, `OutboxCleanupIntegrationTest`, `ProductionContextSmokeTest` |
+| `presentation/rest` (MockMvc) | 13 | `PaymentControllerTest`, `Seller{Wallet,Ledger,Revenue}ControllerTest`, `Admin{Fee,Tax,Settlement,FinanceSummary,PaymentReconciliation}ControllerTest`, `GlobalRestExceptionHandler*Test` |
+| `presentation/web` (filter) | 6 | `ActorContextFilterTest`, `MfaStepUpFilterTest`, `RequestMetadataFilterTest`, `WebhookAuthenticationBypassTest`, `HttpMetricsFilterTest` |
+| `application/service`, `security`, `command`, `query`, … | 60 | Use case, `InternalCallerPolicy`, idempotency, observability |
+| `domain/*` | 13 | State machine payment/refund/payout/settlement, wallet, finance |
+| `infrastructure/persistence` | 40 | Adapter/repository, locking, dedupe (`*IntegrationTest`) |
+| `infrastructure/messaging` | 23 | Outbox publisher, topic router, DLQ, shipment listener |
+| `infrastructure/{vnpay,health,config,observability,crypto,export,transaction}` | 18 | Chữ ký VNPAY, health indicator, rollback |
+| `ArchitectureTest` | 1 | Ràng buộc layer hexagonal |
+
+Kế hoạch/case cần có theo module:
 
 | Module | Cases |
 |---|---|
@@ -71,7 +79,25 @@
 | Settlement | Batch tổng = Σ item; item release chỉ tạo posting cân bằng; `retry` chỉ khi `FAILED`; idempotent theo `batchId`. |
 | Observability | Required JSON fields, trace propagation, redaction, bounded metrics. |
 
-## 5. Giả định & câu hỏi mở
+## 5. Contract/security/resilience
+
+| ID | Case | Expected |
+|---|---|---|
+| P-INT-01 | Payment event duplicate/out-of-order | One order transition/ledger posting. |
+| P-INT-02 | Kafka down after DB commit | Outbox retry/DLQ; local payment correct. |
+| P-SEC-01 | Signature algorithm/key injection | Reject; only configured VNPAY algorithm/key. |
+| P-SEC-02 | Log scan | No secret, card/bank credential, callback raw, token, PII. |
+| P-RES-01 | DB deadlock/provider timeout | Bounded recovery; no duplicate charge/posting. |
+| P-INT-03 | Notification nhận `payment.succeeded`/`payout.*` | ⏳ Chưa test được: event chưa route ra Kafka và payload chưa có recipient (LLD §6.1). |
+
+## 6. Tiêu chí pass/phát hành
+
+- `mvn test` xanh (gồm Testcontainers) trên Java 25 + Docker.
+- Không lỗi double-entry: mọi posting debit = credit trong test ledger.
+- Payout API, publish `payment.succeeded/failed/refunded` và recipient trong payload phải có test trước khi tích hợp Notification.
+- Không lỗi bảo mật mức cao ở P-SEC.
+
+## 7. Giả định & câu hỏi mở
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
