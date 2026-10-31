@@ -538,11 +538,11 @@ Chuyển trạng thái:
 
 Tất cả event ghi vào `outbox_events` trong cùng transaction Mongo; Debezium (`deploy/debezium/outbox-connector.json`, collection `product_catalog.outbox_events`) route theo field `topic`, key = `aggregate_id`, đưa `version`, `actor_user_id`, `event_type`, `schema_version`, `occurred_at`, `aggregate_type` vào envelope và `traceparent` vào Kafka header. `product.unblocked` hiện luôn có `next_status: "INACTIVE"`.
 
-> **Lệch với Search (cần xử lý ở code, kiểm 2026-10-31 — xem `CONTRACT-MATRIX.md`):**
+> **Đối chiếu với Search (kiểm 2026-10-31 — xem `CONTRACT-MATRIX.md`):**
 > - Search xử lý `product.media_uploaded` (chỉ khi `is_cover=true`, lấy `url`) nhưng bỏ qua `product.media_deleted`, nên xoá ảnh cover không cập nhật `cover_url`. Search vẫn còn nhánh chờ `product.media_updated`, event mà Catalog không phát.
 > - `sku.updated`/`sku.status_changed`/`category.*` Search có handler nhưng Catalog chưa phát.
-> - `product.shop_snapshot_updated` có `aggregate_id=shop_id`; `CatalogHandler` của Search dùng `aggregate_id` làm product ID, nên patch vào document không tồn tại. Đề xuất sửa phía Search: update-by-query theo `shop.shop_id` (giữ nguyên event của Catalog).
-> - Connector không đặt `event_id`/`aggregate_id` vào value (EventRouter đưa `event_id` vào header `id`, `aggregate_id` làm key). Search bắt buộc `event_id` trong body. Đề xuất sửa phía Search: lấy `event_id` từ header `id` và `aggregate_id` từ Kafka key khi body thiếu (giữ nguyên connector).
+> - `product.shop_snapshot_updated` có `aggregate_id=shop_id`, không có `product_id`. ✅ Search đã xử lý bằng update-by-query theo `shop.shop_id` (search-service#27, 2026-10-31).
+> - Connector đặt `event_id` ở header `id` và `aggregate_id` ở Kafka key, không trong value. ✅ Search đã đọc fallback từ header/key (search-service#27, 2026-10-31); connector giữ nguyên.
 
 > Map giá cho Search index: Search lấy `price.sale` làm scalar `long` VND cho range/sort; `base`/`currency` để hiển thị. `category_path` và `visibility_status` sinh ra từ phía Product khi publish để Search không phải join thêm.
 

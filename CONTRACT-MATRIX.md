@@ -1,7 +1,7 @@
 # Contract Matrix — giữa các service
 
 > Nguồn · Code đối chiếu: `user-auth-service@develop` (`7c268a0`), `Product-Catalog-Service@develop` (`fe1e0d7`), `search-service@develop` (`9750a2f`), `inventory-service@develop` (`92c1454`), `shipment-service@develop` (`a375a41`), `payment-wallet-service@main` (`859b7b1`), `notification-service@main` (`6c6d9a2`). Order-Commerce, Message, Rating-Comment chỉ có README nên dùng doc làm spec. · Cập nhật: 2026-10-31
-> Ký hiệu: ✅ khớp · ❌ đang hỏng luồng dữ liệu (nhóm A §1) · ℹ️ khác hình thức hoặc phần chưa triển khai, giữ nguyên (nhóm B §1) · ⏳ một phía chưa có code, chưa kiểm được end-to-end.
+> Ký hiệu: ✅ khớp · ❌ đang hỏng luồng dữ liệu · ℹ️ khác hình thức hoặc phần chưa triển khai, giữ nguyên (nhóm B §1) · ⏳ một phía chưa có code, chưa kiểm được end-to-end.
 
 File này liệt kê mọi contract **giữa** các service: Kafka topic/event, envelope, payload, header, REST gọi chéo, route Gateway, health path, error envelope và tên biến môi trường. Doc từng service vẫn là nguồn chi tiết; khi code đổi, cập nhật dòng tương ứng ở đây.
 
@@ -11,7 +11,7 @@ File này liệt kê mọi contract **giữa** các service: Kafka topic/event, 
 
 Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 
-**A. Đang hỏng luồng dữ liệu — sửa nhỏ ở phía consumer (PR đang mở, chờ duyệt merge):** C1 + C5 → [search-service#27](https://github.com/ecommerce-taca/search-service/pull/27); C6 → [Product-Catalog-Service#44](https://github.com/ecommerce-taca/Product-Catalog-Service/pull/44).
+**A. Từng hỏng luồng dữ liệu — đã sửa ở phía consumer (merge 2026-10-31):** C1 + C5 → [search-service#27](https://github.com/ecommerce-taca/search-service/pull/27); C6 → [Product-Catalog-Service#44](https://github.com/ecommerce-taca/Product-Catalog-Service/pull/44).
 
 | # | Lệch | Ảnh hưởng | Sửa đề xuất (phía consumer) |
 |---|---|---|---|
@@ -40,7 +40,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | Auth-user (command) | `event_id`, `schema_version`, `command_type`, `occurred_at`, `dedupe_key`, `user_id`, `channel`, `recipient`, `template`, `data` | snake | `event_id`, `command_type`, `schema_version` | ✅ khớp `NotificationCommandSchema` |
 | Shipment (event) | `event_id`, `schema_version`, `event_type`, `occurred_at`, `aggregate_type`, `aggregate_id`, `correlation_id?`, `causation_id?`, `payload` | snake | không có | ✅ |
 | Shipment (command vào) | `message_id`, `message_type=shipment.create`, `schema_version=1`, `correlation_id`, `causation_id?`, `occurred_at`, `payload` | snake | — | ⚠️ khác tên với command của Notification (`event_id`/`command_type`) |
-| Product Catalog (qua Debezium) | `payload` + envelope `version`, `actor_user_id`, `event_type`, `schema_version`, `occurred_at`, `aggregate_type`; key = `aggregate_id`; `event_id` ở header `id` | snake | `id`, `traceparent` | ❌ C1 |
+| Product Catalog (qua Debezium) | `payload` + envelope `version`, `actor_user_id`, `event_type`, `schema_version`, `occurred_at`, `aggregate_type`; key = `aggregate_id`; `event_id` ở header `id` | snake | `id`, `traceparent` | ✅ C1 (đã sửa) |
 | Payment-Wallet | record domain, ví dụ `eventId`, `occurredAt`, `paymentId`, `checkoutGroupId`, `orderIds`, `amount`, `method`, `status` | camel | `event_id`, `request_id`, `traceparent`, `tracestate` | ℹ️ C2 |
 | Notification (delivered/failed) | `eventId`, `outcome`, `dedupeKey`, `notificationId`, `channel`, `templateKey`, `errorCode`, `occurredAt` | camel | `event_id`, `event_type` | ℹ️ C9 |
 | Order, Inventory, Rating, Message | theo doc: envelope snake như auth-user | snake | — | ⏳ chưa có code |
@@ -51,7 +51,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 |---|---|---|---|---|---|
 | `user.events.v1` | `user.created/updated/email_verified/password_changed/role_changed/status_changed` | Auth-user ✅ | Order (doc, `user.status_changed`) ⏳ | — | ⏳ |
 | `shop.events.v1` | `shop.created` | Auth-user ✅ | Catalog ✅ | `shop_id`, `status` (Catalog tự sinh tên/slug tạm khi thiếu) | ✅ |
-| `shop.events.v1` | `shop.updated` | Auth-user ✅ | Catalog ✅ | `name`, `slug`, `logo_url` phẳng | ❌ C6 (`snapshot` lồng, `logo_object_key`) |
+| `shop.events.v1` | `shop.updated` | Auth-user ✅ | Catalog ✅ | `name`, `slug`, `logo_url` phẳng | ✅ C6 (đã sửa) (`snapshot` lồng, `logo_object_key`) |
 | `shop.events.v1` | `shop.status_changed` | Auth-user ✅ | Catalog ✅ | `new_status`/`status` | ✅ |
 | `shop.events.v1` | `shop.kyc.submitted/approved/needs_info/rejected/expired` | Auth-user ✅ | Catalog ✅; Payment (doc) ⏳ | event_type → KYC status | ✅ |
 | `shop.events.v1` | `kyc.document.delete_requested` | Auth-user ✅ | không ai | — | ✅ (Catalog bỏ qua) |
@@ -59,16 +59,16 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | `notification.commands.v1` | `PHONE_OTP_REQUESTED` | Auth-user ✅ | Notification | `channel=SMS` | ℹ️ C11 (DLQ) |
 | `notification.commands.v1` | `MESSAGE_RECEIVED` | Message ⏳ | Notification | template `message-received-v1` | ℹ️ C11 (template chưa seed) |
 | `notification.commands.v1` | `REVIEW_REQUESTED` | Rating ⏳ | Notification ✅ | template `review-request-v1` (đã seed) | ⏳ |
-| `product.events.v1` | `product.created/updated/published/unpublished/archived/blocked/unblocked` | Catalog ✅ | Search ✅ | envelope + `payload` | ❌ C1 |
-| `product.events.v1` | `product.skus_updated` | Catalog ✅ | Search ✅ | `product_id`, `skus[]`, `version` | ❌ C1 |
-| `product.events.v1` | `product.media_uploaded` | Catalog ✅ | Search ✅ | `is_cover`, `url` | ❌ C1 |
+| `product.events.v1` | `product.created/updated/published/unpublished/archived/blocked/unblocked` | Catalog ✅ | Search ✅ | envelope + `payload` | ✅ C1 (đã sửa) |
+| `product.events.v1` | `product.skus_updated` | Catalog ✅ | Search ✅ | `product_id`, `skus[]`, `version` | ✅ C1 (đã sửa) |
+| `product.events.v1` | `product.media_uploaded` | Catalog ✅ | Search ✅ | `is_cover`, `url` | ✅ C1 (đã sửa) |
 | `product.events.v1` | `product.media_deleted` | Catalog ✅ | Search ✗ | — | ℹ️ C7 |
-| `sku.events.v1` | `sku.created` | Catalog (chỉ import) ✅ | Search ✅ | `sku_id`, `product_id` | ❌ C1 |
+| `sku.events.v1` | `sku.created` | Catalog (chỉ import) ✅ | Search ✅ | `sku_id`, `product_id` | ✅ C1 (đã sửa) |
 | `sku.events.v1` | `sku.updated`, `sku.status_changed` | Catalog ✗ | Search ✅ | — | ℹ️ C8 |
 | `category.events.v1` | `category.created/updated/status_changed` | Catalog ✗ | Search ✅ | — | ℹ️ C8 |
-| `catalog.events.v1` | `product.category_changed` | Catalog ✅ | Search ✅ | `primary_category_id`, `secondary_category_ids` | ❌ C1 |
+| `catalog.events.v1` | `product.category_changed` | Catalog ✅ | Search ✅ | `primary_category_id`, `secondary_category_ids` | ✅ C1 (đã sửa) |
 | `catalog.events.v1` | `product.media_updated` | Catalog ✗ | Search ✅ | `media[0].url`/`cover_url` | ℹ️ C7 |
-| `catalog.events.v1` | `product.shop_snapshot_updated` | Catalog ✅ | Search ✅ | `aggregate_id` làm product ID | ❌ C5 |
+| `catalog.events.v1` | `product.shop_snapshot_updated` | Catalog ✅ | Search ✅ | `aggregate_id` làm product ID | ✅ C5 (đã sửa) |
 | `inventory.events.v1` | `inventory.stock_snapshot.updated` | Inventory ⏳ (scaffold) | Catalog ✅ | `sku_id`, `product_id`, `available_qty`, `reserved_qty`, `committed_qty`, `source_version`, `as_of` | ⏳ (doc inventory đã chốt đúng tên field) |
 | `inventory.events.v1` | `inventory.reservation.*`, `inventory.adjusted` | Inventory ⏳ | Order ⏳ | — | ⏳ |
 | `rating.events.v1` | `rating.aggregate.updated` | Rating ⏳ | Catalog ✅, Search ✅ | `product_id`, `avg`, `count` | ⏳ (doc khớp consumer) |
