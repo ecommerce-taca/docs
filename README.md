@@ -8,8 +8,8 @@ Tài liệu thiết kế (HLD, Frontend) và tài liệu từng service (API Spe
 
 | Service | Docs | Repo @ nhánh (commit) | Trạng thái | Ghi chú |
 |---|---|---|---|---|
-| Auth User | [`auth-user-docs`](auth-user-docs/docs) | `user-auth-service` @ `develop` (`7c268a0`) | 🟡 | Endpoint nghiệp vụ đủ; health chỉ có `/actuator/health[/liveness|/readiness]`, chưa có `/health/live`; `shop.updated` lồng field trong `snapshot` nên Catalog không đọc được tên shop; event favorite/follow chưa phát. |
-| Product Catalog | [`product-catalog-docs`](product-catalog-docs/docs) | `Product-Catalog-Service` @ `develop` (`fe1e0d7`) | 🟡 | Lệch contract: connector Debezium không đặt `event_id` vào value (Search DLQ); `product.shop_snapshot_updated` key theo shop; chưa phát `sku.updated`, `sku.status_changed`, `category.*`; admin chưa kiểm step-up. |
+| Auth User | [`auth-user-docs`](auth-user-docs/docs) | `user-auth-service` @ `develop` (`7c268a0`) | 🟡 | Endpoint nghiệp vụ đủ; health chỉ có `/actuator/health[/liveness|/readiness]`, chưa có `/health/live`; event favorite/follow chưa phát. |
+| Product Catalog | [`product-catalog-docs`](product-catalog-docs/docs) | `Product-Catalog-Service` @ `develop` (`fe1e0d7`) | 🟡 | Contract với Search/Auth-user đã khớp (search-service#27, Product-Catalog-Service#44); chưa phát `sku.updated`, `sku.status_changed`, `category.*`; admin chưa kiểm step-up. |
 | Search | [`search-docs`](search-docs/docs) | `search-service` @ `develop` (`9750a2f`) | ✅ | Một số event consumer chờ chưa được Product Catalog phát (xem dòng trên). |
 | Inventory | [`inventory-docs`](inventory-docs/docs) | `inventory-service` @ `develop` (`92c1454`) | ⏳ | Chỉ có scaffold (health, auth policy, Liquibase baseline). |
 | Order Commerce | [`order-commerce-docs`](order-commerce-docs/docs) | `order-commerce-service` @ `main` (`bf512b5`) | ⏳ | Repo chỉ có `README.md`. Doc tách theo domain `cart`, `checkout`, `order`, `voucher`. |
