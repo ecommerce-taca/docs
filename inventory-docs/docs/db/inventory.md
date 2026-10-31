@@ -1,6 +1,7 @@
 # Database — Inventory Service
 
-> Nguồn: `docs/lld/inventory.md` · HLD `EcommercePlatform-v4(6).excalidraw` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/inventory.md` · `HighLevelDesign/HLD.md` · Code: `ecommerce-taca/inventory-service` @ `develop` (`92c1454`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — Liquibase mới có changeset `000-baseline` (chỉ `tagDatabase: baseline`); toàn bộ bảng dưới đây là thiết kế.
 > Baseline: MySQL 8.4/InnoDB `inventorydb` · SKU-level, một balance/SKU, atomic reservation
 
 ## 1. Quy ước chung
@@ -92,8 +93,11 @@ Append-only: `id`, `sku_id`, `reservation_id` nullable, `order_intent_id` nullab
 
 ### 6.1 Thứ tự migration
 
+Công cụ: **Liquibase** (`src/main/resources/db/changelog/db.changelog-master.yaml`, `spring.liquibase.enabled=true`), không phải Flyway.
+
 | Thứ tự | Nội dung | Phụ thuộc |
 |---:|---|---|
+| 000 | ✅ Changeset `000-baseline` (author `db-engineer`): `tagDatabase: baseline`, rollback rỗng. | — |
 | 001 | Tạo database `inventorydb`, charset/collation, migration metadata | — |
 | 002 | Tạo `inventory_items` (unique `sku_id`) | — |
 | 003 | Tạo `stock_reservations` | — |
@@ -105,6 +109,8 @@ Append-only: `id`, `sku_id`, `reservation_id` nullable, `order_intent_id` nullab
 | 009 | Thêm index `(order_intent_id,status)`, `(status,expires_at)` trên `stock_reservations`; `(sku_id,occurred_at)` trên `stock_movements` | Tất cả bảng liên quan |
 | 010 | Thêm CHECK constraint `qty_available>=0`, `qty_reserved>=0` trên `inventory_items` | `inventory_items` |
 | 011 | Seed fixture cho local/test (§6.2) | Tất cả bảng trên |
+
+Changeset 001–011 đều ⏳ chưa có.
 
 Mỗi migration có `up`/`down` cho local/test. Production không hard-delete `stock_movements`/`stock_reservations` — retention policy áp dụng archive job, không phải migration xoá bảng.
 

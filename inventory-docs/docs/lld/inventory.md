@@ -1,7 +1,8 @@
 # LLD — Inventory Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
-> Tech stack baseline: Java 25 · Spring Boot · MySQL 8.4 · Kafka outbox · REST nội bộ; mô hình đã chốt: SKU atomic reservation + ledger
+> Nguồn: `HighLevelDesign/HLD.md` · `FrontendDesign/Taca.penpot.zip` · Code: `ecommerce-taca/inventory-service` @ `develop` (`92c1454`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai nghiệp vụ — repo mới có khung: health probe, error/response envelope, actor-context filter, `AuthorizationPolicy`, JSON log, metrics, trace propagation, Liquibase baseline. Chưa có bảng, endpoint nghiệp vụ, outbox hay consumer.
+> Tech stack: Java 25 · Spring Boot 4.0.6 (web, jdbc, actuator) · MySQL 8.4 · Liquibase · Spring Kafka; mô hình đã chốt: SKU atomic reservation + ledger
 
 ## 1. Phạm vi
 
@@ -43,6 +44,22 @@ Product Catalog ──SKU lifecycle event──► Inventory SKU registration/di
 ## 2. Cấu trúc bên trong
 
 ### 2.1 Module Spring Boot
+
+Đã có trong code (✅):
+
+```text
+com.taca.inventory
+├── InventoryApplication
+├── common/api/          # ApiResponse {data, meta{request_id,page,size,total,total_pages}}
+├── common/error/        # ErrorCode, ErrorEnvelope, GlobalExceptionHandler, InventoryException
+├── observability/       # HealthController, HealthProbeService
+│   ├── logging/         # HttpLoggingFilter, JsonStructuredLogFormatter, SensitiveDataMasker
+│   ├── metrics/         # InventoryMetrics (inventory.operation.duration, inventory.dependency.duration), BoundedMetricTags
+│   └── trace/           # TraceContextFilter, TraceContext, KafkaTracePropagator
+└── security/            # ActorContext, ActorContextFilter, AuthorizationPolicy, SecurityProperties
+```
+
+Thiết kế (⏳ chưa có):
 
 ```text
 com.taca.inventory
@@ -149,6 +166,19 @@ Commit/release/expire cùng reservation đã hoàn tất trả idempotent succes
 | `INTERNAL_TIMEOUT` | 5s | REST client; không kéo dài DB lock. |
 | `TIMESTAMP_FORMAT` | UTC ISO-8601 | DB DATETIME(6), API/event UTC. |
 
+Cấu hình đã có trong `application.yml` (✅):
+
+| Tên | Giá trị mặc định | Biến môi trường/property |
+|---|---|---|
+| Port | `8080` | `server.port` |
+| Datasource | `jdbc:mysql://localhost:3306/inventorydb`, user `inventory` | `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` |
+| Kafka | `localhost:9092`, group `inventory-service-group`, `auto-offset-reset: earliest` | `SPRING_KAFKA_BOOTSTRAP_SERVERS` |
+| Liquibase | `classpath:db/changelog/db.changelog-master.yaml` | `spring.liquibase.*` |
+| Internal token | (không default) | `inventory.security.internal-token` |
+| Hikari connection timeout | 2000 ms | set trong `HealthProbeService` |
+
+Các hằng số ở bảng trên là thiết kế ⏳.
+
 ## 5. Enum & trạng thái
 
 | Enum | Giá trị |
@@ -164,6 +194,8 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 ## 6. Event phát ra / lắng nghe
 
 ### 6.1 Event phát ra
+
+⏳ Chưa có producer/outbox; chỉ có `KafkaTracePropagator` để inject/extract `traceparent`, `tracestate`, `X-Request-ID` vào Kafka header.
 
 | Topic | Event | Payload chính |
 |---|---|---|
@@ -213,7 +245,7 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 | `INVENTORY_RESERVATION_EXPIRED` | 409 | Reservation đã hết TTL. |
 | `INVENTORY_IDEMPOTENCY_CONFLICT` | 409 | Cùng key nhưng payload khác. |
 | `INVENTORY_CONCURRENCY_CONFLICT` | 409 | Version/lock conflict sau retry policy. |
-| `INVENTORY_ADJUSTMENT_INVALID` | 400/409 | Delta/reason sai (400) hoặc state không cho phép (409). |
+| `INVENTORY_ADJUSTMENT_INVALID` | 400/409 | ⏳ Chưa có trong enum `ErrorCode`. Delta/reason sai (400) hoặc state không cho phép (409). |
 | `INVENTORY_DEPENDENCY_UNAVAILABLE` | 503 | Kafka/config dependency không sẵn sàng. |
 | `INVENTORY_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
 

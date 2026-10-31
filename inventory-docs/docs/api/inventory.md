@@ -1,37 +1,38 @@
 # API Spec — Inventory Service
 
-> Nguồn: `docs/lld/inventory.md` · `docs/db/inventory.md` · HLD/Penpot · Cập nhật: `2026-08-30`
-> Base path: `/api/v1` · Internal REST cho Order/Product; seller/admin qua Gateway
+> Nguồn: `docs/lld/inventory.md` · `docs/db/inventory.md` · Code: `ecommerce-taca/inventory-service` @ `develop` (`92c1454`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai nghiệp vụ — repo mới có khung: health probe, error/response envelope, actor-context filter, `AuthorizationPolicy`, JSON log, metrics, trace propagation, Liquibase baseline. Chưa có bảng, endpoint nghiệp vụ, outbox hay consumer.
+> Base path: `/api/v1` (dự kiến; health ở `/health/*`) · Port `8080` · Internal REST cho Order/Product; seller/admin qua Gateway
 
 ## 1. Quy ước API chung
 
 | Mục | Quy định |
 |---|---|
-| Auth | Internal service token/mTLS cho Order; seller/admin JWT + shop scope qua Gateway. |
+| Auth | Internal: header `X-Internal-Service-Token` so constant-time với property `inventory.security.internal-token` (✅ `ActorContextFilter`); mTLS chưa có. Seller/admin: actor header + shop scope qua Gateway. `AuthorizationPolicy` (✅) có `requireAuthenticated`, `requireInternalService`, `requireSellerShopScope` (role `SELLER` + `X-User-Shop-Scope` bằng đúng shop), `requireAdminStepUp(permission)` (role `ADMIN` + permission); vi phạm → `401 INVENTORY_UNAUTHENTICATED` / `403 INVENTORY_FORBIDDEN`. |
 | Request ID | `X-Request-ID` tối đa 64; Gateway/service tạo nếu internal job. |
 | Trace | W3C `traceparent`/`tracestate` REST/Kafka; response/error có `trace_id` (do Gateway/service propagate, client không gửi). |
-| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions` (CSV), `X-User-Shop-Scope` (một giá trị) do Gateway inject (client không gửi được — Gateway strip). ✅ |
 | Timestamp | ISO-8601 UTC; quantity integer. |
 | Idempotency | `Idempotency-Key` bắt buộc reserve/commit/release/adjust; giữ 24h. |
 | Atomicity | Mỗi command có transaction + optimistic lock; multi-SKU request all-or-nothing. |
-| Response | `{data,meta:{request_id}}`; error chung `{error:{code,message,details,trace_id}}`. |
+| Response | `{data,meta:{request_id}}`; error chung `{error:{code,message,details,trace_id}}` (✅ `ApiResponse`, `ErrorEnvelope`; field null bị bỏ). |
 | Pagination | `page` từ 1, `size` mặc định 20 tối đa 100; meta trả `request_id,page,size,total,total_pages`. |
 | Log | JSON chuẩn auth-user/Gateway; không log token/full order/address/payment. |
 | Accuracy | Không trả “đã giữ hàng” nếu transaction chưa commit; không partial success. |
 
 ## 2. Danh sách endpoint
 
-| # | Method + path | Quyền | Mục đích |
-|---:|---|---|---|
-| 1 | `GET /internal/inventory/availability` | Order/internal | Đọc availability, không reserve. |
-| 2 | `POST /internal/inventory/reservations` | Order/internal | Atomic reserve nhiều SKU. |
-| 3 | `POST /internal/inventory/reservations/{reservationId}/commit` | Order internal | Commit reservation. |
-| 4 | `POST /internal/inventory/reservations/{reservationId}/release` | Order internal | Release reservation. |
-| 5 | `GET /seller/inventory` | Seller/staff | Xem stock shop. |
-| 6 | `PATCH /seller/inventory/{skuId}/adjust` | Seller | Điều chỉnh available bằng delta. |
-| 7 | `GET /admin/inventory/reconciliation` | Admin | Reconcile balance/ledger. |
-| 8 | `GET /health/live` | Internal/ops | Liveness. |
-| 9 | `GET /health/ready` | Internal/ops | Readiness MySQL/Kafka. |
+| # | Method + path | Quyền | Mục đích | Trạng thái |
+|---:|---|---|---|---|
+| 1 | `GET /internal/inventory/availability` | Order/internal | Đọc availability, không reserve. | ⏳ |
+| 2 | `POST /internal/inventory/reservations` | Order/internal | Atomic reserve nhiều SKU. | ⏳ |
+| 3 | `POST /internal/inventory/reservations/{reservationId}/commit` | Order internal | Commit reservation. | ⏳ |
+| 4 | `POST /internal/inventory/reservations/{reservationId}/release` | Order internal | Release reservation. | ⏳ |
+| 5 | `GET /seller/inventory` | Seller/staff | Xem stock shop. | ⏳ |
+| 6 | `PATCH /seller/inventory/{skuId}/adjust` | Seller | Điều chỉnh available bằng delta. | ⏳ |
+| 7 | `GET /admin/inventory/reconciliation` | Admin | Reconcile balance/ledger. | ⏳ |
+| 8 | `GET /health/live` | Internal/ops | Liveness. | ✅ |
+| 9 | `GET /health/ready` | Internal/ops | Readiness MySQL/Kafka. | ✅ |
 
 Không có endpoint cho buyer tự sửa stock hoặc cho Product/Order cập nhật `qty_available` trực tiếp.
 
@@ -142,10 +143,15 @@ Query `sku_id?`, `shop_id?`, `from?`, `to?`, `status?` (`MATCHED`|`MISMATCH`), `
 
 ### 3.7 Health
 
-- `/health/live`: `200` nếu process bind, không phụ thuộc DB.
-- `/health/ready`: `200` khi MySQL/Kafka/config sẵn sàng; `503` khi dependency fail.
+✅ Đã triển khai (`HealthController`, `HealthProbeService`).
+
+- `GET /health/live` → `200 {"status":"UP"}`; không phụ thuộc DB.
+- `GET /health/ready` → `200 {"status":"UP","components":{"database":"UP","kafka":"UP"}}` khi MySQL `isValid(2s)` và Kafka `describeCluster` (timeout 2s) đều OK; nếu một cái lỗi → `503` với `status: DOWN` và component tương ứng `DOWN`.
+- Health không bọc trong envelope `{data,meta}`.
 
 ## 4. Mã lỗi chung
+
+Các mã dưới đây (trừ mã gắn ⏳) đã khai báo trong `common/error/ErrorCode.java`. `GlobalExceptionHandler` map lỗi validation/body sai → `400 INVENTORY_INVALID_INPUT`, lỗi khác → `500 INVENTORY_INTERNAL_ERROR`.
 
 | Mã | HTTP | Ý nghĩa |
 |---|---:|---|
@@ -160,7 +166,7 @@ Query `sku_id?`, `shop_id?`, `from?`, `to?`, `status?` (`MATCHED`|`MISMATCH`), `
 | `INVENTORY_RESERVATION_EXPIRED` | 409 | Reservation hết TTL. |
 | `INVENTORY_IDEMPOTENCY_CONFLICT` | 409 | Key khác payload. |
 | `INVENTORY_CONCURRENCY_CONFLICT` | 409 | Version/lock conflict. |
-| `INVENTORY_ADJUSTMENT_INVALID` | 400/409 | Adjustment/reason/state sai. |
+| `INVENTORY_ADJUSTMENT_INVALID` | 400/409 | ⏳ Chưa có trong enum `ErrorCode`; cần thêm khi code adjustment. |
 | `INVENTORY_DEPENDENCY_UNAVAILABLE` | 503 | DB/Kafka/config unavailable. |
 | `INVENTORY_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
 
