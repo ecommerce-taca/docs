@@ -567,7 +567,7 @@ Không tạo index trên raw JSON `warehouse_snapshot`, `metadata` hoặc encryp
 | `ShopStatus` | `DRAFT`, `ACTIVE`, `SUSPENDED`, `DELETED` |
 | `KycStatus` | `DRAFT`, `PENDING`, `NEEDS_INFO`, `APPROVED`, `REJECTED`, `EXPIRED`, `SUSPENDED` |
 | `OnboardingStep` | `PROFILE`, `KYC`, `WAREHOUSE`, `BANK`, `FIRST_PRODUCT`, `COMPLETED` |
-| `OnboardingStatus` | `NOT_STARTED`, `IN_PROGRESS`, `READY_TO_SUBMIT`, `COMPLETED` — suy ra từ `current_step` + cờ step của `seller_onboarding`, **không phải cột lưu**; chỉ dùng ở API response (`docs/api/auth-user.md` §2.20/§2.21) |
+| `OnboardingStatus` | `NOT_STARTED`, `IN_PROGRESS`, `READY_TO_SUBMIT`, `COMPLETED` — suy ra từ `current_step` + cờ step của `seller_onboarding`, **không phải cột lưu**; chỉ dùng ở API response (`docs/api/auth-user.md` §3.20/§3.21) |
 | `VerificationChannel` | `EMAIL`, `PHONE` |
 | `VerificationPurpose` | `EMAIL_VERIFY`, `PHONE_VERIFY` |
 | `TokenRevokeReason` | `ROTATED`, `SIGNOUT`, `RESET`, `REUSE`, `SUSPEND`, `EXPIRED` |
