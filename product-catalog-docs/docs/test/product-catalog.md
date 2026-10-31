@@ -1,6 +1,7 @@
 # Test Plan — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · `docs/api/product-catalog.md` · Cập nhật: `2026-09-17`
+> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · `docs/api/product-catalog.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ✅ Đã triển khai — unit test `*.spec.ts` cạnh source (Jest); `product-catalog-api.http` + `.postman.json` cho test thủ công; CI `.github/workflows/ci.yml`.
 > Phạm vi: Product/SPU, SKU/variant, dynamic attributes, category, media metadata, shop/KYC projection, inventory display projection, outbox và public/seller/admin API.
 
 ## 1. Chuẩn bị kiểm thử

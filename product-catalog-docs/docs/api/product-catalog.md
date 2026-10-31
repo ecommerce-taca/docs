@@ -1,7 +1,8 @@
 # API Spec — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` và `docs/db/product-catalog.md` · Cập nhật: `2026-09-17`
-> Base path nội bộ: `/api/v1` · Public traffic đi qua API Gateway · Content-Type: `application/json`
+> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ✅ Đã triển khai — public/seller/admin REST, import/export Excel, media S3, moderation, outbox (CDC Debezium), consumer `shop`/`inventory`/`rating`. Lệch thiết kế ghi rõ ở từng mục (event SKU/category chưa phát, step-up admin chưa kiểm).
+> Base path: `/api/v1` (env `GLOBAL_PREFIX`; `/health/*` không có prefix) · Port mặc định `3000` · Public traffic đi qua API Gateway · Content-Type: `application/json`
 
 ## 1. Quy ước API chung
 
@@ -16,8 +17,10 @@
 |---|---|---|
 | Buyer/public `GET` | Có thể anonymous | Chỉ trả `ACTIVE` và visibility hợp lệ. |
 | Seller `/seller/*` | JWT từ Gateway | `SELLER`/`SELLER_STAFF`; product mutation phải đúng `shop_id` scope. |
-| Admin `/admin/catalog/*` | JWT + step-up context khi destructive | `CATALOG_ADMIN` hoặc `SUPER_ADMIN`. |
+| Admin `/admin/catalog/*` | JWT từ Gateway | `CATALOG_ADMIN` hoặc `SUPER_ADMIN`. Thiết kế yêu cầu step-up 2FA cho block/unblock/archive nhưng **code chưa kiểm** (không đọc header step-up). |
 | Internal integration | mTLS/service token qua Gateway hoặc internal policy | Chỉ endpoint contract được allowlist; không truy cập MongoDB trực tiếp. |
+
+`ActorContextGuard` (global, deny-by-default): route không gắn `@Public()` mà thiếu `X-User-ID` → `401 UNAUTHORIZED`; sai role → `403 PRODUCT_FORBIDDEN`. Role đọc từ `X-User-Roles` (CSV, chuẩn hoá in hoa); `SUPER_ADMIN` vượt mọi kiểm tra role/permission. Shop scope lấy từ `X-User-Shop-Scope` (một giá trị).
 
 Product Catalog lấy `actor_user_id`, role và shop scope từ auth context do Gateway xác thực. Không nhận `shop_id` body để quyết định tenant. `401`/`403` format do Gateway chuẩn hóa; service-specific errors bên dưới dùng envelope chung.
 
@@ -34,6 +37,8 @@ Product Catalog lấy `actor_user_id`, role và shop scope từ auth context do 
 ```
 
 - List response: `{ data: [], meta: { request_id, page, size, total, total_pages } }`.
+- Envelope do `ResponseEnvelopeInterceptor` bọc; route gắn `@SkipEnvelope()` (tải file) trả raw. Số `BigInt`/BSON `Long` được chuyển sang `number`.
+- `ValidationPipe` `whitelist + forbidNonWhitelisted + transform`: field lạ hoặc sai → `400 PRODUCT_INVALID_INPUT` với `details` là danh sách lỗi class-validator.
 - Default `size=20`, tối đa `100`; `page` bắt đầu từ `1`.
 - Timestamp ISO-8601 UTC; tiền là integer VND (`currency: "VND"`).
 - Public catalog list không phải full-text search engine; full-text/facet nâng cao thuộc Search Service.
@@ -57,39 +62,43 @@ Product Catalog lấy `actor_user_id`, role và shop scope từ auth context do 
 
 ## 2. Danh sách endpoint
 
-| # | Method + path | Actor | Mục đích |
-|---:|---|---|---|
-| 1 | `GET /products` | Public | Catalog listing cơ bản. |
-| 2 | `GET /products/{productId}` | Public | Product detail + display stock projection. |
-| 3 | `GET /categories` | Public | Category tree. |
-| 4 | `GET /categories/{categoryId}` | Public | Category detail/children. |
-| 5 | `GET /shops/{shopId}/products` | Public | Product listing theo shop. |
-| 6 | `POST /seller/products` | Seller | Tạo SPU draft. |
-| 7 | `GET /seller/products` | Seller | Seller product list. |
-| 7a | `GET /seller/products/export` | Seller | Xuất danh sách sản phẩm ra file (.xlsx/.csv). |
-| 7b | `POST /seller/products/import/template` | Seller | Tải file Excel template mẫu tùy biến theo bộ lọc (danh mục, sản phẩm, số dòng, layout). |
-| 7c | `POST /seller/products/import` | Seller | Upload file Excel (.xlsx, <= 100 SPUs, <= 2MB), phản hồi `202 Accepted` kèm `job_id`. |
-| 7d | `GET /seller/products/import/jobs/{jobId}` | Seller | Tra cứu tiến độ xử lý import theo thời gian thực. |
-| 7e | `GET /seller/products/import/jobs/{jobId}/result` | Seller | Tải file Excel báo cáo kết quả chi tiết các dòng lỗi. |
-| 8 | `GET /seller/products/{productId}` | Seller | Seller editor detail. |
-| 9 | `PATCH /seller/products/{productId}` | Seller | Cập nhật product fields. |
-| 10 | `PUT /seller/products/{productId}/skus` | Seller | Replace/update SKU set. |
-| 11 | `PUT /seller/products/{productId}/categories` | Seller | Gán 1 primary + tối đa 2 secondary. |
-| 12 | `POST /seller/products/{productId}/publish` | Seller | Publish/resume product. |
-| 13 | `POST /seller/products/{productId}/unpublish` | Seller | Đưa `ACTIVE` về `INACTIVE`. |
-| 14 | `POST /seller/products/{productId}/archive` | Seller | Soft archive. |
-| 15 | `POST /seller/products/{productId}/media/upload-url` | Seller | Nhận signed upload URL. |
-| 16 | `POST /seller/products/{productId}/media/complete` | Seller | Verify upload và lưu metadata READY. |
-| 17 | `GET /admin/catalog/products` | Admin | Catalog moderation/read. |
-| 18 | `GET /admin/catalog/products/{productId}` | Admin | Xem product bất kể public visibility. |
-| 19 | `POST /admin/catalog/products/{productId}/block` | Admin | Post-publication block. |
-| 20 | `POST /admin/catalog/products/{productId}/unblock` | Admin | Restore an toàn về `INACTIVE`. |
-| 21 | `GET /admin/catalog/categories` | Admin | Quản trị taxonomy. |
-| 22 | `POST /admin/catalog/categories` | Admin | Tạo category. |
-| 23 | `PATCH /admin/catalog/categories/{categoryId}` | Admin | Sửa category/parent/status. |
-| 24 | `POST /admin/catalog/categories/{categoryId}/archive` | Admin | Soft archive category. |
-| 25 | `GET /health/live` | Internal/ops | Liveness process-only (Gateway active healthcheck gọi — bắt buộc). |
-| 26 | `GET /health/ready` | Internal/ops | Readiness: MongoDB sẵn sàng (app không có outbox consumer/publisher riêng dưới CDC — readiness của Debezium connector nằm ở Kafka Connect, ngoài phạm vi health endpoint của service này). |
+| # | Method + path | Actor | Mục đích | Trạng thái |
+|---:|---|---|---|---|
+| 1 | `GET /products` | Public | Catalog listing cơ bản. | ✅ |
+| 2 | `GET /products/{productId}` | Public | Product detail + display stock projection. | ✅ |
+| 3 | `GET /categories` | Public | Category tree. | ✅ |
+| 4 | `GET /categories/{categoryId}` | Public | Category detail/children. | ✅ |
+| 5 | `GET /shops/{shopId}/products` | Public | Product listing theo shop. | ✅ |
+| 6 | `POST /seller/products` | Seller | Tạo SPU draft. | ✅ |
+| 7 | `GET /seller/products` | Seller | Seller product list. | ✅ |
+| 7a | `GET /seller/products/export` | Seller | Xuất danh sách sản phẩm ra file (.xlsx/.csv). | ✅ |
+| 7b | `POST /seller/products/import/template` (và `GET`) | Seller | Tải file Excel template mẫu tùy biến theo bộ lọc (danh mục, sản phẩm, số dòng, layout). | ✅ |
+| 7c | `POST /seller/products/import` | Seller | Upload file Excel (.xlsx, <= 100 SPUs, <= 2MB), phản hồi `202 Accepted` kèm `job_id`. | ✅ |
+| 7d | `GET /seller/products/import/jobs/{jobId}` | Seller | Tra cứu tiến độ xử lý import theo thời gian thực. | ✅ |
+| 7e | `GET /seller/products/import/jobs/{jobId}/result` | Seller | Tải file Excel báo cáo kết quả chi tiết các dòng lỗi. | ✅ |
+| 8 | `GET /seller/products/{productId}` | Seller | Seller editor detail. | ✅ |
+| 9 | `PATCH /seller/products/{productId}` | Seller | Cập nhật product fields. | ✅ |
+| 10 | `PUT /seller/products/{productId}/skus` | Seller | Replace/update SKU set. | ✅ |
+| 10a | `GET /seller/products/{productId}/skus` | Seller | Đọc danh sách SKU của product trong shop. | ✅ |
+| 11 | `PUT /seller/products/{productId}/categories` | Seller | Gán 1 primary + tối đa 2 secondary. | ✅ |
+| 12 | `POST /seller/products/{productId}/publish` | Seller | Publish/resume product. | ✅ |
+| 13 | `POST /seller/products/{productId}/unpublish` | Seller | Đưa `ACTIVE` về `INACTIVE`. | ✅ |
+| 14 | `POST /seller/products/{productId}/archive` | Seller | Soft archive. | ✅ |
+| 15 | `POST /seller/products/{productId}/media/upload-url` | Seller | Nhận signed upload URL. | ✅ |
+| 16 | `POST /seller/products/{productId}/media/complete` | Seller | Verify upload và lưu metadata READY. | ✅ |
+| 16a | `GET /seller/products/{productId}/media` | Seller | Liệt kê media của product (`media_id, product_id, sku_id, scope, object_key, content_type, size_bytes, sort_order, is_cover, status, url, uploaded_by, created_at, updated_at`). | ✅ |
+| 16b | `DELETE /seller/products/{productId}/media/{mediaId}` | Seller | Xoá media, trả `{ "success": true }`, phát `product.media_deleted`. | ✅ |
+| 17 | `GET /admin/catalog/products` | Admin | Catalog moderation/read. | ✅ |
+| 18 | `GET /admin/catalog/products/{productId}` | Admin | Xem product bất kể public visibility. | ✅ |
+| 19 | `POST /admin/catalog/products/{productId}/block` | Admin | Post-publication block. | ✅ |
+| 20 | `POST /admin/catalog/products/{productId}/unblock` | Admin | Restore an toàn về `INACTIVE`. | ✅ |
+| 20a | `GET /admin/catalog/audits` | Admin | Tra cứu `catalog_audits`; query `target_id`, `target_type`, `actor_user_id`, `action`, `page` (≥1), `size` (1–100). | ✅ |
+| 21 | `GET /admin/catalog/categories` | Admin | Quản trị taxonomy. | ✅ |
+| 22 | `POST /admin/catalog/categories` | Admin | Tạo category. | ✅ |
+| 23 | `PATCH /admin/catalog/categories/{categoryId}` | Admin | Sửa category/parent/status. | ✅ |
+| 24 | `POST /admin/catalog/categories/{categoryId}/archive` | Admin | Soft archive category. | ✅ |
+| 25 | `GET /health/live` | Internal/ops | Liveness process-only (Gateway active healthcheck gọi — bắt buộc). | ✅ |
+| 26 | `GET /health/ready` | Internal/ops | Readiness: MongoDB sẵn sàng (app không có outbox consumer/publisher riêng dưới CDC — readiness của Debezium connector nằm ở Kafka Connect, ngoài phạm vi health endpoint của service này). | ✅ |
 
 Không có endpoint Product để reserve/deduct stock. Cart/Checkout phải gọi Inventory contract để xác minh availability và reserve atomically.
 
@@ -593,7 +602,7 @@ Request: `{ "version": 8, "reason": "Vi phạm chính sách" }`.
 { "data": { "product_id": "product-01912f31", "status": "BLOCKED", "blocked_at": "2026-08-30T09:10:00Z", "version": 9 }, "meta": { "request_id": "req-01912f61" } }
 ```
 
-Bắt buộc reason + admin permission + step-up 2FA context. Block là post-publication action, phát `product.blocked`, không xóa dữ liệu.
+Bắt buộc reason + role admin. Step-up 2FA là yêu cầu thiết kế, code hiện chưa kiểm (câu hỏi mở). Block là post-publication action, phát `product.blocked`, không xóa dữ liệu.
 
 #### `POST /admin/catalog/products/{productId}/unblock`
 
@@ -697,8 +706,14 @@ Không hard-delete; không nhận assignment mới; phải có migration policy 
 | `PRODUCT_IMPORT_SERVICE_UNAVAILABLE` | 400 / 503 | Dịch vụ xử lý/xuất kết quả Excel chưa sẵn sàng. |
 | `MEDIA_INVALID_URL_BLOCKED` | 400 | URL ảnh vi phạm an toàn SSRF (trỏ về IP nội bộ/metadata). |
 | `DATABASE_TRANSACTION_FAILED` | 500 | Giao dịch cơ sở dữ liệu hàng loạt thất bại và đã rollback an toàn. |
-| `INVENTORY_PROJECTION_STALE` | 200 metadata | Snapshot stale; không phải deduction error. |
+| `PRODUCT_SKU_INVALID` | 400 | Media gắn `sku_id` không thuộc product. |
+| `MEDIA_DOWNLOAD_FAILED` | job error | Import: tải ảnh từ URL thất bại (ghi vào `error_summary` của job, không trả HTTP). |
+| `UNAUTHORIZED` | 401 | Thiếu `X-User-ID` ở route không public (`ActorContextGuard`). |
+| `SERVICE_UNAVAILABLE` | 503 | Map mặc định cho `503` không có code riêng. |
+| `INVENTORY_PROJECTION_STALE` | 200 metadata | ⏳ Chưa có trong code. |
 | `INTERNAL_ERROR` | 500 | Unexpected error. |
+
+Mapping trong `GlobalExceptionFilter`: lỗi class-validator → `PRODUCT_INVALID_INPUT`; `413`/`LIMIT_FILE_SIZE` (multer) → `400 PRODUCT_IMPORT_FILE_TOO_LARGE`; Mongo duplicate key `11000` → `409` với `PRODUCT_SLUG_CONFLICT` (slug), `PRODUCT_SKU_DUPLICATE` (`seller_sku`/`variant_key`) hoặc `PRODUCT_STATE_INVALID` (key khác); `HttpException` không có code → `401 UNAUTHORIZED`, `403 PRODUCT_FORBIDDEN`, `404 PRODUCT_NOT_FOUND`, `409 PRODUCT_STATE_INVALID`, `503 SERVICE_UNAVAILABLE`, còn lại `INTERNAL_ERROR`. `trace_id` lấy từ trace context (W3C), mặc định 32 số 0.
 
 `CATALOG_EVENT_PUBLISH_FAILED` đã bị bỏ khỏi error catalog (Cecilia, 2026-09-19, DOCS-CONSISTENCY-01): dưới CDC, publish lên Kafka tách rời khỏi request/response của mutation API nên mã lỗi này không còn tình huống nào để trả về đồng bộ — xem `docs/lld/product-catalog.md` §7/giả định #23.
 
