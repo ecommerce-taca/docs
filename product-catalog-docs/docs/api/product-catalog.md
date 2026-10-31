@@ -661,7 +661,7 @@ Request: `{ "version": 2, "reason": "Taxonomy mới" }`.
 
 Không hard-delete; không nhận assignment mới; phải có migration policy nếu category đang được dùng.
 
-## 4. Mã lỗi chung và mapping
+## 4. Mã lỗi chung
 
 | Code | HTTP | Áp dụng |
 |---|---:|---|

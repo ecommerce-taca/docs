@@ -86,7 +86,7 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
 |---|---|---|
 | `users` | `id`, `email`, `phone`, `password_hash`, `full_name`, `date_of_birth`, `status`, `email_verified_at`, `phone_verified_at` | Unique normalized email; unique normalized phone khi khác `NULL`; status; created time |
 | `addresses` | `id`, `user_id`, `recipient`, `phone`, `line1`, `country_code`, `province_code`, `province`, `ward_code`, `ward`, `district` (legacy), `is_default`, `deleted_at` | `(user_id, is_default)`, `(user_id, deleted_at)` |
-| `favorites` | `id`, `user_id`, `product_id`, `created_at` | Unique `(user_id, product_id)`, `(user_id, created_at)` |
+| `user_favorites` | `user_id`, `product_id`, `created_at` | PK `(user_id, product_id)`, `(user_id, created_at, product_id)` |
 | `shop_follows` | `id`, `user_id`, `shop_id`, `created_at` | Unique `(user_id, shop_id)`, `(shop_id, created_at)`, `(user_id, created_at)` |
 | `shops` | `id`, `owner_user_id`, `name`, `slug`, `business_name`, `tax_code`, `status`, `warehouse_snapshot`, `bank_account_snapshot` | Unique owner; unique slug; status; tax code |
 | `refresh_tokens` | `id`, `user_id`, `token_hash`, `family_id`, `expires_at`, `revoked_at`, `revoke_reason` | User + active token; family; expiry |

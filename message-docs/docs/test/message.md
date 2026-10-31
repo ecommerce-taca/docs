@@ -1,6 +1,8 @@
 # Test Plan — Message Service
 
-> Nguồn: `docs/lld/message.md` · `docs/db/message.md` · `docs/api/message.md` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/message.md` · `docs/db/message.md` · `docs/api/message.md` · Code: `ecommerce-taca/message-service` @ `main` (`bb00012`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo chỉ có `README.md`; toàn bộ nội dung là thiết kế.
+> Môi trường: (dự kiến) Jest + Supertest, MongoDB/Kafka Testcontainers, WebSocket client test
 
 ## 1. Chuẩn bị
 
@@ -47,16 +49,6 @@
 | M-WS-05 | Token hết hạn giữa phiên | Server đóng socket; client reconnect sau refresh; không mất message (recovery qua `conversation.sync`). |
 | M-WS-06 | `message.send` không phải participant | `MESSAGE_FORBIDDEN` qua WS error dùng cùng code/trace; không ghi message. |
 
-### 3.1 Contract/security/resilience
-
-| ID | Case | Expected |
-|---|---|---|
-| M-INT-01 | Message notification event | Safe preview only; no raw body/token. |
-| M-INT-02 | User/shop suspended event | Mutation blocked/closed per policy, history retained. |
-| M-SEC-01 | JWT/participant/attachment IDOR | Denied; no object/message leak. |
-| M-SEC-02 | XSS/NoSQL/socket flood | Sanitize/reject/rate-limit. |
-| M-RES-01 | Mongo/Kafka/S3 unavailable | No partial send; outbox/retry; REST recovery. |
-
 ## 4. Unit test
 
 | Module | Cases |
@@ -69,7 +61,22 @@
 | Attachment | Key binding, size/type/checksum/scan status. |
 | Observability | JSON fields, W3C/request propagation, redaction, bounded metrics. |
 
-## 5. Giả định & câu hỏi mở
+## 5. Contract/security/resilience
+
+| ID | Case | Expected |
+|---|---|---|
+| M-INT-01 | Message notification event | Safe preview only; no raw body/token. |
+| M-INT-02 | User/shop suspended event | Mutation blocked/closed per policy, history retained. |
+| M-SEC-01 | JWT/participant/attachment IDOR | Denied; no object/message leak. |
+| M-SEC-02 | XSS/NoSQL/socket flood | Sanitize/reject/rate-limit. |
+| M-RES-01 | Mongo/Kafka/S3 unavailable | No partial send; outbox/retry; REST recovery. |
+
+## 6. Tiêu chí pass/phát hành
+
+- Service chưa có code: các case ở §3–§5 là đặc tả để viết test khi triển khai.
+- Khi triển khai: unit + API integration xanh trên CI, contract test với service liên quan pass, không lỗi bảo mật mức cao.
+
+## 7. Giả định & câu hỏi mở
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|

@@ -1,6 +1,8 @@
-# Test plan — API Gateway Service
+# Test Plan — API Gateway Service
 
-> Nguồn: `docs/api/api-gateway.md` · `docs/lld/api-gateway.md` · `docs/db/api-gateway.md` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
+> Nguồn: `docs/api/api-gateway.md` · `docs/lld/api-gateway.md` · `docs/db/api-gateway.md` · `New File 1.penpot.zip` · Code: chưa có repo · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — chưa có repo Gateway trong `ecommerce-taca`; toàn bộ nội dung là thiết kế (Kong DB-less).
+> Môi trường: (dự kiến) Kong 3.x DB-less + decK, `busted`/Pongo cho custom Lua plugin, Redis, mock upstream
 
 ## 1. Chuẩn bị
 
@@ -37,7 +39,7 @@
 | `invalid_signature_token` | Ký bằng key không có trong JWKS | 401 validation. |
 | `new_kid_token` | `kid=key-02` | JWKS refresh/rotation. |
 
-## 2. Test thủ công (QA / nghiệm thu)
+## 2. Manual QA
 
 | Mã | Màn hình / Luồng | Tiền điều kiện | Các bước | Kết quả mong đợi | Mức |
 |---|---|---|---|---|---|
@@ -66,7 +68,7 @@
 
 Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 
-## 3. Test API (integration)
+## 3. API integration
 
 ### 3.1 Health và CORS
 
@@ -169,7 +171,7 @@ Các case dưới đây khóa những chỗ Kong có **hành vi mặc định kh
 | IT-RL-12 | Active healthcheck probe success/fail | 200/503 | Target trở lại `HEALTHY`/giữ `UNHEALTHY` đúng (tương đương HALF_OPEN → CLOSED/OPEN). |
 | IT-RL-13 | Bucket authenticated với `limit_by=header` | 429 | Limit áp theo `X-User-ID` do `taca-jwt` đặt; hai user độc lập nhau; user không tự đổi được bucket bằng header gửi lên. Khóa giả định LLD §8 #17. |
 
-## 4. Unit test và lint cấu hình
+## 4. Unit test
 
 Sau khi chuyển sang Kong, phần "unit test" chia làm hai loại: **test Lua cho custom plugin** (`busted`) và **lint cho declarative config** — vì phần lớn hành vi giờ nằm ở cấu hình chứ không ở code.
 
@@ -206,7 +208,7 @@ Chạy trong CI, fail pipeline nếu vi phạm — đây là nơi thay thế ph�
 | Route WS không gắn plugin đọc/ghi body | Làm hỏng frame sau upgrade. |
 | Không có giá trị secret hard-code trong `kong.yaml` | Secret đến từ env/Vault. |
 
-## 5. Security, resilience và performance test
+## 5. Contract/security/resilience
 
 ### 5.1 Security
 
@@ -243,7 +245,7 @@ Chạy trong CI, fail pipeline nếu vi phạm — đây là nơi thay thế ph�
 | RES-GW-09 | Load public catalog | Ghi p50/p95/p99, throughput, CPU/memory và error rate; target do team điền. |
 | RES-GW-10 | Load protected API | JWT cache hit, Redis latency và upstream latency tách riêng; không có unbounded queue. |
 
-## 6. Tiêu chí pass và phát hành
+## 6. Tiêu chí pass/phát hành
 
 | Tiêu chí | Điều kiện đạt |
 |---|---|

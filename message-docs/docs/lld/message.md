@@ -1,6 +1,7 @@
 # LLD — Message Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
+> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Code: `ecommerce-taca/message-service` @ `main` (`bb00012`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo chỉ có `README.md`; toàn bộ nội dung là thiết kế.
 > Tech stack đã chốt: Node.js + NestJS · MongoDB/Mongoose · REST + WebSocket · S3/MinIO signed attachment
 
 ## 1. Phạm vi
@@ -214,3 +215,4 @@ Không publish raw message/attachment URL vào event Notification nếu template
 | 3 | Không AI/pre-moderation v1; report/block workflow chưa có. | Nếu compliance yêu cầu, cần moderation service/state. | Product/Security |
 | 4 | Attachment tối đa 20 MiB/6 file, scan provider chưa chốt. | Ảnh hưởng storage/security/UX. | Security/DevOps |
 | 5 | Message edit window 15 phút và retention chưa chốt. | Ảnh hưởng audit/privacy/storage. | Product/Security |
+| 6 | Template `message-received-v1` chưa được Notification seed (Notification code hiện không có template này). Command `MESSAGE_RECEIVED` sẽ không render được cho tới khi Notification thêm template. | Không gửi được thông báo tin nhắn mới. | Notification + Message |
