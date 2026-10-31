@@ -6,7 +6,7 @@
 
 Phần **Order** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/db/order-commerce.md`.
 
-## 1. Quy ước
+## 1. Quy ước chung
 
 Theo `docs/db/order-commerce.md` §1 (UUIDv7 `BINARY(16)`, tiền `BIGINT` VND, `DATETIME(6)` UTC, scope theo auth context, không FK sang DB service khác).
 

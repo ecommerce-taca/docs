@@ -1,6 +1,7 @@
 # Database — Message Service
 
-> Nguồn: `docs/lld/message.md` · HLD/Penpot · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/message.md` · HLD/Penpot · Code: `ecommerce-taca/message-service` @ `main` (`bb00012`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo chỉ có `README.md`; toàn bộ nội dung là thiết kế.
 > Baseline: MongoDB 8.x + Mongoose `messagedb`; REST + WebSocket
 
 ## 1. Quy ước chung

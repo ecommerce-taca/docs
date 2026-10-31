@@ -1,6 +1,7 @@
 # API Spec — Rating & Comment Service
 
-> Nguồn: `docs/lld/rating-comment.md` · `docs/db/rating-comment.md` · HLD/Penpot · Cập nhật: `2026-08-30`
+> Nguồn: `docs/lld/rating-comment.md` · `docs/db/rating-comment.md` · HLD/Penpot · Code: `ecommerce-taca/rating-comment-service` @ `main` (`355daa3`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo chỉ có `README.md`; toàn bộ nội dung là thiết kế.
 > Base path: `/api/v1` · NestJS/MongoDB · Verified delivered, không pre-moderation
 
 ## 1. Quy ước API chung

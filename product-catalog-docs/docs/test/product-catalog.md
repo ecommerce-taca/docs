@@ -1,9 +1,11 @@
 # Test Plan — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · `docs/api/product-catalog.md` · Cập nhật: `2026-09-17`
+> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · `docs/api/product-catalog.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ✅ Đã triển khai — unit test `*.spec.ts` cạnh source (Jest); `product-catalog-api.http` + `.postman.json` cho test thủ công; CI `.github/workflows/ci.yml`.
 > Phạm vi: Product/SPU, SKU/variant, dynamic attributes, category, media metadata, shop/KYC projection, inventory display projection, outbox và public/seller/admin API.
+> Môi trường: Jest (`*.spec.ts`) + Supertest, MongoDB local (`mongo-init.sh`), file `product-catalog-api.http`/Postman
 
-## 1. Chuẩn bị kiểm thử
+## 1. Chuẩn bị
 
 ### 1.1 Môi trường và test double
 
@@ -35,7 +37,7 @@
 4. Mọi event consumer idempotent, bỏ qua `source_version` cũ và hỗ trợ replay.
 5. Error code, HTTP status, message tiếng Việt và `request_id` khớp API spec.
 
-## 2. Manual QA theo UI/Penpot
+## 2. Manual QA
 
 | Khu vực | Kịch bản | Kỳ vọng |
 |---|---|---|
@@ -57,7 +59,7 @@
 | Admin Category | Tạo/move/archive tree | Không tạo cycle/>5 level; category archived không nhận assignment mới. |
 | Accessibility | Keyboard, focus, labels, contrast | Form/editor/list/detail có keyboard flow và accessible validation. |
 
-## 3. API integration test cases
+## 3. API integration
 
 ### 3.1 Public read API
 
@@ -126,7 +128,25 @@
 | PC-API-048 | `PATCH /admin/catalog/categories/{categoryId}` | Move subtree within depth | `200`, path/depth descendants update atomic. |
 | PC-API-049 | `POST /admin/catalog/categories/{categoryId}/archive` | Category referenced by product | Soft archive only; assignment mới bị chặn; không delete reference. |
 
-### 3.4 Integration, security và reliability
+## 4. Unit test
+
+| Module | Unit cases bắt buộc |
+|---|---|
+| `VariantResolver` | Sort key deterministic; trim/lowercase theo type; decimal canonical; escaping; duplicate variant key; không hard-code color/size. |
+| `AttributeValidator` | STRING/NUMBER/BOOLEAN/ENUM; enum allowlist; max key/label/value; max 50 definitions, 10 dimensions, 50 attrs/SKU. |
+| `PricePolicy` | Integer VND, min/max, sale/base relationship theo policy, null override fallback, overflow. |
+| `PublishPolicy` | Required fields, active category/SKU, READY cover, KYC approved, suspended shop, stock zero allowed, no admin pre-approval. |
+| `ProductStateMachine` | Mọi transition hợp lệ/không hợp lệ: DRAFT/ACTIVE/INACTIVE/BLOCKED/ARCHIVED; blocked unblock default INACTIVE. |
+| `CategoryPolicy` | Depth 1–5, cycle detection, primary/secondary limits, inactive/archived assignment. |
+| `MediaPolicy` | Type/size/quota, one READY cover, object key tenant binding, checksum. |
+| `InventoryProjectionService` | Quantity non-negative, stock status threshold 5, stale after 60s, source version monotonic, dedupe. |
+| `ShopProjectionService` | Allowlist fields (`shop.updated` không có `logo_url` sẵn → resolve `logo_object_key` thành URL), suy `kyc_status` từ `event_type` (payload KYC không có field này), dedupe theo `event_id`+`occurred_at` (không có `source_version` ở event KYC), suspended status. |
+| `RatingProjectionService` | Upsert `rating_summary`, dedupe theo `event_id`, giá trị mặc định khi chưa có review (`avg=null, count=0`). |
+| `OutboxPublisher` | Write-only: ghi record đúng schema/aggregate key trong cùng transaction với domain mutation; **không** test retry/backoff/DLQ ở unit này (thuộc connector, không phải class này); redaction payload (không leak secret/KYC document); envelope có `version` cho consumer order; ghi đúng `topic` theo `event_type` (map 1-1 với `lld` §6.2); `actor_user_id` lấy từ request context khi có, `null` khi event sinh ra từ việc consume event khác; `traceparent` lấy từ active trace context, `null` nếu không có (background job). |
+| `AuthorizationPolicy` | Seller owner/staff scope, admin roles, step-up, public visibility. |
+| `PaginationMapper` | Default 20, max 100, page bounds, stable sort, no unbounded query. |
+
+## 5. Contract/security/resilience
 
 | ID | Khu vực | Kiểm thử | Kỳ vọng |
 |---|---|---|---|
@@ -145,25 +165,13 @@
 | PC-SEC-003 | Admin | Role thấp gọi block/category mutation | Deny + audit security event. |
 | PC-SEC-004 | Price | Decimal/negative/overflow/float rounding | Reject; chỉ integer VND trong range. |
 
-## 4. Unit test plan
+## 6. Tiêu chí pass/phát hành
 
-| Module | Unit cases bắt buộc |
-|---|---|
-| `VariantResolver` | Sort key deterministic; trim/lowercase theo type; decimal canonical; escaping; duplicate variant key; không hard-code color/size. |
-| `AttributeValidator` | STRING/NUMBER/BOOLEAN/ENUM; enum allowlist; max key/label/value; max 50 definitions, 10 dimensions, 50 attrs/SKU. |
-| `PricePolicy` | Integer VND, min/max, sale/base relationship theo policy, null override fallback, overflow. |
-| `PublishPolicy` | Required fields, active category/SKU, READY cover, KYC approved, suspended shop, stock zero allowed, no admin pre-approval. |
-| `ProductStateMachine` | Mọi transition hợp lệ/không hợp lệ: DRAFT/ACTIVE/INACTIVE/BLOCKED/ARCHIVED; blocked unblock default INACTIVE. |
-| `CategoryPolicy` | Depth 1–5, cycle detection, primary/secondary limits, inactive/archived assignment. |
-| `MediaPolicy` | Type/size/quota, one READY cover, object key tenant binding, checksum. |
-| `InventoryProjectionService` | Quantity non-negative, stock status threshold 5, stale after 60s, source version monotonic, dedupe. |
-| `ShopProjectionService` | Allowlist fields (`shop.updated` không có `logo_url` sẵn → resolve `logo_object_key` thành URL), suy `kyc_status` từ `event_type` (payload KYC không có field này), dedupe theo `event_id`+`occurred_at` (không có `source_version` ở event KYC), suspended status. |
-| `RatingProjectionService` | Upsert `rating_summary`, dedupe theo `event_id`, giá trị mặc định khi chưa có review (`avg=null, count=0`). |
-| `OutboxPublisher` | Write-only: ghi record đúng schema/aggregate key trong cùng transaction với domain mutation; **không** test retry/backoff/DLQ ở unit này (thuộc connector, không phải class này); redaction payload (không leak secret/KYC document); envelope có `version` cho consumer order; ghi đúng `topic` theo `event_type` (map 1-1 với `lld` §6.2); `actor_user_id` lấy từ request context khi có, `null` khi event sinh ra từ việc consume event khác; `traceparent` lấy từ active trace context, `null` nếu không có (background job). |
-| `AuthorizationPolicy` | Seller owner/staff scope, admin roles, step-up, public visibility. |
-| `PaginationMapper` | Default 20, max 100, page bounds, stable sort, no unbounded query. |
+- `npm test` và CI `.github/workflows/ci.yml` xanh.
+- Các case PC ở §3 có test tương ứng trước khi tích hợp Search/Order.
+- Không lỗi bảo mật mức cao ở §5.
 
-## 5. Giả định & câu hỏi mở
+## 7. Giả định & câu hỏi mở
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|

@@ -6,7 +6,7 @@
 
 Phần **Voucher** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/api/order-commerce.md`.
 
-## 1. Quy ước API
+## 1. Quy ước API chung
 
 Theo `docs/api/order-commerce.md` §1 (base path `/api/v1`, auth qua Gateway, envelope `{data,meta}`, error `{error:{code,message,details,trace_id}}`, `Idempotency-Key` cho mutation, tiền integer VND).
 

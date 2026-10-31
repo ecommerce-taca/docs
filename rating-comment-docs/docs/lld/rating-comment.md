@@ -1,6 +1,7 @@
 # LLD — Rating & Comment Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
+> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Code: `ecommerce-taca/rating-comment-service` @ `main` (`355daa3`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ⏳ Chưa triển khai — repo chỉ có `README.md`; toàn bộ nội dung là thiết kế.
 > Tech stack đã chốt: Node.js + NestJS · MongoDB/Mongoose · Kafka events · S3/MinIO media metadata
 
 ## 1. Phạm vi

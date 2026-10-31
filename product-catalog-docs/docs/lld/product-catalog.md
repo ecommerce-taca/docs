@@ -1,6 +1,7 @@
 # LLD — Product Catalog Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-17`
+> Nguồn: `HighLevelDesign/HLD.md` · `FrontendDesign/Taca.penpot.zip` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: ✅ Đã triển khai — public/seller/admin REST, import/export Excel, media S3, moderation, outbox (CDC Debezium), consumer `shop`/`inventory`/`rating`. Lệch thiết kế ghi rõ ở từng mục (event SKU/category chưa phát, step-up admin chưa kiểm).
 > Tech stack đã chốt: Node.js + NestJS · MongoDB/Mongoose · Kafka outbox (relay bởi CDC — Debezium MongoDB Outbox Event Router, xem §1.1/giả định #25) · S3/MinIO cho media · REST nội bộ với Inventory/Search/Auth User
 
 ## 1. Phạm vi
@@ -79,7 +80,7 @@ src/
 |---|---|---|
 | `ProductController` | Buyer/public product list, detail, shop/category listing. | Chỉ trả product có visibility phù hợp; không trả draft/blocked cho public. |
 | `SellerProductController` | Seller tạo/sửa/xóa draft, SKU, media, publish/unpublish. | Lấy actor/shop scope từ Gateway; kiểm tra ownership trong service, không tin `shop_id` body. |
-| `AdminCatalogController` | Category CRUD, catalog read, block/unblock product, audit metadata. | Destructive action yêu cầu `CATALOG_ADMIN`/`SUPER_ADMIN` và step-up 2FA từ auth-user. |
+| `AdminCatalogController` | Category CRUD, catalog read, block/unblock product, audit metadata. | Destructive action yêu cầu `CATALOG_ADMIN`/`SUPER_ADMIN`; step-up 2FA là thiết kế, code chưa kiểm. |
 | `ProductApplicationService` | Orchestrate create/update/publish/archive và transaction boundary. | Mỗi mutation ghi product change + outbox event theo cùng MongoDB transaction khi deployment hỗ trợ replica set. |
 | `VariantResolver` | Validate dynamic attributes, tạo canonical combination key, phát hiện duplicate SKU. | Không hard-code `color`, `size`; không cho hai SKU trong cùng SPU có cùng normalized combination. |
 | `PublishPolicy` | Kiểm tra required fields, active SKU, media, price, category và shop KYC projection. | Không gọi Inventory để decrement; stock zero không chặn publish. |
@@ -332,7 +333,7 @@ Product assignment:
 4. Client gọi complete với object key/checksum
 5. Product verify object metadata, size, content type, checksum
 6. Lưu product_media(status=READY), gắn cover/sort order
-7. Publish product.media_updated nếu product đã tồn tại
+7. Ghi outbox `product.media_uploaded` (topic `product.events.v1`) — code không phát `product.media_updated`
 ```
 
 - Client không được tự chọn object key của product khác.
@@ -523,20 +524,29 @@ Chuyển trạng thái:
 | `product.events.v1` | `product.blocked` | `product_id`, reason, actor, blocked_at | Admin block | `product_id` |
 | `product.events.v1` | `product.unblocked` | `product_id`, `next_status` (`ACTIVE` → hiện lại doc ở Search, `INACTIVE` → giữ ẩn), actor | Admin unblock | `product_id` |
 | `product.events.v1` | `product.archived` | `product_id`, reason, archived_at | Archive | `product_id` |
-| `sku.events.v1` | `sku.created` | `sku_id`, `product_id`, `shop_id`, `variant_key`, attributes, price | SKU create | `sku_id` |
-| `sku.events.v1` | `sku.updated` | `sku_id`, `product_id`, `shop_id`, changed fields, version | SKU update | `sku_id` |
-| `sku.events.v1` | `sku.status_changed` | `sku_id`, `product_id`, `shop_id`, old/new status, reason | Activate/inactivate/archive SKU | `sku_id` |
-| `category.events.v1` | `category.created/updated` | category, parent, path, status | Admin taxonomy mutation | `category_id` |
-| `category.events.v1` | `category.status_changed` | old/new status, path | Category state change | `category_id` |
-| `catalog.events.v1` | `product.category_changed` | product_id, primary/secondary category IDs | Assignment changed | `product_id` |
-| `catalog.events.v1` | `product.media_updated` | media IDs, cover, version | Media ready/order changed | `product_id` |
+| `product.events.v1` | `product.skus_updated` | `product_id`, `shop_id`, `version`, `skus[]` (toàn bộ SKU sau khi replace) | `PUT /seller/products/{id}/skus` commit | `product_id` |
+| `product.events.v1` | `product.media_uploaded` | `product_id`, `shop_id`, `media_id`, `object_key`, `content_type`, … | Media complete | `product_id` |
+| `product.events.v1` | `product.media_deleted` | `product_id`, `shop_id`, `media_id` | Media delete | `product_id` |
+| `sku.events.v1` | `sku.created` | `sku_id`, `product_id`, `shop_id`, `variant_key`, attributes, price | **Chỉ** từ import worker | `sku_id` |
+| `sku.events.v1` | `sku.updated` | `sku_id`, `product_id`, `shop_id`, changed fields, version | ⏳ Chưa phát (SKU thay đổi qua API đi bằng `product.skus_updated`) | `sku_id` |
+| `sku.events.v1` | `sku.status_changed` | `sku_id`, `product_id`, `shop_id`, old/new status, reason | ⏳ Chưa phát | `sku_id` |
+| `category.events.v1` | `category.created/updated` | category, parent, path, status | ⏳ Chưa phát (admin category API không ghi outbox) | `category_id` |
+| `category.events.v1` | `category.status_changed` | old/new status, path | ⏳ Chưa phát | `category_id` |
+| `catalog.events.v1` | `product.category_changed` | `product_id`, `shop_id`, `primary_category_id`, `secondary_category_ids`, `version` | Assignment changed | `product_id` |
+| `catalog.events.v1` | `product.media_updated` | media IDs, cover, version | ⏳ Không phát — thay bằng `product.media_uploaded`/`product.media_deleted` trên `product.events.v1` | `product_id` |
 | `catalog.events.v1` | `product.shop_snapshot_updated` | product_id, shop_id, changed snapshot fields | Shop event projection update | `product_id` |
+
+Tất cả event ghi vào `outbox_events` trong cùng transaction Mongo; Debezium (`deploy/debezium/outbox-connector.json`, collection `product_catalog.outbox_events`) route theo field `topic`, key = `aggregate_id`, đưa `version`, `actor_user_id`, `event_type`, `schema_version`, `occurred_at`, `aggregate_type` vào envelope và `traceparent` vào Kafka header. `product.unblocked` hiện luôn có `next_status: "INACTIVE"`.
+
+> **Lệch với Search (cần xử lý ở code):** Search chờ `product.media_updated` trên `catalog.events.v1` và `sku.updated`/`sku.status_changed`/`category.*`, nhưng Product Catalog chưa phát các event này (xem `search-docs/docs/lld/search.md` §6.1).
 
 > Map giá cho Search index: Search lấy `price.sale` làm scalar `long` VND cho range/sort; `base`/`currency` để hiển thị. `category_path` và `visibility_status` sinh ra từ phía Product khi publish để Search không phải join thêm.
 
 Consumers phải xử lý idempotent theo `event_id`, kiểm tra `schema_version` và không đọc Product MongoDB trực tiếp.
 
 ### 6.3 Event lắng nghe
+
+Consumer (`integrations/kafka/kafka-consumer.service.ts`) subscribe `shop.events.v1`, `inventory.events.v1`, `rating.events.v1` từ đầu (`fromBeginning: true`), chỉ những topic đã tồn tại (topic thiếu được bỏ qua kèm warning). Retry tối đa 3 lần (backoff cơ sở 50ms) rồi đẩy DLQ `product-catalog.events.dlq.v1`; message không parse được bị bỏ qua có log.
 
 | Nguồn | Event | Xử lý |
 |---|---|---|

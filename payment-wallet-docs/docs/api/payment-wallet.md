@@ -1,204 +1,536 @@
 # API Spec — Payment-Wallet Service
 
-> Nguồn: `docs/lld/payment-wallet.md` · `docs/db/payment-wallet.md` · HLD/Penpot · Cập nhật: `2026-08-30`
-> Base path: `/api/v1` · VNPAY sandbox + COD · Payment secrets không đi qua client
+> Nguồn: `docs/lld/payment-wallet.md` · `docs/db/payment-wallet.md` · ADR-001…004 trong service repo · Code: `ecommerce-taca/payment-wallet-service` @ `main` (`859b7b1`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: 🟡 Triển khai một phần — payment/refund, seller wallet/ledger/revenue, admin finance, health/Prometheus đã có code; `GET /seller/revenue/export`, `GET /seller/payouts` chưa có, `POST /seller/payouts` bị chặn theo ADR-003.
+> Base path: `/api/v1` (business/admin) · health và `/prometheus` ở `/` · VNPAY sandbox + COD
 
 ## 1. Quy ước API chung
 
 | Mục | Quy định |
 |---|---|
-| Auth | Buyer/seller/admin JWT qua Gateway; internal Order/Payment callback dùng service auth. |
-| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject (client không gửi được — Gateway strip). |
-| Request ID | `X-Request-ID` tối đa 64, Gateway tạo/propagate. |
-| Trace | W3C `traceparent`/`tracestate` REST/Kafka; error có `trace_id` (do Gateway/service propagate, client không gửi). |
-| Time/money | ISO-8601 UTC; integer VND, không FLOAT. |
-| Idempotency | Payment/payout/refund command và webhook provider event bắt buộc dedupe. |
-| Response | `{data,meta:{request_id}}`; error `{error:{code,message,details,trace_id}}`. |
-| Pagination | `page` từ 1, `size` mặc định 20 tối đa 100; meta trả `request_id,page,size,total,total_pages`. |
-| Log | JSON field chuẩn `timestamp,level,service,env,version,event,trace_id,span_id,request_id,route,method,status_code,duration_ms`. |
-| Redaction | Không log token, VNPAY signature/raw payload, bank/card credential, full address/PII. |
+| Auth | Buyer/seller/admin JWT qua Gateway. Payment-Wallet đọc actor context do Gateway inject. Internal Order-Commerce được kiểm tra bằng `InternalCallerPolicy`; transport production để populate `InternalCallerContext` vẫn là contract mở, không tự suy diễn header service-auth mới. |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject. |
+| Seller scope | Seller Finance suy ra shop từ actor context. Một seller actor phải có đúng một shop trong `shopScope`; seller APIs không nhận `shop_id` từ query/body để chọn shop. |
+| Request ID | `X-Request-ID` bắt buộc ở các business/admin HTTP APIs hiện đã expose theo contract tương ứng. Gateway tạo/propagate. |
+| Trace | W3C `traceparent`/`tracestate` được validate, tạo/continue và propagate qua REST, outbox và Kafka metadata. |
+| Time/money | ISO-8601 UTC; integer VND, không dùng FLOAT cho tiền. |
+| Idempotency | Create Payment và Request Refund dùng `Idempotency-Key`; provider webhook dedupe theo provider event. |
+| Response | Success business API: `{data,meta:{request_id}}`; error: `{error:{code,message},meta:{request_id}}`. |
+| Pagination | API có phân trang dùng `page` từ 1, `size` mặc định 20 tối đa 100; meta có thể trả `page,size,total,total_pages`. |
+| Redaction | Không trả/log token, VNPAY signature/secret, raw provider payload, bank/card credential hoặc PII nhạy cảm. |
+| Operational endpoints | Health và Prometheus là operational surfaces, không dùng base path `/api/v1`. |
+
+### 1.1 Phạm vi đã triển khai
+
+Phase 6 triển khai và kiểm thử:
+
+- `POST /api/v1/payments`
+- `GET /api/v1/payments/{paymentId}`
+- `POST /api/v1/payments/webhook`
+- `POST /api/v1/payments/{paymentId}/refunds`
+
+Phase 7 triển khai và kiểm thử:
+
+- `GET /api/v1/seller/wallet`
+- `GET /api/v1/seller/wallet/ledger`
+- `GET /api/v1/seller/revenue`
+
+Các target endpoint seller chưa được runtime expose:
+
+- `GET /api/v1/seller/revenue/export`
+- `POST /api/v1/seller/payouts`
+- `GET /api/v1/seller/payouts`
+
+`POST /seller/payouts` bị production-gate vì các contract payout quan trọng vẫn OPEN theo ADR-003.
+
+Phase 8 triển khai Admin Finance runtime APIs:
+
+- reconciliation;
+- fee configuration;
+- tax configuration;
+- settlement read/retry;
+- finance summary/export.
+
+Phase 9 triển khai operational surfaces:
+
+- `GET /health/live`
+- `GET /health/liveness`
+- `GET /health/ready`
+- `GET /health/readiness`
+- `GET /prometheus`
+
+Phase 9 không tạo `/api/v1/admin/operations`.
 
 ## 2. Danh sách endpoint
 
-| # | Method + path | Quyền | Mục đích |
-|---:|---|---|---|
-| 1 | `POST /payments` | Internal (service-to-service) — chỉ Order-Commerce gọi; service chặn caller khác bằng actor scope. | Tạo payment intent VNPAY/COD. |
-| 2 | `GET /payments/{paymentId}` | Buyer/internal | Xem payment status. |
-| 3 | `POST /payments/webhook` | VNPAY provider | Reconcile callback, không JWT. |
-| 4 | `POST /payments/{paymentId}/refunds` | Internal (service-to-service) — chỉ Order-Commerce/Admin gọi; service chặn caller khác bằng actor scope. | Tạo refund intent. |
-| 5 | `GET /seller/wallet` | Seller | Xem available/pending balance. |
-| 6 | `GET /seller/wallet/ledger` | Seller | Xem ledger summary. |
-| 7 | `GET /seller/revenue` | Seller | Báo cáo doanh thu theo khoảng thời gian (HLD #38). |
-| 7a | `GET /seller/revenue/export` | Seller | Xuất báo cáo doanh thu ra file (.xlsx/.csv). |
-| 8 | `POST /seller/payouts` | Seller + step-up (header `X-MFA-Step-Up`) | Yêu cầu rút tiền. |
-| 9 | `GET /seller/payouts` | Seller | Xem payout history. |
-| 10 | `GET /admin/payments/reconciliation` | `FINANCE_OPS` | Reconcile provider/payment/ledger. |
-| 11 | `GET /admin/fees` | `FINANCE_OPS` | Danh sách version config commission (hiện hành + lịch sử). |
-| 12 | `PUT /admin/fees` | `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`) | Tạo version commission mới, effective-dated. |
-| 13 | `GET /admin/taxes` | `FINANCE_OPS` | Danh sách version config thuế. |
-| 14 | `PUT /admin/taxes` | `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`) | Tạo version thuế mới, effective-dated. |
-| 15 | `GET /admin/settlements` | `FINANCE_OPS` | Danh sách settlement batch (period/status/tổng gross/commission/tax/net). |
-| 16 | `GET /admin/settlements/{batchId}` | `FINANCE_OPS` | Chi tiết batch + breakdown theo shop. |
-| 17 | `POST /admin/settlements/{batchId}/retry` | `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`) | Retry batch `FAILED` (idempotent). |
-| 18 | `GET /admin/finance/summary` | `FINANCE_OPS` | Tổng hợp tài chính sàn read-only (GMV, commission income, tax, refund, payout volume). |
-| 18a | `GET /admin/finance/summary/export` | `FINANCE_OPS` | Xuất báo cáo tài chính sàn ra file (.xlsx/.csv). |
-| 19 | `GET /health/live` | Ops | Liveness. |
-| 20 | `GET /health/ready` | Ops | Readiness. |
+| # | Method + path | Quyền | Mục đích | Trạng thái |
+|---:|---|---|---|---|
+| 1 | `POST /payments` | Trusted Order-Commerce internal caller | Tạo payment intent VNPAY/COD | ✅ |
+| 2 | `GET /payments/{paymentId}` | Buyer owner, Order-Commerce internal, `FINANCE_OPS` | Xem payment detail | ✅ |
+| 3 | `POST /payments/webhook` | VNPAY provider, không JWT | Reconcile callback | ✅ |
+| 4 | `POST /payments/{paymentId}/refunds` | Order-Commerce internal hoặc `FINANCE_OPS` | Tạo refund intent | ✅ |
+| 5 | `GET /seller/wallet` | Seller | Xem available/pending balance | ✅ |
+| 6 | `GET /seller/wallet/ledger` | Seller | Xem ledger | ✅ |
+| 7 | `GET /seller/revenue` | Seller | Báo cáo doanh thu | ✅ |
+| 7a | `GET /seller/revenue/export` | Seller | Xuất báo cáo doanh thu | ⏳ Chưa có controller |
+| 8 | `POST /seller/payouts` | Seller + step-up | Yêu cầu rút tiền | ⏳ Bị chặn (ADR-003) |
+| 9 | `GET /seller/payouts` | Seller | Xem payout history | ⏳ Chưa có controller |
+| 10 | `GET /admin/payments/reconciliation` | `FINANCE_OPS` | Reconcile provider/payment/ledger | ✅ |
+| 11 | `GET /admin/fees` | `FINANCE_OPS` | Danh sách version commission | ✅ |
+| 12 | `PUT /admin/fees` | `FINANCE_OPS` + step-up | Tạo commission version mới | ✅ |
+| 13 | `GET /admin/taxes` | `FINANCE_OPS` | Danh sách version thuế | ✅ |
+| 14 | `PUT /admin/taxes` | `FINANCE_OPS` + step-up | Tạo tax version mới | ✅ |
+| 15 | `GET /admin/settlements` | `FINANCE_OPS` | Danh sách settlement batch | ✅ |
+| 16 | `GET /admin/settlements/{batchId}` | `FINANCE_OPS` | Chi tiết settlement batch | ✅ |
+| 17 | `POST /admin/settlements/{batchId}/retry` | `FINANCE_OPS` + step-up | Retry batch `FAILED` | ✅ |
+| 18 | `GET /admin/finance/summary` | `FINANCE_OPS` | Tổng hợp tài chính sàn | ✅ |
+| 18a | `GET /admin/finance/summary/export` | `FINANCE_OPS` | Xuất báo cáo tài chính | ✅ |
+| 19 | `GET /health/live` | Ops | Liveness | ✅ |
+| 19a | `GET /health/liveness` | Ops | Conventional liveness probe | ✅ |
+| 20 | `GET /health/ready` | Ops | Readiness | ✅ |
+| 20a | `GET /health/readiness` | Ops | Conventional readiness probe | ✅ |
+| 21 | `GET /prometheus` | Ops/monitoring | Metrics Prometheus | ✅ |
+| 22 | `GET /admin/finance/summary/exports/{token}` | Token tạm do 18a cấp (method không tự kiểm actor; Gateway chỉ route admin) | Tải file CSV do 18a sinh, hết hạn sau 30 phút | ✅ |
 
-> `POST /payments` và `POST /payments/{paymentId}/refunds` là internal: Payment-Wallet KHÔNG dùng prefix `/internal/**` nên Gateway không chặn được ở route — service phải tự chặn bằng actor scope (X-User-Shop-Scope/role), không tin caller client.
+> `POST /payments` và `POST /payments/{paymentId}/refunds` không dùng prefix `/internal/**`. Service tự enforce caller. Không được tự tạo một header service-auth mới như `X-Internal-Service` khi contract transport chưa được chốt.
+
+> Health/Prometheus endpoints là operational surfaces ở management base path `/`; chúng không thuộc business base path `/api/v1`.
 
 ## 3. Chi tiết endpoint
 
 ### 3.1 `POST /payments`
 
-Header `Idempotency-Key` bắt buộc. Chỉ gọi từ Order-Commerce (internal scope) — client **không** được tự truyền allocation theo shop.
+Header bắt buộc:
+
+- `Idempotency-Key`
+- `X-Request-ID`
+
+Authorization:
+
+- chỉ trusted Order-Commerce internal caller.
+
+Request contract runtime hiện tại:
 
 | Field | Kiểu | Bắt buộc | Ràng buộc |
 |---|---|---|---|
-| `order_id` | string | Có | — |
-| `checkout_group_id` | string | Có | Nhóm order multi-shop của cùng lần checkout |
-| `buyer_user_id` | string | Có | — |
-| `amount` | integer | Có | VND, > 0, **phải khớp** `grand_total` của Order (gồm `shipping_fee` — xem `order-commerce-docs/docs/api/order.md` §3.1) |
-| `currency` | string | Có | Cố định `"VND"` |
-| `method` | enum | Có | `VNPAY` \| `COD` |
-| `expires_at` | string | Có | ISO-8601 UTC |
+| `checkout_group_id` | UUID | Có | Một payment đại diện cho một checkout group |
+| `buyer_user_id` | UUID | Có | Buyer của checkout |
+| `method` | enum | Có | `VNPAY` hoặc `COD` |
+| `amount` | integer | Có | > 0 |
+| `currency` | string | Có | Chỉ `"VND"` |
+| `orders` | array | Có | Ít nhất một child order |
+| `orders[].order_id` | UUID | Có | ID order |
+| `orders[].shop_id` | UUID | Có | Shop sở hữu order |
+| `orders[].amount` | integer | Có | Grand total của child order |
+| `orders[].shipping_fee` | integer | Có | `>= 0` và `< amount` |
+
+Ràng buộc:
+
+- tổng `orders[].amount` phải bằng `amount`;
+- `merchandise_amount` không phải request field, được suy ra bằng `amount - shipping_fee`;
+- VNPAY có `expires_at` do service tính;
+- COD có `expires_at = null`.
+
+> Theo ADR-002, `orders[]` trong request hiện tại là implementation debt. Canonical contract tương lai sẽ dùng authoritative Order snapshot thay vì tin allocation do caller gửi. Phase 6 không tự triển khai `OrderSnapshotPort` khi upstream contract chưa hoàn tất.
+
+Request example:
+
+```json
+{
+  "checkout_group_id": "01912f90-7a1b-7c12-9c55-8b1c34a6d921",
+  "buyer_user_id": "01912f80-7a1b-7c12-9c55-8b1c34a6d921",
+  "method": "VNPAY",
+  "amount": 1094000,
+  "currency": "VND",
+  "orders": [
+    {
+      "order_id": "01912f91-7a1b-7c12-9c55-8b1c34a6d921",
+      "shop_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
+      "amount": 1094000,
+      "shipping_fee": 20000
+    }
+  ]
+}
+```
+
+Response `201 Created`:
 
 ```json
 {
   "data": {
-    "payment_id": "payment-01912f95",
-    "order_id": "order-01912f91",
+    "payment_id": "01912f95-7a1b-7c12-9c55-8b1c34a6d921",
+    "checkout_group_id": "01912f90-7a1b-7c12-9c55-8b1c34a6d921",
     "status": "PENDING",
     "method": "VNPAY",
     "amount": 1094000,
     "currency": "VND",
-    "payment_url": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?…",
-    "qr_payload": "00020101021238…",
-    "expires_at": "2026-08-30T09:15:00Z"
+    "payment_url": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?...",
+    "expires_at": "2026-10-10T10:15:00Z"
   },
-  "meta": { "request_id": "01912fa6-7a1b-7c12-9c55-8b1c34a6d921" }
+  "meta": {
+    "request_id": "01912fa6-7a1b-7c12-9c55-8b1c34a6d921"
+  }
 }
 ```
 
-COD trả `status: "PENDING_COD"`, **không** có `payment_url`/`qr_payload` và không gọi provider. Amount lệch Order → `409 PAYMENT_AMOUNT_MISMATCH`. **Tạo được URL không đồng nghĩa đã thanh toán** — chỉ webhook đã verify mới chuyển `SUCCESS`.
+COD trả `status: "PENDING_COD"` và không có `payment_url`/`expires_at`.
+
+Tạo payment URL không đồng nghĩa thanh toán thành công. Payment chỉ chuyển state tài chính khi workflow tương ứng được xác nhận.
 
 ### 3.2 `GET /payments/{paymentId}`
+
+Header bắt buộc:
+
+- `X-Request-ID`
+
+Authorization hiện tại:
+
+- Order-Commerce internal caller: allow;
+- `FINANCE_OPS`: allow;
+- buyer: chỉ buyer sở hữu payment;
+- seller/seller staff: generic payment detail bị từ chối.
+
+Seller không được lọc trực tiếp từ generic payment response vì response chứa payment-level totals của checkout có thể gồm nhiều shop.
+
+Response `200 OK`:
 
 ```json
 {
   "data": {
-    "payment_id": "payment-01912f95",
-    "order_id": "order-01912f91",
+    "payment_id": "01912f95-7a1b-7c12-9c55-8b1c34a6d921",
+    "checkout_group_id": "01912f90-7a1b-7c12-9c55-8b1c34a6d921",
     "status": "SUCCESS",
     "method": "VNPAY",
     "amount": 1094000,
     "currency": "VND",
-    "provider_ref_masked": "VNP****4821",
-    "paid_at": "2026-08-30T09:03:12Z",
+    "captured_amount": 1094000,
     "refunded_amount": 0,
-    "created_at": "2026-08-30T09:00:05Z"
+    "expires_at": "2026-10-10T10:15:00Z",
+    "paid_at": "2026-10-10T10:03:12Z",
+    "orders": [
+      {
+        "order_id": "01912f91-7a1b-7c12-9c55-8b1c34a6d921",
+        "shop_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
+        "merchandise_amount": 1074000,
+        "shipping_fee": 20000,
+        "amount": 1094000
+      }
+    ]
   },
-  "meta": { "request_id": "01912fa7-7a1b-7c12-9c55-8b1c34a6d921" }
+  "meta": {
+    "request_id": "01912fa7-7a1b-7c12-9c55-8b1c34a6d921"
+  }
 }
 ```
 
-Scope: buyer chỉ xem payment của order mình; seller chỉ xem phần allocation của shop mình; admin/finance theo permission. **Không bao giờ** trả signature, secret, hay payload provider thô.
+`expires_at` hoặc `paid_at` có thể vắng mặt khi `null`.
+
+Response không expose:
+
+- `buyer_user_id`;
+- raw provider payload;
+- provider signature/secret;
+- unmasked provider reference;
+- `created_at` khi application result hiện chưa cung cấp field này.
+
+Errors chính:
+
+- malformed `paymentId` → `400 PAYMENT_INVALID_INPUT`;
+- payment không tồn tại → `404 PAYMENT_NOT_FOUND`;
+- chưa xác thực → `401 PAYMENT_UNAUTHENTICATED`;
+- không đủ quyền → `403 PAYMENT_FORBIDDEN`.
 
 ### 3.3 `POST /payments/webhook`
 
-Không JWT. Bắt buộc verify chữ ký VNPAY + IP policy, `provider_event_id` unique, và amount/order/payment khớp bản ghi nội bộ.
+Không JWT.
+
+Request runtime hiện tại:
 
 ```json
 {
-  "provider_event_id": "vnp-evt-77213",
-  "payment_id": "payment-01912f95",
-  "order_id": "order-01912f91",
+  "provider_event_id": "vnpay-event-001",
+  "provider_transaction_ref": "vnpay-txn-001",
+  "response_code": "00",
+  "transaction_status": "00",
   "amount": 1094000,
-  "status": "SUCCESS",
-  "provider_ref": "VNP20260830004821",
-  "occurred_at": "2026-08-30T09:03:12Z",
-  "signature": "<vnpay-signature>"
+  "currency": "VND",
+  "payload_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "signed_payload": {
+    "vnp_TxnRef": "vnpay-txn-001",
+    "vnp_Amount": "109400000",
+    "vnp_ResponseCode": "00",
+    "vnp_TransactionStatus": "00",
+    "vnp_SecureHash": "<signature>"
+  }
 }
 ```
 
-Response `200 {"data":{"accepted":true}}`. Quy tắc:
-- Success hợp lệ → **một transaction** đổi payment state + ghi ledger + ghi outbox `payment.succeeded`.
-- Trùng `provider_event_id` → ACK `200`, **không** ghi ledger lần hai.
-- Sai chữ ký → `400 PAYMENT_WEBHOOK_INVALID`, không đổi state.
-- Amount lệch → `409 PAYMENT_AMOUNT_MISMATCH`, không đổi state, ghi cảnh báo đối soát.
-- **Không tin amount từ webhook** — luôn so với intent nội bộ.
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "payment_id": "01912f95-7a1b-7c12-9c55-8b1c34a6d921",
+    "payment_status": "SUCCESS",
+    "action": "APPLIED"
+  },
+  "meta": {
+    "request_id": "01912fa7-7a1b-7c12-9c55-8b1c34a6d921"
+  }
+}
+```
+
+Duplicate event trả `action: "DUPLICATE"` và không tạo financial side effect lần hai.
+
+Quy tắc:
+
+- verify VNPAY signature;
+- dedupe `provider_event_id`;
+- tra payment qua payment attempt/provider transaction ref;
+- webhook amount/currency phải khớp intent nội bộ;
+- success hợp lệ cập nhật payment, allocation, ledger, wallet, provider event và outbox trong transaction;
+- duplicate callback không ghi ledger/allocation/outbox lần hai;
+- không expose hoặc log raw secret/signature.
+
+Known open item:
+
+- authoritative VNPAY IP allowlist policy chưa được chốt đầy đủ;
+- không tự hard-code policy production nếu chưa có nguồn chính thức.
+
+Errors chính:
+
+- signature sai → `400 INVALID_VNPAY_SIGNATURE`;
+- payment attempt không tồn tại → `404 PAYMENT_ATTEMPT_NOT_FOUND`;
+- amount mismatch → `409 PAYMENT_AMOUNT_MISMATCH`.
 
 ### 3.4 Refund
 
-`POST /payments/{paymentId}/refunds` + `Idempotency-Key`.
+`POST /payments/{paymentId}/refunds`
 
-```json
-{ "amount": 1094000, "reason": "BUYER_CANCELLED", "order_id": "order-01912f91" }
-```
+Headers bắt buộc:
+
+- `Idempotency-Key`
+- `X-Request-ID`
+
+Authorized callers:
+
+- trusted Order-Commerce internal caller;
+- authenticated actor có role `FINANCE_OPS`.
+
+Buyer và seller client không gọi trực tiếp endpoint refund này.
+
+Request:
 
 ```json
 {
-  "data": {
-    "refund_id": "refund-01912fa8",
-    "payment_id": "payment-01912f95",
-    "amount": 1094000,
-    "status": "REQUESTED",
-    "payment_status_after": "REFUNDED"
-  },
-  "meta": { "request_id": "01912fa9-7a1b-7c12-9c55-8b1c34a6d921" }
+  "amount": 50000,
+  "reason": "BUYER_CANCELLED"
 }
 ```
 
-Tổng refund **không vượt** số đã capture → `409 REFUND_AMOUNT_INVALID`. Refund một phần → payment `PARTIALLY_REFUNDED`; refund hết → `REFUNDED`. State cuối chỉ chốt sau xác nhận provider.
+Ràng buộc:
 
-### 3.5 Seller wallet/ledger/revenue
+- `amount > 0`;
+- `reason` bắt buộc, tối đa 500 ký tự;
+- HTTP caller không truyền `currency`; refund hiện dùng `VND`;
+- contract runtime hiện tại là payment-level refund, không nhận `order_id`;
+- tổng `refunded + pending refund + requested refund` không vượt `captured_amount`;
+- payment phải ở state cho phép refund.
 
-`GET /seller/wallet`:
+Response `202 Accepted`:
 
 ```json
 {
   "data": {
-    "wallet_id": "wallet-01912fb5",
-    "shop_id": "shop-01912f31",
+    "refund_id": "01912fa8-7a1b-7c12-9c55-8b1c34a6d921",
+    "payment_id": "01912f95-7a1b-7c12-9c55-8b1c34a6d921",
+    "amount": 50000,
+    "currency": "VND",
+    "status": "REQUESTED"
+  },
+  "meta": {
+    "request_id": "01912fa9-7a1b-7c12-9c55-8b1c34a6d921"
+  }
+}
+```
+
+Tạo refund request không đồng nghĩa refund đã thành công.
+
+State payment chỉ chuyển:
+
+- `PARTIALLY_REFUNDED`, hoặc
+- `REFUNDED`
+
+sau khi refund-result workflow xác nhận thành công.
+
+Idempotency behavior:
+
+- cùng `Idempotency-Key` + cùng request → trả lại cùng refund result, không tạo refund/outbox thứ hai;
+- cùng `Idempotency-Key` + payload khác → `409 PAYMENT_IDEMPOTENCY_CONFLICT`;
+- request cùng key đang `PROCESSING` → `409 REQUEST_ALREADY_PROCESSING`.
+
+Errors chính:
+
+- payment không tồn tại → `404 PAYMENT_NOT_FOUND`;
+- payment state không cho refund → `409 REFUND_STATE_INVALID`;
+- refund vượt captured/pending limit → `409 REFUND_AMOUNT_INVALID`;
+- chưa xác thực → `401 PAYMENT_UNAUTHENTICATED`;
+- không đủ quyền → `403 PAYMENT_FORBIDDEN`.
+
+### 3.5 Seller wallet/ledger/revenue
+
+Phase 7 runtime hiện implement:
+
+- `GET /seller/wallet`;
+- `GET /seller/wallet/ledger`;
+- `GET /seller/revenue`.
+
+Seller authorization:
+
+- actor phải được xác thực;
+- actor phải có role `SELLER`;
+- actor phải có đúng một shop trong `shopScope`;
+- shop không được lấy từ query/body của client;
+- seller finance query luôn scope theo shop của actor.
+
+#### 3.5.1 `GET /seller/wallet`
+
+Header bắt buộc:
+
+- `X-Request-ID`
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "wallet_id": "01912fb5-7a1b-7c12-9c55-8b1c34a6d921",
+    "shop_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
     "available_balance": 12500000,
     "pending_balance": 3200000,
     "currency": "VND",
     "status": "ACTIVE",
     "as_of": "2026-08-31T04:00:00Z"
   },
-  "meta": { "request_id": "01912fb6-7a1b-7c12-9c55-8b1c34a6d921" }
+  "meta": {
+    "request_id": "01912fb6-7a1b-7c12-9c55-8b1c34a6d921"
+  }
 }
 ```
 
-`pending_balance` = tiền đã ghi nhận nhưng chưa qua settlement (chưa rút được). `status` ∈ `ACTIVE | FROZEN | CLOSED`; `FROZEN` vẫn xem được số dư nhưng payout trả `403 WALLET_FROZEN`.
+`pending_balance` là tiền đã ghi nhận nhưng chưa qua settlement.
 
-`GET /seller/wallet/ledger?page=&size=&from=&to=&type=`:
+`status` ∈:
+
+- `ACTIVE`
+- `FROZEN`
+- `CLOSED`
+
+`as_of` phản ánh thời điểm cập nhật wallet projection.
+
+Errors chính:
+
+- thiếu `X-Request-ID` → `400 MISSING_REQUIRED_HEADER`;
+- chưa xác thực → `401 PAYMENT_UNAUTHENTICATED`;
+- actor không phải seller hoặc shop scope không đúng một shop → `403 PAYMENT_FORBIDDEN`;
+- wallet không tồn tại → `404 WALLET_NOT_FOUND`.
+
+#### 3.5.2 `GET /seller/wallet/ledger?page=&size=&from=&to=&type=`
+
+Header bắt buộc:
+
+- `X-Request-ID`
+
+Query:
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `page` | integer | Không | Mặc định `1`, tối thiểu `1` |
+| `size` | integer | Không | Mặc định `20`, tối đa `100` |
+| `from` | ISO-8601 Instant | Không | Lower bound |
+| `to` | ISO-8601 Instant | Không | Upper bound |
+| `type` | enum | Không | `DEBIT` hoặc `CREDIT` |
+
+Response `200 OK`:
 
 ```json
 {
   "data": [
     {
-      "entry_id": "entry-01912fb7",
-      "posting_id": "posting-01912fb8",
+      "entry_id": "01912fb7-7a1b-7c12-9c55-8b1c34a6d921",
+      "posting_id": "01912fb8-7a1b-7c12-9c55-8b1c34a6d921",
       "entry_type": "CREDIT",
       "amount": 1062000,
       "balance_after": 12500000,
-      "reference": { "type": "ORDER", "id": "order-01912f91" },
-      "description": "Doanh thu đơn TC-20260830-0001",
+      "reference": {
+        "type": "PAYMENT",
+        "id": "01912f95-7a1b-7c12-9c55-8b1c34a6d921"
+      },
+      "description": "Seller revenue",
       "created_at": "2026-08-30T09:03:12Z"
     }
   ],
-  "meta": { "request_id": "01912fb9-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 340, "total_pages": 17 }
+  "meta": {
+    "request_id": "01912fb9-7a1b-7c12-9c55-8b1c34a6d921",
+    "page": 1,
+    "size": 20,
+    "total": 340,
+    "total_pages": 17
+  }
 }
 ```
 
-Ledger là **append-only** — không có endpoint sửa/xoá. Chỉ trả ledger của shop trong token; PII và thông tin thanh toán luôn masked.
-- `GET /seller/revenue?from=&to=&granularity=DAY|WEEK|MONTH`: báo cáo tổng hợp **read-only** trên `payment_allocations`/`ledger_entries` của shop (đáp ứng HLD #38 `/seller/revenue?range=`). Response:
+Ledger append-only, không có endpoint sửa/xóa.
+
+Seller chỉ nhìn thấy ledger entries thuộc chính shop trong actor scope.
+
+Không có entry trong range không phải lỗi; API trả:
+
+```json
+{
+  "data": [],
+  "meta": {
+    "request_id": "...",
+    "page": 1,
+    "size": 20,
+    "total": 0,
+    "total_pages": 0
+  }
+}
+```
+
+Errors chính:
+
+- page/size không hợp lệ → `400 INVALID_REQUEST`;
+- `from`/`to` malformed hoặc range không hợp lệ → `400 INVALID_REQUEST`;
+- `type` khác `DEBIT`/`CREDIT` → `400 INVALID_REQUEST`;
+- chưa xác thực → `401 PAYMENT_UNAUTHENTICATED`;
+- seller/shop scope không hợp lệ → `403 PAYMENT_FORBIDDEN`.
+
+#### 3.5.3 `GET /seller/revenue?from=&to=&granularity=DAY|WEEK|MONTH`
+
+Header bắt buộc:
+
+- `X-Request-ID`
+
+Query:
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|---|---|
+| `from` | ISO-8601 date | Có | Ngày bắt đầu |
+| `to` | ISO-8601 date | Có | Ngày kết thúc |
+| `granularity` | enum | Có | `DAY`, `WEEK`, `MONTH` |
+
+Response `200 OK`:
 
 ```json
 {
   "data": {
-    "range": { "from": "2026-08-01", "to": "2026-08-31", "granularity": "DAY" },
+    "range": {
+      "from": "2026-08-01",
+      "to": "2026-08-31",
+      "granularity": "DAY"
+    },
     "currency": "VND",
     "summary": {
       "gross": 125000000,
@@ -209,16 +541,42 @@ Ledger là **append-only** — không có endpoint sửa/xoá. Chỉ trả ledge
       "order_count": 340
     },
     "buckets": [
-      { "period": "2026-08-01", "gross": 4200000, "commission": 294000, "tax": 42000, "net": 3864000, "order_count": 12 }
+      {
+        "period": "2026-08-01",
+        "gross": 4200000,
+        "commission": 294000,
+        "tax": 42000,
+        "net": 3864000,
+        "order_count": 12
+      }
     ]
   },
-  "meta": { "request_id": "01912fc0-7a1b-7c12-9c55-8b1c34a6d921" }
+  "meta": {
+    "request_id": "01912fc0-7a1b-7c12-9c55-8b1c34a6d921"
+  }
 }
 ```
 
-Ràng buộc: chỉ tổng hợp từ dữ liệu đã ghi (không tạo ledger mới); `from..to` tối đa 366 ngày/request; số liệu là snapshot allocation/ledger đã captured, không phản ánh payout. Đây là **báo cáo**, không phải nghiệp vụ tiền mới.
+Revenue behavior:
 
-`GET /seller/revenue/export?from=&to=&format=xlsx|csv` — phục vụ Penpot `CTA / Tải báo cáo` ở Seller Finance. Cùng bộ query với `GET /seller/revenue` (không có `granularity`, export luôn theo `DAY`). Response `200`:
+- payment allocations được aggregate theo seller shop;
+- refund allocations được aggregate vào `summary.refunded`;
+- dữ liệu của shop khác không xuất hiện;
+- supported granularity: `DAY`, `WEEK`, `MONTH`;
+- range không có dữ liệu trả summary bằng `0` và `buckets: []`.
+
+Errors chính:
+
+- thiếu `from`, `to` hoặc `granularity` → `400 MISSING_REQUIRED_PARAMETER`;
+- malformed date → `400 INVALID_REQUEST`;
+- reversed/range không hợp lệ → `400 INVALID_REQUEST`;
+- unsupported granularity → `400 INVALID_REQUEST`;
+- chưa xác thực → `401 PAYMENT_UNAUTHENTICATED`;
+- seller/shop scope không hợp lệ → `403 PAYMENT_FORBIDDEN`.
+
+#### 3.5.4 `GET /seller/revenue/export?from=&to=&format=xlsx|csv`
+
+Target contract:
 
 ```json
 {
@@ -229,40 +587,97 @@ Ràng buộc: chỉ tổng hợp từ dữ liệu đã ghi (không tạo ledger 
     "generated_at": "2026-08-31T04:00:00Z",
     "expires_at": "2026-08-31T04:30:00Z"
   },
-  "meta": { "request_id": "01912fc3-7a1b-7c12-9c55-8b1c34a6d921" }
+  "meta": {
+    "request_id": "01912fc3-7a1b-7c12-9c55-8b1c34a6d921"
+  }
 }
 ```
 
-Cùng convention "signed URL, không stream qua Gateway" với `product-catalog`/`order-commerce` export. Cột export: `period, gross, commission, tax, net, refunded, order_count`. `from..to` tối đa 366 ngày, giống `GET /seller/revenue`.
+Runtime status:
 
-### 3.6 `POST /seller/payouts`
+- target contract được giữ trong tài liệu;
+- endpoint chưa được implement/expose trong Phase 7 hiện tại;
+- không fabricate `export_url`;
+- không coi local temp file là production signed-download contract.
 
-Header `Idempotency-Key` + step-up 2FA (header `X-MFA-Step-Up`). Body:
+### 3.6 Seller payout
+
+#### 3.6.1 `POST /seller/payouts`
+
+> Target contract. Production exposure hiện bị gate bởi ADR-003.
+
+Headers mục tiêu:
+
+- `Idempotency-Key`
+- `X-MFA-Step-Up`
+- `X-Request-ID`
+
+Body:
 
 ```json
-{ "amount": 5000000, "bank_account_id": "bank_account-01912fc0", "reason": "Rút doanh thu tháng 8" }
+{
+  "amount": 5000000,
+  "bank_account_id": "bank_account-01912fc0",
+  "reason": "Rút doanh thu tháng 8"
+}
 ```
+
+Response target:
 
 ```json
 {
   "data": {
-    "payout_id": "payout-01912fc1",
-    "shop_id": "shop-01912f31",
+    "payout_id": "01912fc1-7a1b-7c12-9c55-8b1c34a6d921",
+    "shop_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
     "amount": 5000000,
     "currency": "VND",
     "status": "REQUESTED",
     "bank_account_masked": "VCB ****3021",
     "requested_at": "2026-08-31T04:10:00Z"
   },
-  "meta": { "request_id": "01912fc2-7a1b-7c12-9c55-8b1c34a6d921" }
+  "meta": {
+    "request_id": "01912fc2-7a1b-7c12-9c55-8b1c34a6d921"
+  }
 }
 ```
 
-Response `202`. Điều kiện (kiểm theo đúng thứ tự này): KYC projection `APPROVED` → wallet `ACTIVE` → `amount` ≤ `available_balance` → `amount` ≥ ngưỡng tối thiểu. Sai điều kiện → `403 PAYOUT_NOT_ALLOWED` / `409 WALLET_INSUFFICIENT_BALANCE`. Wallet bị **debit trước** khi gọi bank adapter (tránh rút trùng); adapter fail thì hoàn lại bằng posting bù, không sửa ngược ledger cũ.
+Runtime status:
 
-### 3.7 Reconciliation/health
+- payout domain/application/persistence foundation tồn tại;
+- production `RequestPayoutUseCase` bean không được đăng ký;
+- `SellerPayoutController` không được expose;
+- `PayoutContractGateTest` bảo vệ các invariant này.
 
-`GET /admin/payments/reconciliation` — query `provider?`, `status?`, `from?`, `to?`, `page`, `size`:
+Các contract OPEN trong ADR-003:
+
+- shop payout-gate projection;
+- authoritative source/ownership của `bank_account_id`;
+- payout notification recipient.
+
+Cho đến khi các contract này được resolve:
+
+- không fabricate KYC/shop status;
+- không fabricate bank-account ownership;
+- không dùng `shop_id` thay cho `owner_user_id`;
+- không expose production seller payout request endpoint.
+
+#### 3.6.2 `GET /seller/payouts`
+
+Endpoint nằm trong target API inventory nhưng runtime chưa implement.
+
+Không tự suy diễn response shape, pagination hoặc filtering behavior nếu chưa có contract authoritative tương ứng.
+
+### 3.7 Reconciliation and operational endpoints
+
+#### 3.7.1 `GET /admin/payments/reconciliation`
+
+Authorization:
+
+- `FINANCE_OPS`.
+
+The endpoint is read-only.
+
+Example response:
 
 ```json
 {
@@ -275,86 +690,320 @@ Response `202`. Điều kiện (kiểm theo đúng thứ tự này): KYC project
       "amount": 1094000,
       "match": true,
       "checked_at": "2026-08-30T09:10:00Z"
-    },
-    {
-      "payment_id": "payment-01912fa2",
-      "provider": "VNPAY",
-      "local_status": "PENDING",
-      "provider_status": "success",
-      "amount": 500000,
-      "match": false,
-      "mismatch_reason": "LOCAL_STALE",
-      "checked_at": "2026-08-30T09:10:00Z"
     }
   ],
-  "meta": { "request_id": "01912fa3-7a1b-7c12-9c55-8b1c34a6d921", "page": 1, "size": 20, "total": 2, "total_pages": 1, "mismatch_count": 1 }
+  "meta": {
+    "request_id": "01912fa3-7a1b-7c12-9c55-8b1c34a6d921",
+    "page": 1,
+    "size": 20,
+    "total": 1,
+    "total_pages": 1,
+    "mismatch_count": 0
+  }
 }
 ```
 
-`match:false` không tự sửa state — chỉ báo cáo cho ops điều tra. Không trả raw provider secret/signature. `/health/live` process-only; `/health/ready` MySQL/Kafka/config/VNPAY secret availability.
+`match:false` chỉ phục vụ điều tra.
+
+Reconciliation không tự sửa financial state.
+
+#### 3.7.2 Health
+
+Canonical liveness:
+
+`GET /health/live`
+
+Conventional Spring liveness:
+
+`GET /health/liveness`
+
+Liveness không phụ thuộc vào DB, Kafka, VNPAY hoặc outbox backlog.
+
+Canonical readiness:
+
+`GET /health/ready`
+
+Conventional Spring readiness:
+
+`GET /health/readiness`
+
+Readiness hiện gồm:
+
+- `readinessState`;
+- DB;
+- Kafka readiness;
+- outbox backlog;
+- VNPAY configuration readiness.
+
+Dependency failure có thể làm readiness trả HTTP `503` trong khi liveness vẫn
+`UP`.
+
+Health details không expose secret.
+
+#### 3.7.3 `GET /prometheus`
+
+Prometheus-compatible operational scrape endpoint.
+
+Runtime Actuator exposure chỉ gồm:
+
+- `health`;
+- `info`;
+- `prometheus`.
+
+Các endpoint sau không được expose mặc định:
+
+- `/metrics`;
+- `/env`;
+- `/configprops`;
+- `/beans`;
+- `/heapdump`;
+- `/threaddump`;
+- `/loggers`.
+
+`/prometheus` là operational endpoint, không phải business API.
+
+Production deployment nên giới hạn access endpoint này cho monitoring
+infrastructure phù hợp.
+
+Phase 9 không tạo custom controller để expose Prometheus.
+
+Phase 9 cũng không tạo:
+
+`/api/v1/admin/operations`
+
+hoặc:
+
+`/api/v1/admin/operations/outbox`
 
 ### 3.8 Admin finance back-office (`FINANCE_OPS`)
 
-Phục vụ các màn Penpot Admin *Fees/Taxes*, *Finance*, *Seller settlement*, *Settlement batches*. Không có microservice admin riêng (quyết định admin-scope đã chốt 2026-09-18); Gateway coarse-gate role admin, service này enforce `FINANCE_OPS` + step-up 2FA (header `X-MFA-Step-Up`) cho mutation. Mọi mutation ghi `audit_logs` (actor/reason).
+> Phase 8 runtime contract.
 
-`GET /admin/finance/summary/export?from=&to=&format=xlsx|csv` — phục vụ Penpot `CTA / Xuất báo cáo` ở Admin Fees/Taxes. Cùng dữ liệu nguồn với `GET /admin/finance/summary`, xuất theo ngày. Response `200` cùng hình dạng với `GET /seller/revenue/export` ở trên (`export_url`/`format`/`row_count`/`generated_at`/`expires_at`). Cột export: `period, gmv, commission_income, tax_collected, refund_amount, payout_volume, shop_count`. Chỉ `FINANCE_OPS`; không có tham số `shop_id` — đây là tổng hợp toàn sàn.
+Các nhóm API runtime:
 
-**Fee/Tax config — `GET/PUT /admin/fees`, `GET/PUT /admin/taxes`**
+- reconciliation;
+- fee configuration;
+- tax configuration;
+- settlement batch read/retry;
+- finance summary/export.
 
-- Config là **effective-dated, append-only**: `PUT` tạo version mới `{scope: PLATFORM|CATEGORY, category_id?, rate_bps, effective_from, note}`; không sửa/xóa version cũ.
-- `AllocationService` luôn chọn version có `effective_from` ≤ thời điểm tạo allocation; đổi rate **không** hồi tố allocation/ledger đã ghi.
-- `PUT` với `effective_from` trong quá khứ → `409 FEE_CONFIG_INVALID`.
+Fee/Tax config là effective-dated và append-only.
 
-`GET /admin/fees`:
+Settlement không được production-wire chỉ dựa vào việc allocation chưa xuất hiện trong `settlement_lines`.
+
+Authoritative settlement eligibility vẫn OPEN theo ADR-003.
+
+#### 3.8.1 `GET /admin/finance/summary`
+
+`GET /admin/finance/summary`
+
+Header bắt buộc:
+
+- `X-Request-ID`
+
+Authorization:
+
+- `FINANCE_OPS`.
+
+Response runtime:
 
 ```json
-{ "data": [
-  { "version_id": "fee-version-01912fb0", "scope": "PLATFORM", "category_id": null, "rate_bps": 700, "effective_from": "2026-09-01T00:00:00Z", "note": "Q4 baseline", "created_by": "admin-01912f01", "created_at": "2026-08-30T10:00:00Z" }
-], "meta": { "request_id": "req-01912fb9" } }
+{
+  "data": {
+    "captured_amount": 1000000,
+    "refunded_amount": 100000,
+    "gross_amount": 900000,
+    "commission_amount": 90000,
+    "tax_amount": 45000,
+    "seller_net_amount": 765000,
+    "available_balance": 500000,
+    "pending_balance": 265000,
+    "completed_payout_amount": 200000,
+    "as_of": "2026-10-23T10:00:00Z"
+  },
+  "meta": {
+    "request_id": "req-finance-summary-001"
+  }
+}
 ```
 
-**Settlement — `GET /admin/settlements`, `GET /admin/settlements/{batchId}`, `POST /admin/settlements/{batchId}/retry`**
+#### 3.8.2 `PUT /admin/taxes`
 
-- Batch tổng hợp việc chuyển `pending_balance → available_balance` sau cửa sổ hoàn tiền/đối soát; **không tạo tiền mới**, chỉ posting release đã định nghĩa trong ledger.
-- `GET` list filter `period`/`status`; detail trả breakdown theo shop (`gross`, `commission`, `tax`, `net`, `released_amount`, `held_amount`).
-- `retry` chỉ hợp lệ khi batch `FAILED`; idempotent theo `batchId`; state khác → `409 SETTLEMENT_BATCH_INVALID_STATE`.
-- Hold/release settlement theo rủi ro (liên quan dispute) **ngoài v1** — thuộc service `dispute` (v1.1).
+Tạo một tax configuration version mới.
 
-**Finance summary — `GET /admin/finance/summary?from=&to=`**
+Headers bắt buộc:
 
-Read-only aggregate toàn sàn trên `payment_allocations`/`ledger_entries`/`payouts`: `gmv`, `commission_income`, `tax_collected`, `refunded`, `payout_volume`, `wallet_float`. `from..to` ≤ 366 ngày. Không phải nghiệp vụ tiền mới.
+- `X-Request-ID`
+
+Authorization:
+
+- `FINANCE_OPS`;
+- MFA step-up bắt buộc.
+
+Request:
+
+```json
+{
+  "scope": "PLATFORM",
+  "category_id": null,
+  "rate_bps": 100,
+  "effective_from": "2026-11-01T00:00:00Z",
+  "note": "Platform tax November 2026"
+}
+```
+
+#### 3.8.3 `POST /admin/settlements/{batchId}/retry`
+
+Retries an existing `FAILED` settlement batch.
+
+Headers:
+
+- `X-Request-ID`
+
+Authorization:
+
+- `FINANCE_OPS`;
+- MFA step-up required.
+
+The endpoint has no request body.
+
+Rules:
+
+- only `FAILED` batches may be retried;
+- the existing batch, items and settlement lines are reused;
+- completed items are never processed again;
+- no new settlement candidates are queried;
+- no new settlement batch is created;
+- retry is transactional.
+
+Response `200 OK`:
+
+```json
+{
+  "data": {
+    "batch_id": "019...",
+    "status": "COMPLETED",
+    "retried_item_count": 2
+  },
+  "meta": {
+    "request_id": "req-settlement-retry-001"
+  }
+}
+```
+
+#### 3.8.4 `GET /admin/finance/summary/export`
+
+Target export contract for the current admin finance summary.
+
+Authorization:
+
+- `FINANCE_OPS`.
+
+Export format:
+
+- CSV encoded as UTF-8;
+- the artifact contains one snapshot row corresponding to the current
+  admin finance summary;
+- columns are:
+  `captured_amount`,
+  `refunded_amount`,
+  `gross_amount`,
+  `commission_amount`,
+  `tax_amount`,
+  `seller_net_amount`,
+  `available_balance`,
+  `pending_balance`,
+  `completed_payout_amount`,
+  `as_of`.
+
+Download contract:
+
+- the endpoint returns a temporary download URL rather than the CSV bytes;
+- `EXPORT_URL_TTL` is 30 minutes;
+- storage provider details are not part of the API contract;
+- object-storage credentials and internal object keys must not be exposed.
+
+Runtime status:
+
+- CSV UTF-8 export is implemented;
+- the endpoint requires `FINANCE_OPS`;
+- exports are stored temporarily behind an opaque capability token;
+- temporary download URLs expire after 30 minutes;
+- expired or unknown URLs return `FINANCE_EXPORT_NOT_FOUND`;
+- storage provider details are not exposed by the API.
 
 ## 4. Mã lỗi chung
 
+### 4.1 Mã lỗi code đang trả
+
 | Mã | HTTP | Ý nghĩa |
 |---|---:|---|
-| `PAYMENT_INVALID_INPUT` | 400 | Amount/method/request sai. |
-| `PAYMENT_UNAUTHENTICATED` | 401 | Thiếu auth. |
-| `PAYMENT_FORBIDDEN` | 403 | Sai scope. |
-| `PAYMENT_NOT_FOUND` | 404 | Không tìm thấy payment. |
-| `PAYMENT_AMOUNT_MISMATCH` | 409 | Amount không khớp Order. |
-| `PAYMENT_STATE_INVALID` | 409 | Transition sai. |
-| `PAYMENT_PROVIDER_UNAVAILABLE` | 503 | VNPAY/bank down. |
-| `PAYMENT_WEBHOOK_INVALID` | 400 | Signature/payload invalid. |
-| `PAYMENT_WEBHOOK_REPLAYED` | 200/409 | Event đã xử lý. |
-| `WALLET_INSUFFICIENT_BALANCE` | 409 | Không đủ balance. |
-| `WALLET_FROZEN` | 403 | Wallet frozen. |
-| `PAYOUT_NOT_ALLOWED` | 403/409 | KYC/state/min amount. |
-| `REFUND_AMOUNT_INVALID` | 400/409 | Refund vượt captured. |
-| `FEE_CONFIG_INVALID` | 409 | Version fee/tax có `effective_from` quá khứ hoặc overlap không hợp lệ. |
-| `SETTLEMENT_BATCH_INVALID_STATE` | 409 | Action settlement không hợp lệ với state batch. |
-| `PAYMENT_IDEMPOTENCY_CONFLICT` | 409 | Key khác payload. |
-| `PAYMENT_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
+| `PAYMENT_INVALID_INPUT` | 400 | Payment/refund path/header input không hợp lệ |
+| `VALIDATION_ERROR` | 400 | Bean Validation thất bại |
+| `MISSING_REQUIRED_HEADER` | 400 | Thiếu required header |
+| `MISSING_REQUIRED_PARAMETER` | 400 | Thiếu required query parameter |
+| `MALFORMED_REQUEST_BODY` | 400 | JSON/request body malformed |
+| `INVALID_REQUEST` | 400 | Illegal argument/request fallback |
+| `INVALID_VNPAY_SIGNATURE` | 400 | VNPAY signature không hợp lệ |
+| `PAYMENT_UNAUTHENTICATED` | 401 | Không có actor/internal caller hợp lệ |
+| `AUTH_MFA_REQUIRED` | 401 | Yêu cầu MFA step-up nhưng chưa có |
+| `PAYMENT_FORBIDDEN` | 403 | Caller đã xác thực nhưng không đủ quyền |
+| `PAYMENT_NOT_FOUND` | 404 | Không tìm thấy payment |
+| `PAYMENT_ATTEMPT_NOT_FOUND` | 404 | Không tìm thấy payment attempt cho provider transaction |
+| `REFUND_NOT_FOUND` | 404 | Không tìm thấy refund |
+| `WALLET_NOT_FOUND` | 404 | Không tìm thấy seller wallet |
+| `SETTLEMENT_BATCH_NOT_FOUND` | 404 | Settlement batch không tồn tại |
+| `FINANCE_EXPORT_NOT_FOUND` | 404 | Finance export không tồn tại hoặc đã hết hạn |
+| `RESOURCE_NOT_FOUND` | 404 | Resource/endpoint không tồn tại hoặc không được expose |
+| `PAYMENT_AMOUNT_MISMATCH` | 409 | Provider/payment amount mismatch |
+| `PAYMENT_IDEMPOTENCY_CONFLICT` | 409 | Idempotency key được reuse với request khác |
+| `REQUEST_ALREADY_PROCESSING` | 409 | Idempotent request cùng key đang xử lý |
+| `REFUND_AMOUNT_INVALID` | 409 | Refund vượt captured/pending limit |
+| `REFUND_STATE_INVALID` | 409 | Payment state hiện tại không cho phép refund |
+| `REFUND_AMOUNT_MISMATCH` | 409 | Refund result amount không khớp refund đã ghi |
+| `SETTLEMENT_BATCH_INVALID_STATE` | 409 | Settlement action/retry không hợp lệ với state hiện tại |
+| `INTERNAL_ERROR` | 500 | Unexpected server error; không expose internal detail |
+
+### 4.2 Mã lỗi dự phòng (⏳ chưa có endpoint dùng)
+
+| Mã | HTTP | Ý nghĩa |
+|---|---:|---|
+| `WALLET_INSUFFICIENT_BALANCE` | 409 | Không đủ available balance |
+| `WALLET_FROZEN` | 403 | Wallet frozen |
+| `PAYOUT_NOT_ALLOWED` | 403/409 | Payout không thỏa policy |
+| `FEE_CONFIG_INVALID` | 409 | Fee/tax config không hợp lệ |
+
+Các code ở mục này không đồng nghĩa endpoint tương ứng đã được runtime expose.
 
 ## 5. Giả định & câu hỏi mở
+
+### 5.1 Nợ contract đã biết (theo code + ADR)
+
+| # | Nội dung | Trạng thái / ảnh hưởng |
+|---:|---|---|
+| 1 | Create-payment canonical Order snapshot | ADR-002 đã Accepted nhưng runtime vẫn dùng `orders[]`; đây là implementation debt. |
+| 2 | Internal service-auth transport | `InternalCallerPolicy` đã có nhưng production transport để populate `InternalCallerContext` chưa được chốt; không fabricate service header. |
+| 3 | VNPAY IP policy | Signature verification đã có; authoritative allowlist policy vẫn cần nguồn chính thức. |
+| 4 | Provider refund transport/worker | Refund HTTP/application foundation đã có; authoritative provider refund transport vẫn là contract riêng. |
+| 5 | Buyer notification recipient | `buyer.email` chưa có authoritative source theo ADR-003; không fabricate email. |
+| 6 | Seller revenue export | Target contract tồn tại nhưng runtime endpoint chưa được implement. |
+| 7 | Seller payout gate projection | KYC/shop-status projection chưa được chốt theo ADR-003. |
+| 8 | Bank account source | Ownership/source của `bank_account_id` chưa được chốt theo ADR-003. |
+| 9 | Payout notification recipient | `owner_user_id` và `owner_email` chưa có authoritative source theo ADR-003. |
+| 10 | Seller payout history | Target endpoint có trong API inventory nhưng runtime chưa implement. |
+| 11 | Settlement trigger/eligibility | Hold window, eligible timestamp và upstream trigger để tạo settlement batch mới vẫn OPEN theo ADR-003. Production `SettlementCandidatePort` và `RunSettlementUseCase` tiếp tục không được wire. Admin retry semantics cho persisted `FAILED` batch đã được resolve và runtime endpoint đã implement. |
+| 12 | Admin finance summary export storage scaling | Runtime hiện dùng temporary in-process storage. Multi-instance deployment có thể thay bằng shared object storage mà không thay đổi application/API contract. |
+| 13 | External tracing backend | Phase 9 implement W3C trace propagation nhưng chưa yêu cầu Tempo/Zipkin/Jaeger/OpenTelemetry Collector exporter. |
+| 14 | Monitoring deployment topology | `/prometheus` runtime endpoint đã có; production scrape network/access policy thuộc deployment hardening. |
+
+### 5.2 Giả định nghiệp vụ
 
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
 | 1 | VNPAY sandbox v1; production merchant config chưa có. | Cần đổi provider/security contract. | Finance/Security |
-| 2 | COD success dựa Shipment/Order collection event. | Ảnh hưởng settlement. | Order/Shipment |
-| 3 | Commission/tax/rounding chưa chốt rate. | Ảnh hưởng ledger/API totals. | Finance |
-| 4 | Payout provider chưa chốt. | Tạm mock adapter/reconciliation. | Finance/DevOps |
-| 5 | Return/dispute workflow **ngoài v1**: refund chỉ khởi tạo thủ công (Order/`/admin/payments`). v1.1 service `dispute` sẽ điều phối và gọi cùng contract refund. | Cần thêm permission/state khi bật dispute. | Product/Finance |
-| 6 | `GET /seller/revenue` là báo cáo read-only tổng hợp `payment_allocations`/`ledger_entries` (HLD #38); commission/tax dùng đúng rate đã versioned tại thời điểm allocation. | Nếu rate/rounding chưa chốt, số tổng hợp phải khớp rate versioned, không tính lại. | Finance |
-| 7 | Admin back-office (Fees/Taxes, Finance, Settlement) phục vụ qua `/api/v1/admin/**` trên service này, `FINANCE_OPS` + 2FA (header `X-MFA-Step-Up`); **không** tách microservice admin (quyết định admin-scope đã chốt 2026-09-18). Fee/tax là config effective-dated append-only; settlement là read + `retry`. | Nếu chuyển ownership fee/tax/settlement sang service khác phải đổi contract allocation. | Architecture + Finance |
-| 8 | Trigger settlement batch (scheduled theo cửa sổ hoàn tiền vs event `order.completed` — **ghi chú: `order.completed` hiện không tồn tại**, order-commerce không phát event này; nếu chọn hướng event phải mở rộng contract order trước) và độ dài cửa sổ chưa chốt. | Ảnh hưởng thời điểm `pending → available` và SLA payout. | Finance + Order owner |
+| 2 | COD success dựa Shipment/Order collection event (ADR-004). | Ảnh hưởng settlement. | Order/Shipment |
+| 3 | Payout provider chưa chốt; `POST /seller/payouts` chưa expose. | Seller chưa rút tiền được qua API. | Finance/DevOps |
+| 4 | Return/dispute workflow ngoài v1: refund chỉ khởi tạo bởi Order-Commerce hoặc `FINANCE_OPS`. | Cần thêm permission/state khi bật dispute. | Product/Finance |
+| 5 | Event payout (`payout.requested/succeeded/failed`) trong code **không** có `owner_user_id`/`owner_email` (xem LLD §6.1). Notification chưa gửi được mail payout cho seller. | Notification thiếu người nhận. | Payment-Wallet + Notification |
+| 6 | Admin back-office (Fees/Taxes, Finance, Settlement) nằm trên service này dưới `/api/v1/admin/**`, không tách microservice admin. | Đổi ownership phải đổi contract allocation. | Architecture + Finance |
+| 7 | `PUT /admin/fees`/`/admin/taxes` không chặn `effective_from` trong quá khứ; `FEE_CONFIG_INVALID` chưa được trả. | Có thể tạo version hồi tố. | Finance |

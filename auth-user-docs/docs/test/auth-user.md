@@ -1,6 +1,8 @@
-# Test plan — Auth User Service
+# Test Plan — Auth User Service
 
-> Nguồn: `docs/api/auth-user.md` · `docs/lld/auth-user.md` · `docs/db/auth-user.md` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
+> Nguồn: `docs/api/auth-user.md` · `docs/lld/auth-user.md` · `docs/db/auth-user.md` · Code: `ecommerce-taca/user-auth-service` @ `develop` (`7c268a0`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: 🟡 Triển khai một phần — 41 test class (18 integration Testcontainers, outbox/contract, Google, JWT); chưa có test cho admin RBAC/status/audit API riêng lẻ, favorites, follow shop, public shop.
+> Môi trường: JUnit 5, Spring Boot Test, Testcontainers (MySQL 8.4, Kafka, Redis) — fixture trong `src/test/java/.../support`
 
 ## 1. Chuẩn bị
 
@@ -48,7 +50,7 @@
 | `OTP` | Sai 5 lần, lần thứ 6, hết hạn 5 phút, resend. |
 | `MFA` | Sai 5 lần, challenge hết hạn 5 phút, replay code. |
 
-## 2. Test thủ công (QA / nghiệm thu)
+## 2. Manual QA
 
 | Mã | Màn hình / Luồng | Tiền điều kiện | Các bước | Kết quả mong đợi | Mức |
 |---|---|---|---|---|---|
@@ -81,7 +83,7 @@
 
 Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 
-## 3. Test API (integration)
+## 3. API integration
 
 ### 3.1 Authentication và token
 
@@ -237,7 +239,20 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-DB-11 | Hai request `POST /users/me/favorites` cùng product | Chỉ một row; request còn lại trả idempotent success, không vi phạm unique. |
 | IT-DB-12 | Hai request follow cùng shop | Chỉ một row `shop_follows`; `follower_count` không đếm trùng. |
 
-## 4. Gợi ý unit test
+## 4. Unit test
+
+Đã có (ngoài `support/`):
+
+| Nhóm | Test class |
+|---|---|
+| `integration/auth` | `SignupIntegrationTest`, `SigninIntegrationTest`, `SignoutIntegrationTest`, `EmailVerificationIntegrationTest`, `EmailVerificationResendIntegrationTest`, `PhoneOtpIntegrationTest`, `PasswordResetIntegrationTest`, `PasswordChangeIntegrationTest`, `GoogleSigninIntegrationTest`, `RbacIntegrationTest` |
+| `integration/kyc` | `SubmitKycIntegrationTest`, `DeleteKycDocumentIntegrationTest`, `AdminKycReviewIntegrationTest`, `KycExpiryIntegrationTest` |
+| `integration/shop`, `user`, `address` | `GetSellerOnboardingKycDocumentsIntegrationTest`, `UpdateSellerShopIntegrationTest`, `UpdateMyProfileIntegrationTest`, `AddressLocationIntegrationTest` |
+| `outbox/*` | `OutboxPublisherServiceTest`, `OutboxCleanupServiceTest`, `NotificationCommandEnvelope{,SchemaContract}Test`, `OutboxMessageEnvelope{,SchemaContract}Test`, `OutboxTopicResolver{,ContractCoverage}Test`, `ContractSampleFixtureTest`, `KafkaOutboxMessageProducer{,Integration}Test`, `KafkaProducerSafetyGuardTest`, `KafkaTopicProvisioningGuardTest`, `OutboxPublisherSchedulerTest`, `OutboxCleanupSchedulerTest`, `OutboxLagHealthIndicatorTest`, `AesGcmOutboxPayloadProtectorTest` |
+| Khác | `GoogleSigninServiceTest`, `GoogleAuthorizationServiceTest`, `JwtAccessTokenServiceTest`, `GlobalExceptionHandlerKycTest`, `VietnamLocationCatalogTest`, `AuthUserServiceApplicationTests` |
+
+Case cần phủ theo module (tên module là thiết kế, map vào class thật khi viết test):
+
 
 | Module/hàm | Case cần phủ |
 |---|---|
@@ -246,7 +261,7 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | `PhoneNormalizer` | E.164 valid/invalid, duplicate, clear verification khi đổi. |
 | `LoginLockPolicy` | 4 failures không lock; failure thứ 5 trong 15m lock 15m; ngoài window reset; success reset. |
 | `TokenService` | JWT claims/TTL/RS256; refresh hash; rotation; expired/revoked/reuse family. |
-| `VerificationTokenPolicy` | Email TTL 24h, OTP TTL 5m, one-time, resend revoke, max attempts. |
+| `VerificationTokenPolicy` | Email TTL 30m, OTP TTL 5m, one-time, resend revoke, max attempts. |
 | `PasswordResetPolicy` | TTL 30m, one-time, revoke sessions, không auto-login. |
 | `AddressPolicy` | First default, one default, max 20, delete default fallback, checkout-active guard. |
 | `SellerOnboardingPolicy` | 5 step completion/blockers; email gate; one shop/user; JSON snapshot validation. |
@@ -261,7 +276,7 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | `ShopFollowPolicy` | Shop exists/not DELETED, upsert idempotent, `MAX_FOLLOWED_SHOPS_PER_USER`, `follower_count` = count theo index. |
 | `PublicShopMapper` | Chỉ expose field công khai; `is_verified` từ `kyc_status`; ẩn `business_name/tax_code/bank_*/owner_user_id`. |
 
-## 5. Contract, security và resilience test
+## 5. Contract/security/resilience
 
 ### 5.1 Contract test
 
@@ -302,7 +317,7 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | RES-08 | Cleanup replay | Chạy nhiều instance không double event/revoke. |
 | RES-09 | Load baseline | Ghi lại p50/p95/p99 và error rate cho signin, refresh, profile, KYC queue; ngưỡng release do team điền. |
 
-## 6. Tiêu chí pass và phát hành
+## 6. Tiêu chí pass/phát hành
 
 | Tiêu chí | Điều kiện đạt |
 |---|---|

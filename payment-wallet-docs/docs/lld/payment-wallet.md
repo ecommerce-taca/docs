@@ -1,7 +1,8 @@
 # LLD — Payment-Wallet Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
-> Tech stack đã chốt: Java 25 · Spring Boot · MySQL 8.4 · VNPAY sandbox adapter · COD · Kafka outbox
+> Nguồn: `docs/api/payment-wallet.md` · `docs/db/payment-wallet.md` · ADR-001…004 trong service repo · Code: `ecommerce-taca/payment-wallet-service` @ `main` (`859b7b1`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: 🟡 Triển khai một phần — payment/refund/webhook/COD capture, allocation/ledger, admin finance đã có code; payout chỉ có domain/service (chưa có API); outbox chỉ publish `payment.created` và `wallet.allocated`.
+> Tech stack: Java 25 · Spring Boot · MySQL 8.4 (Flyway `V001`–`V021`) · Kafka (transactional outbox) · VNPAY sandbox adapter · COD · port local `8086`
 
 ## 1. Phạm vi
 
@@ -46,35 +47,35 @@ Seller ──wallet/payout──► Payment-Wallet
 
 ### 2.1 Module Spring Boot
 
+Cây package thật (`com.taca.paymentwallet`, hexagonal):
+
 ```text
-com.taca.payment
-├── payment/              # intent/transaction/state machine
-├── provider/vnpay/       # sign/verify QR, callback adapter
-├── cod/                  # cash-on-delivery projection/confirmation
-├── allocation/           # order split, commission, tax, seller net
-├── wallet/               # double-entry ledger and balance
-├── payout/               # withdrawal request and bank snapshot
-├── refund/               # refund intent/reconciliation
-├── admin/                # admin finance back-office: fee/tax config, settlement, finance summary
-├── outbox/               # event publisher
-├── security/             # signature, role, idempotency, secret handling
-└── observability/        # shared log/trace/metric/health contract
+com.taca.paymentwallet
+├── presentation/rest/          # PaymentController, seller/*, admin/*, GlobalRestExceptionHandler
+├── application/
+│   ├── port/in, port/out       # use case + outbound port
+│   ├── service/                # CreatePaymentService, ProcessVnpayWebhookService, ProcessCodPaymentService,
+│   │                           # RequestRefundService, ProcessRefundResultService, RequestPayoutService,
+│   │                           # ProcessPayoutResultService, RunSettlementService, PublishOutboxService, ...
+│   ├── gateway/vnpay, payment, refund, payout, settlement, fee, export, idempotency, inbox, outbox, security
+├── domain/                     # payment, wallet, refund, payout, settlement, finance, valueobject, event
+└── infrastructure/
+    ├── persistence/            # JPA entity/repository/adapter, audit, projection
+    ├── messaging/kafka/        # KafkaTopicRouter, KafkaOutboxMessagePublisherAdapter, OutboxPublisherScheduler,
+    │                           # OutboxCleanupScheduler, KafkaDeadLetterPublisherAdapter, shipment/ShipmentEventListener
+    ├── vnpay/, crypto/, export/, health/, observability/, config/, id/, time/, transaction/, serialization/
 ```
 
-| Thành phần | Trách nhiệm | Ràng buộc |
+| Thành phần (code) | Trách nhiệm | Ghi chú |
 |---|---|---|
-| `PaymentController` | Create/detail payment | Amount lấy local order contract; idempotency bắt buộc. |
-| `VnpayWebhookController` | Nhận callback | Verify signature, provider event ID, amount/order match; không dùng JWT. |
-| `PaymentStateMachine` | Pending/success/failed/refunded | Không cho webhook tự nhảy state trái transition. |
-| `AllocationService` | Split gross/commission/tax/net theo shop | Integer VND; rounding policy deterministic. |
-| `LedgerService` | Debit/credit double-entry | Mỗi posting cân bằng tổng debit=credit; append-only. |
-| `PayoutService` | Seller withdraw | KYC/settlement gate từ Auth projection; idempotent bank transfer adapter. |
-| `RevenueReportService` | Tổng hợp `GET /seller/revenue` theo range/granularity | Read-only aggregate trên `payment_allocations`/`ledger_entries`; không tạo ledger; range ≤ 366 ngày; số liệu theo rate versioned tại thời điểm allocation. |
-| `RefundService` | Refund order/payment | Không refund vượt captured amount; audit reason. |
-| `AdminFinanceController` | `/admin/fees`, `/admin/taxes`, `/admin/settlements/**`, `/admin/finance/summary`, `/admin/payments/reconciliation` | `FINANCE_OPS` permission; mutation (tạo version fee/tax, retry batch) yêu cầu step-up 2FA; mọi action ghi `audit_logs`. |
-| `FeeTaxConfigService` | Đọc/tạo version config commission + tax | Config **effective-dated, append-only**; không sửa/xóa version cũ; allocation luôn dùng version có hiệu lực tại thời điểm tạo allocation (khớp `AllocationService`/`RevenueReportService`). |
-| `SettlementService` | Batch chuyển `pending_balance → available_balance` sau cửa sổ hoàn/đối soát | Read view theo batch/shop; ops action `retry` cho batch `FAILED` (idempotent); không tạo ledger ngoài posting release đã định nghĩa. Trigger batch (scheduled vs event) — xem §8. |
-| `OutboxPublisher` | Phát payment/wallet events | Transactional outbox, retry 3/backoff 2s/DLQ. |
+| `PaymentController` | `POST /payments`, `GET /payments/{id}`, `POST /payments/webhook`, `POST /payments/{id}/refunds` | Caller internal qua `InternalCallerPolicy`. |
+| `ProcessVnpayWebhookService` | Verify chữ ký, dedupe provider event, cập nhật payment/allocation/ledger/outbox trong một transaction | |
+| `ShipmentEventListener` → `ProcessCodPaymentService` | Capture/fail COD theo `shipment.delivered`/`shipment.failed` | Inbox dedupe theo `event_id`. |
+| `SellerWalletController`, `SellerLedgerController`, `SellerRevenueController` | Seller finance read API | Shop lấy từ actor `shopScope` (đúng 1 shop). |
+| `Admin*Controller` (Fee, Tax, Settlement, FinanceSummary, PaymentReconciliation) | Admin finance | `FINANCE_OPS`; mutation cần step-up. |
+| `RequestPayoutService`, `ProcessPayoutResultService` | Domain payout | ⏳ Chưa có controller (ADR-003). |
+| `RunSettlementService` | Tạo settlement batch | ⏳ `SettlementCandidatePort` chưa wire production; chỉ có API retry. |
+| `OutboxPublisherScheduler`, `OutboxCleanupScheduler` | Publish outbox, dọn bản ghi cũ | Bật/tắt bằng property (§4). |
 
 ### 2.2 Chuẩn observability dùng chung
 
@@ -82,8 +83,8 @@ com.taca.payment
 - Propagate W3C `traceparent`/`tracestate`, `X-Request-ID`; Kafka headers giữ `traceparent`, `request_id`, `event_id`.
 - Không log card/bank credential, VNPAY secret/signature/raw callback, access token, full address, email/phone hoặc full payment payload.
 - Metrics OpenTelemetry/Prometheus-compatible, label bounded (`method`, `provider`, `result`, `reason`), không dùng `payment_id/order_id/user_id` làm label.
-- `/health/live` không phụ thuộc DB; `/health/ready` kiểm MySQL/Kafka/VNPAY config/secret availability theo policy.
-- API error `{error:{code,message,details,trace_id}}`; audit có actor/reason nhưng không secret.
+- `/health/live`, `/health/liveness` chỉ `livenessState`; `/health/ready`, `/health/readiness` gồm `readinessState`, `db`, `kafkaReadiness`, `outboxBacklog`, `vnpayReadiness`; `/prometheus` cho metrics. Không nằm dưới `/api/v1`.
+- API error `{error:{code,message},meta:{request_id}}` (`ApiErrorResponse`); audit có actor/reason nhưng không secret.
 
 ## 3. Luồng xử lý
 
@@ -129,21 +130,20 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 
 ## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Ghi chú |
-|---|---:|---|
-| `PAYMENT_INTENT_TTL` | 15 phút | Align Inventory reservation. |
-| `VNPAY_REQUEST_TIMEOUT` | 5s | Sandbox adapter. |
-| `WEBHOOK_MAX_SKEW` | 10 phút | Reject callback quá cũ theo provider timestamp. |
-| `VNPAY_RETRY_MAX` | 1 | Không retry callback mutation; provider event idempotent. |
-| `VND_MIN/MAX` | 1/999999999999 | Integer. |
-| `COMMISSION_RATE_MIN/MAX` | 0/100% | Exact platform rate config phải versioned. |
-| `PAYOUT_MIN_AMOUNT` | 1000 VND | Baseline, cần finance confirm. |
-| `REVENUE_EXPORT_MAX_RANGE` | 366 ngày | Cùng giới hạn với `GET /seller/revenue`. |
-| `EXPORT_URL_TTL` | 30 phút | `GET /seller/revenue/export`, `GET /admin/finance/summary/export`. |
-| `PAYOUT_RETENTION` | 365 ngày | Bank snapshot masked/encrypted. |
-| `OUTBOX_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
-| `IDEMPOTENCY_RETENTION` | 24h | Payment/payout/refund command. |
-| `TIMESTAMP_FORMAT` | UTC ISO-8601 | DB `DATETIME(6)`. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| VNPAY payment TTL | 15 phút | hằng `CreatePaymentService.VNPAY_PAYMENT_TTL` | COD không có `expires_at`. |
+| Export URL TTL | 30 phút | hằng `ExportAdminFinanceSummaryService.EXPORT_URL_TTL` | Lưu tạm in-process. |
+| VNPAY | — | `VNPAY_TMN_CODE`, `VNPAY_HASH_SECRET`, `VNPAY_PAYMENT_URL` (sandbox), `VNPAY_RETURN_URL` | Thiếu secret → `vnpayReadiness` DOWN. |
+| Topic | `payment.events.v1`, `wallet.events.v1`, `shipment.events.v1`, `payment-wallet.outbox.dlq.v1` | `app.kafka.topics.*` | |
+| Kafka | `localhost:19092`, group `payment-wallet-service` | `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_CONSUMER_GROUP_ID` | Producer `acks=all`, idempotent. |
+| Topic provisioning guard | `false` | `KAFKA_TOPIC_PROVISIONING_GUARD_ENABLED` | |
+| Outbox publisher | `enabled=false` (profile `local`: `true`), batch 50, max-retries 3, backoff 2s, poll 1000 ms, send-timeout 35000 ms | `app.outbox.publisher.*` | Hết retry → DLQ. |
+| Outbox health | max-lag 5m | `app.outbox.health.max-lag` | |
+| Outbox cleanup | `enabled=false` (local: `true`), retention 7d, batch 500, interval 1h | `app.outbox.cleanup.*` | |
+| Port | `8086` (profile local) | `server.port` | Trùng port local của Shipment; cần tách khi chạy chung. |
+| DB local | `localhost:15405/paymentdb` | `spring.datasource.*` | `ddl-auto=validate`, Flyway bật. |
+| Tiền | integer VND, `currency` chỉ `VND` | — | |
 
 ## 5. Enum & trạng thái
 
@@ -155,9 +155,12 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 | `LedgerEntryType` | `DEBIT`, `CREDIT`. |
 | `PayoutStatus` | `REQUESTED`, `PROCESSING`, `SUCCESS`, `FAILED`, `CANCELLED`. |
 | `RefundStatus` | `REQUESTED`, `PROCESSING`, `SUCCESS`, `FAILED`, `CANCELLED`. |
-| `Provider` | `VNPAY`, `COD`, `MOCK`. |
 | `SettlementBatchStatus` | `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`. |
 | `FeeTaxScope` | `PLATFORM`, `CATEGORY`. |
+| `SettlementBatchItemStatus` | `PENDING`, `COMPLETED`, `FAILED`. |
+| `PaymentAttemptStatus` | `PENDING`, `SUCCESS`, `FAILED`, `EXPIRED`. |
+| `PaymentOrderCodStatus` | `PENDING`, `CAPTURED`, `FAILED`. |
+| `LedgerAccountType` | `VNPAY_CLEARING`, `COD_CLEARING`, `PLATFORM_COMMISSION`, `TAX_PAYABLE`, `SHIPMENT_PAYABLE`, `SELLER_PENDING`, `SELLER_AVAILABLE`, `PAYOUT_CLEARING`, `REFUND_CLEARING`. |
 
 Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `PENDING_COD → SUCCESS` (capture sau delivered) `→ FAILED` (shipment.failed/order cancelled trước giao); `SUCCESS → PARTIALLY_REFUNDED/REFUNDED`; terminal state không reopen.
 
@@ -165,64 +168,40 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `PENDING_COD → SUCCESS` (capture
 
 ### 6.1 Event phát ra
 
-| Topic | Event | Payload chính |
-|---|---|---|
-| `payment.events.v1` | `payment.created` | payment/order/amount/method/status |
-| `payment.events.v1` | `payment.succeeded` | payment/order/provider ref/paid_at + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
-| `payment.events.v1` | `payment.failed` | payment/reason + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
-| `payment.events.v1` | `payment.expired` | payment/expired_at + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
-| `payment.events.v1` | `payment.refunded` | payment/order/refund amount + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
-| `wallet.events.v1` | `wallet.allocated` | order/shop/gross/commission/tax/net |
-| `wallet.events.v1` | `payout.succeeded/failed` | payout/shop/amount/status + `owner_user_id`, `owner_email` (seller) — recipient bắt buộc cho template EMAIL của Notification |
+Mọi domain event được ghi vào `outbox_events` trong cùng transaction. Payload là bản serialize JSON của record domain (field camelCase như `eventId`, `occurredAt`, `paymentId`…); header outbox mang `event_id`, `request_id`, `traceparent`, `tracestate`. Kafka key = `aggregate_id`.
 
-> Field recipient (`buyer`/`owner`) bắt buộc có trong payload mọi event được Notification map sang template EMAIL (quyết định 2026-09-18).
+**Chỉ hai event được `KafkaTopicRouter` route ra Kafka.** Các event còn lại nằm trong outbox, không có topic, chưa consumer nào nhận được.
+
+| Event | Payload (field record) | Topic | Trạng thái |
+|---|---|---|---|
+| `payment.created` | `eventId, occurredAt, paymentId, checkoutGroupId, orderIds, amount, method, status` | `payment.events.v1` | ✅ |
+| `wallet.allocated` | `eventId, occurredAt, walletId, orderId, shopId, grossAmount, commissionAmount, taxAmount, sellerNetAmount` | `wallet.events.v1` | ✅ |
+| `payment.succeeded` | `eventId, occurredAt, paymentId, capturedAmount` | — | 🟡 Chỉ ghi outbox, chưa route |
+| `payment.failed` | `eventId, occurredAt, paymentId, failureCode` | — | 🟡 Chỉ ghi outbox |
+| `payment.expired` | `eventId, occurredAt, paymentId` | — | 🟡 Chỉ ghi outbox; chưa có job tự expire |
+| `payment.refunded` | `eventId, occurredAt, paymentId, refundAmount, newStatus` | — | 🟡 Chỉ ghi outbox |
+| `refund.requested` / `refund.succeeded` / `refund.failed` | `eventId, occurredAt, refundId, paymentId` + `amount` (requested/succeeded) hoặc `failureCode` (failed) | — | 🟡 Chỉ ghi outbox |
+| `payout.requested` / `payout.succeeded` / `payout.failed` | `eventId, occurredAt, payoutId, shopId, amount`; succeeded thêm `status, providerReference`; failed thêm `status, failureCode` | — | 🟡 Chỉ ghi outbox; chưa có API payout |
+| `settlement.batch.completed` | `eventId, occurredAt, settlementBatchId, totalReleased` | — | 🟡 Chỉ ghi outbox |
+
+> **Không có recipient trong payload.** `payment.*` không có `buyer.user_id`/`buyer.email`; `payout.*` không có `owner_user_id`/`owner_email`. Thiết kế cũ (quyết định 2026-09-18) yêu cầu các field này cho template EMAIL của Notification, nhưng code chưa có nguồn authoritative (ADR-003). Đây là khoảng trống code, xem §8.
 
 ### 6.2 Event lắng nghe
 
-| Nguồn | Event | Xử lý |
-|---|---|---|
-| Order-Commerce | `order.created`, `order.cancelled` | Create payment intent/release pending payment/refund policy. |
-| Shipment | `shipment.delivered`, `shipment.failed` | COD collection confirmation hoặc hold. |
-| Auth User | `shop.kyc.approved`, `shop.kyc.expired` | Local payout/withdraw gate projection (KYC phải `APPROVED` mới cho payout). |
-| Auth User | `shop.status_changed` | Shop `SUSPENDED`/`DELETED` → khoá payout/withdraw (enum `ShopStatus` theo `auth-user-docs/docs/db/auth-user.md` §5). Không có event `shop.kyc.suspended`; đình chỉ shop đến qua `shop.status_changed`. |
+| Nguồn | Topic | Event | Xử lý | Trạng thái |
+|---|---|---|---|---|
+| Shipment | `shipment.events.v1` | `shipment.delivered` | `PENDING_COD → SUCCESS`, allocation + ledger + `wallet.allocated` | ✅ (`ShipmentEventListener`, inbox dedupe) |
+| Shipment | `shipment.events.v1` | `shipment.failed` | `PENDING_COD → FAILED`, không post ledger | ✅ |
+| Order-Commerce | — | `order.created`, `order.cancelled` | Thiết kế: release/refund policy. Payment hiện được tạo qua `POST /payments`. | ⏳ Không có listener |
+| Auth User | — | `shop.kyc.approved`, `shop.kyc.expired`, `shop.status_changed` | Thiết kế: gate payout. | ⏳ Không có listener |
 
-### 6.3 Mock contract — VNPAY webhook
+### 6.3 Contract VNPAY webhook (code)
 
-```json
-{
-  "provider_event_id":"vnp-event-1",
-  "payment_id":"payment-1",
-  "order_id":"order-1",
-  "amount":249000,
-  "currency":"VND",
-  "provider_status":"SUCCESS",
-  "transaction_ref":"vnp-txn-1",
-  "paid_at":"2026-08-30T09:01:00Z",
-  "signature":"opaque-provider-signature"
-}
-```
+Body thật của `POST /payments/webhook` xem API §3.3: `provider_event_id`, `provider_transaction_ref`, `response_code`, `transaction_status`, `amount`, `currency`, `payload_hash`, `signed_payload{vnp_*}`. Chữ ký sai → `400 INVALID_VNPAY_SIGNATURE`.
 
 ## 7. Mã lỗi
 
-| Mã | HTTP | Ý nghĩa |
-|---|---:|---|
-| `PAYMENT_INVALID_INPUT` | 400 | Amount/method/request sai. |
-| `PAYMENT_UNAUTHENTICATED` | 401 | Thiếu auth. |
-| `PAYMENT_FORBIDDEN` | 403 | Sai buyer/shop/admin scope. |
-| `PAYMENT_NOT_FOUND` | 404 | Payment không tồn tại. |
-| `PAYMENT_AMOUNT_MISMATCH` | 409 | Amount khác Order snapshot. |
-| `PAYMENT_STATE_INVALID` | 409 | Transition sai. |
-| `PAYMENT_PROVIDER_UNAVAILABLE` | 503 | VNPAY/bank adapter down. |
-| `PAYMENT_WEBHOOK_INVALID` | 400 | Signature/payload sai. |
-| `PAYMENT_WEBHOOK_REPLAYED` | 200/409 | Provider event đã xử lý. |
-| `WALLET_INSUFFICIENT_BALANCE` | 409 | Không đủ available balance. |
-| `WALLET_FROZEN` | 403 | Wallet bị freeze. |
-| `PAYOUT_NOT_ALLOWED` | 403/409 | KYC/state/min amount không đạt. |
-| `REFUND_AMOUNT_INVALID` | 400/409 | Refund vượt captured/invalid. |
-| `FEE_CONFIG_INVALID` | 409 | Fee/tax version config không hợp lệ. |
-| `SETTLEMENT_BATCH_INVALID_STATE` | 409 | Retry batch không ở trạng thái `FAILED`. |
-| `PAYMENT_IDEMPOTENCY_CONFLICT` | 409 | Key khác request hash. |
-| `PAYMENT_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
+Danh sách đầy đủ mã code đang trả và mã dự phòng: xem `docs/api/payment-wallet.md` §4 (nguồn: `GlobalRestExceptionHandler`). Các mã thiết kế cũ `PAYMENT_STATE_INVALID`, `PAYMENT_PROVIDER_UNAVAILABLE`, `PAYMENT_WEBHOOK_INVALID`, `PAYMENT_WEBHOOK_REPLAYED`, `PAYMENT_INTERNAL_ERROR` **không có trong code**; tương ứng code dùng `REFUND_STATE_INVALID`/`SETTLEMENT_BATCH_INVALID_STATE`, `INVALID_VNPAY_SIGNATURE`, `action: "DUPLICATE"` (200) và `INTERNAL_ERROR`.
 
 ## 8. Giả định & câu hỏi mở
 
@@ -235,3 +214,6 @@ Payment `PENDING → SUCCESS/FAILED/EXPIRED`; `PENDING_COD → SUCCESS` (capture
 | 5 | Refund initiation do Order/Admin gọi Payment; **return/dispute workflow ngoài v1** — sẽ do service `dispute` (v1.1) điều phối, gọi cùng contract `POST /payments/{paymentId}/refunds`. Trong v1 refund chỉ khởi tạo thủ công qua `/admin/payments` hoặc Order. | Ảnh hưởng API/permission. | Product/Finance |
 | 6 | Phạm vi Admin/back-office đã chốt (2026-09-18): Fees/Taxes, Finance, Seller settlement, Settlement batches phục vụ qua `/api/v1/admin/**` **trên service này**, không tách microservice. `dispute`/`campaign` là service v1.1. | Nếu tách service admin gộp phải chuyển ownership fee/tax/settlement. | Architecture + Finance |
 | 7 | Cơ chế kích hoạt settlement batch (scheduled job theo cửa sổ hoàn tiền vs. event `order.completed` — **ghi chú: `order.completed` hiện không tồn tại**, order-commerce không phát event này; nếu chọn hướng event phải mở rộng contract order trước) và độ dài cửa sổ chưa chốt. Admin screen chỉ giám sát + `retry` batch `FAILED`. | Ảnh hưởng thời điểm `pending → available` và SLA payout. | Finance + Order owner |
+| 8 | Chỉ `payment.created` và `wallet.allocated` được publish ra Kafka; `payment.succeeded/failed/expired/refunded`, `refund.*`, `payout.*`, `settlement.batch.completed` chỉ nằm trong outbox. | Notification/Order không nhận được kết quả thanh toán qua Kafka. | Payment-Wallet |
+| 9 | Payload event không có recipient (`buyer.email`, `owner_user_id`, `owner_email`). | Notification không gửi được email payment/payout. | Payment-Wallet + Auth User (ADR-003) |
+| 10 | Không có scheduled job tự expire payment VNPAY sau 15 phút. | Payment `PENDING` treo; Inventory reservation không được giải phóng theo payment. | Payment-Wallet |
