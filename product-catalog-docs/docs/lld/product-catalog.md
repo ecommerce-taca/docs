@@ -32,7 +32,7 @@ API Gateway
 Product Catalog
   ├─ MongoDB: product, SKU, category, media, price, shop snapshot
   ├─ S3/MinIO: product media bytes qua signed URL
-  ├─ Kafka outbox (relay bởi CDC — Debezium MongoDB Outbox Event Router) → Inventory, Search và các consumer khác (domain event, topic/payload không đổi; Order-Commerce **không** consume product event — quan hệ order↔product là REST re-read, xem `order-commerce-docs/docs/lld/order-commerce.md` §6.4)
+  ├─ Kafka outbox (relay bởi CDC — Debezium MongoDB Outbox Event Router) → Inventory, Search và các consumer khác (domain event, topic/payload không đổi; Order-Commerce **không** consume product event — quan hệ order↔product là REST re-read, xem `order-commerce-docs/docs/lld/checkout.md` §5.2)
   ├─ Kafka consumer ← Inventory stock snapshot
   ├─ Kafka consumer ← Auth User shop/KYC status event
   └─ Kafka consumer ← Rating-Comment rating aggregate event

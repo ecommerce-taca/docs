@@ -58,7 +58,7 @@ Header `Idempotency-Key` bắt buộc. Chỉ gọi từ Order-Commerce (internal
 | `order_id` | string | Có | — |
 | `checkout_group_id` | string | Có | Nhóm order multi-shop của cùng lần checkout |
 | `buyer_user_id` | string | Có | — |
-| `amount` | integer | Có | VND, > 0, **phải khớp** `grand_total` của Order (gồm `shipping_fee` — xem `order-commerce` api §3.6) |
+| `amount` | integer | Có | VND, > 0, **phải khớp** `grand_total` của Order (gồm `shipping_fee` — xem `order-commerce-docs/docs/api/order.md` §3.1) |
 | `currency` | string | Có | Cố định `"VND"` |
 | `method` | enum | Có | `VNPAY` \| `COD` |
 | `expires_at` | string | Có | ISO-8601 UTC |

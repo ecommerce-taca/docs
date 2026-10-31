@@ -145,7 +145,7 @@ Canonical transition: `NOT_CREATED → CREATED → PICKED_UP → IN_TRANSIT → 
 | `shipment.events.v1` | `shipment.status_changed` | old/new status, source, occurred_at |
 | `shipment.events.v1` | `shipment.delivered` | shipment/order/delivered_at + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
 | `shipment.events.v1` | `shipment.failed` | shipment/order/reason/source + `buyer` (`user_id`, `email`) — recipient bắt buộc cho template EMAIL của Notification |
-| `shipment.events.v1` | `shipment.cancelled` | shipment/order/reason/source — **known gap (2026-09-19, DOCS-CONSISTENCY-02): chưa có consumer nào khai báo consume event này**; huỷ shipment sau khi tạo đi qua refund/return workflow ở Payment/Support (xem `order-commerce` lld §6.2 — `shipment.failed` là tín hiệu được consume) |
+| `shipment.events.v1` | `shipment.cancelled` | shipment/order/reason/source — **known gap (2026-09-19, DOCS-CONSISTENCY-02): chưa có consumer nào khai báo consume event này**; huỷ shipment sau khi tạo đi qua refund/return workflow ở Payment/Support (xem `order-commerce-docs/docs/lld/order.md` §5.3 — `shipment.failed` là tín hiệu được consume) |
 
 > Field recipient (`buyer`) bắt buộc trong payload mọi event được Notification map sang template EMAIL (quyết định 2026-09-18).
 
@@ -153,7 +153,7 @@ Canonical transition: `NOT_CREATED → CREATED → PICKED_UP → IN_TRANSIT → 
 
 | Nguồn | Event | Xử lý |
 |---|---|---|
-| Order-Commerce | `order.cancelled` | Hủy/đồng bộ trạng thái shipment khi order bị hủy trước khi carrier pickup; không đổi order state trực tiếp. **Không dùng để tạo shipment** — shipment được tạo qua REST đồng bộ `POST /internal/shipments` (`docs/api/shipment.md` §3.3), do Order-Commerce gọi khi seller bấm "SHIP" ở `PATCH /seller/orders/{orderId}/fulfill` (`order-commerce-docs/docs/api/order-commerce.md` §3.7a), không phải khi nhận event `order.created`. |
+| Order-Commerce | `order.cancelled` | Hủy/đồng bộ trạng thái shipment khi order bị hủy trước khi carrier pickup; không đổi order state trực tiếp. **Không dùng để tạo shipment** — shipment được tạo qua REST đồng bộ `POST /internal/shipments` (`docs/api/shipment.md` §3.3), do Order-Commerce gọi khi seller bấm "SHIP" ở `PATCH /seller/orders/{orderId}/fulfill` (`order-commerce-docs/docs/api/order.md` §3.4), không phải khi nhận event `order.created`. |
 | Payment-Wallet | Không cần payment event trong baseline | Shipment không capture payment. |
 
 ### 6.3 Mock contract — carrier webhook
