@@ -1,9 +1,10 @@
-# API — Auth User Service
+# API Spec — Auth User Service
 
-> Nguồn: `docs/lld/auth-user.md` · `docs/db/auth-user.md` · `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-09-18`
-> Base path: `/api/v1` · External access: qua `api-gateway` · Internal service owner: `auth-user`
+> Nguồn: `docs/lld/auth-user.md` · `docs/db/auth-user.md` · `docs/contracts/*`, `docs/google-signin-contract.md`, `docs/vietnam-location-api.md` trong service repo · Code: `ecommerce-taca/user-auth-service` @ `develop` (`7c268a0`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: 🟡 Triển khai một phần — toàn bộ endpoint nghiệp vụ ở §2 đã có controller; health chỉ có `/actuator/health` (chưa có `/health/live`, `/health/ready`); chưa có handler 500 chung.
+> Base path: `/api/v1` (JWKS ở `/.well-known/jwks.json`) · External access: qua `api-gateway` · Port local `8081`
 
-## 1. Quy ước chung
+## 1. Quy ước API chung
 
 ### 1.1 HTTP và authentication
 
@@ -73,61 +74,123 @@ Ràng buộc:
 - Error response không tiết lộ account có tồn tại với các endpoint forgot password/signin.
 - `details` chỉ chứa field/code được allowlist, ví dụ `field`, `expected`, `actual`; không chứa stack trace hoặc SQL.
 
-### 1.3 Danh sách endpoint
+### 1.3 Contract tích hợp (Kafka, object storage)
 
-| # | Method | Path | Mục đích | Quyền | Màn hình/consumer |
-|---:|---|---|---|---|---|
-| 1 | `POST` | `/auth/signup` | Tạo buyer account | Public | Sign in overlay → đăng ký |
-| 2 | `POST` | `/auth/signin` | Đăng nhập email/phone | Public | Sign in overlay |
-| 3 | `POST` | `/auth/refresh` | Đổi refresh token | Public với refresh token | Client auth interceptor |
-| 4 | `POST` | `/auth/signout` | Revoke session/token family | Authenticated | Account/sign out |
-| 5 | `POST` | `/auth/email/verify` | Verify email | Public với token | Email link |
-| 6 | `POST` | `/auth/email/resend` | Gửi lại email verification | Authenticated | Sign in/onboarding |
-| 7 | `POST` | `/auth/phone/request-otp` | Gửi phone OTP | Authenticated | Profile/onboarding |
-| 8 | `POST` | `/auth/phone/verify-otp` | Verify phone OTP | Authenticated | Profile/onboarding |
-| 9 | `POST` | `/auth/password/forgot` | Khởi tạo reset password | Public | Forgot password |
-| 10 | `POST` | `/auth/password/reset` | Đặt password mới | Public với reset token | Reset password |
-| 11 | `POST` | `/auth/2fa/setup` | Tạo TOTP enrollment | Admin authenticated | Admin security settings |
-| 12 | `POST` | `/auth/2fa/verify` | Verify login/2FA enrollment | Challenge/authenticated | Admin login/step-up |
-| 13 | `GET` | `/users/me` | Đọc profile | Authenticated | Buyer Account/Profile |
-| 14 | `PUT` | `/users/me` | Cập nhật profile | Authenticated | Buyer Account/Profile |
-| 15 | `GET` | `/users/me/addresses` | Danh sách địa chỉ | Authenticated | Address book/checkout |
-| 16 | `POST` | `/users/me/addresses` | Thêm địa chỉ | Authenticated | Address book |
-| 17 | `PUT` | `/users/me/addresses/{addressId}` | Sửa địa chỉ | Authenticated | Address book |
-| 18 | `DELETE` | `/users/me/addresses/{addressId}` | Soft delete địa chỉ | Authenticated | Address book |
-| 19 | `POST` | `/users/register-seller` | Tạo shop/onboarding | Authenticated + email verified | Seller onboarding |
-| 20 | `GET` | `/seller/onboarding` | Đọc tiến độ onboarding | Seller | Seller onboarding |
-| 21 | `PUT` | `/seller/onboarding/profile` | Lưu hồ sơ shop | Seller | Step 1 — Hồ sơ |
-| 22 | `PUT` | `/seller/onboarding/warehouse` | Lưu kho/vận chuyển | Seller | Step 3 — Kho & vận chuyển |
-| 23 | `POST` | `/seller/onboarding/kyc/documents/presign` | Lấy signed upload URL | Seller | Step 2 — KYC |
-| 24 | `POST` | `/seller/onboarding/kyc/documents/complete` | Xác nhận upload document | Seller | Step 2 — KYC |
-| 25 | `POST` | `/seller/onboarding/kyc/submit` | Submit KYC case | Seller | Step 2 — KYC |
-| 26 | `PUT` | `/seller/onboarding/bank` | Lưu thông tin ngân hàng | Seller | Step 4 — Ngân hàng |
-| 27 | `GET` | `/seller/shop` | Đọc shop profile | Seller/staff | Seller Settings |
-| 28 | `PUT` | `/seller/shop` | Cập nhật shop profile | Seller | Seller Settings |
-| 29 | `GET` | `/admin/shops/kyc` | KYC queue | `KYC_READ` | Admin Shops/KYC |
-| 30 | `GET` | `/admin/shops/{shopId}/kyc` | KYC detail/document metadata | `KYC_READ` | KYC review overlay |
-| 31 | `POST` | `/admin/shops/{shopId}/kyc/review` | Approve/request info/reject | `KYC_DECIDE` | KYC review overlay |
-| 32 | `GET` | `/admin/users/{userId}/roles` | Đọc role/permission | `ROLE_READ` | Admin Users/Roles |
-| 33 | `PATCH` | `/admin/users/{userId}/roles` | Grant/revoke role | `ROLE_ASSIGN` + 2FA | Admin role editor |
-| 34 | `PATCH` | `/admin/users/{userId}/status` | Suspend/restore user | `USER_SUSPEND` + 2FA | Admin Users |
-| 35 | `GET` | `/admin/audit-logs` | Tra cứu audit | Role được cấp | Admin audit/support |
-| 36 | `GET` | `/.well-known/jwks.json` | Public JWKS key set cho Gateway và internal services | Public / Internal REST | API Gateway, internal clients |
-| 37 | `GET` | `/users/me/favorites` | Danh sách sản phẩm yêu thích (reference) | Authenticated | Favorite Products |
-| 38 | `POST` | `/users/me/favorites` | Thêm sản phẩm vào yêu thích | Authenticated | Product card/PDP |
-| 39 | `DELETE` | `/users/me/favorites/{productId}` | Bỏ yêu thích | Authenticated | Favorite Products/PDP |
-| 40 | `GET` | `/users/me/favorites/contains` | Batch kiểm tra trạng thái tim | Authenticated | Product list/PDP |
-| 41 | `POST` | `/shops/{shopId}/follow` | Theo dõi shop | Authenticated | Shop hero/PDP shop card |
-| 42 | `DELETE` | `/shops/{shopId}/follow` | Bỏ theo dõi shop | Authenticated | Shop hero |
-| 43 | `GET` | `/users/me/following` | Danh sách shop đang theo dõi | Authenticated | Account |
-| 44 | `GET` | `/shops/{shopId}/followers/count` | Số người theo dõi shop | Public | Shop hero |
-| 45 | `GET` | `/shops/{shopId}` | Hồ sơ shop công khai (HLD #10) | Public | `Taca Buyer / Shop` |
-| 46 | `GET` | `/health/live` | Liveness process-only (Gateway active healthcheck gọi — bắt buộc) | Internal/ops | Ops healthcheck |
-| 47 | `GET` | `/health/ready` | Readiness: MySQL/Kafka/config bắt buộc | Internal/ops | Ops healthcheck |
+#### 1.3.1 Notification command
 
-## 2. Chi tiết endpoint
+Auth-user publish command vào `notification.commands.v1` sau transaction:
 
-### 2.1 `POST /auth/signup` — tạo buyer account
+```json
+{
+  "event_id": "01912f55-7a1b-7c12-9c55-8b1c34a6d921",
+  "schema_version": 1,
+  "command_type": "PASSWORD_RESET_REQUESTED",
+  "occurred_at": "2026-08-30T09:00:00Z",
+  "dedupe_key": "password-reset:user-01912f31:token-01912f56",
+  "user_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
+  "channel": "EMAIL",
+  "recipient": "minhanh@example.com",
+  "template": "auth-password-reset-v1",
+  "data": {
+    "display_name": "Nguyễn Minh Anh",
+    "reset_url": "https://taca.vn/reset-password?t=opaque-token-reference",
+    "expires_in_minutes": 30
+  }
+}
+```
+
+#### 1.3.2 Object storage presign
+
+Mock request/response được mô tả ở endpoint KYC presign. Adapter phải kiểm tra `owner_id`, `purpose`, `content_type`, `size_bytes`, `sha256`; không cho client dùng object key của case khác.
+
+#### 1.3.3 Event downstream
+
+Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_changed`, `user.role_changed`, `shop.created`, `shop.updated`, `shop.status_changed`, `shop.kyc.*` dùng chung envelope:
+
+```json
+{
+  "event_id": "01912fe2-7a1b-7c12-9c55-8b1c34a6d921",
+  "schema_version": 1,
+  "aggregate_type": "USER",
+  "aggregate_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
+  "event_type": "user.status_changed",
+  "occurred_at": "2026-08-30T09:00:00Z",
+  "payload": {
+    "user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
+    "old_status": "ACTIVE",
+    "new_status": "SUSPENDED",
+    "reason": "Vi phạm chính sách nền tảng."
+  }
+}
+```
+
+Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — theo quy ước chung của repo. Consumer dedupe theo `event_id`. Bảng field chi tiết từng event nằm ở `docs/lld/auth-user.md` §6.2.
+
+## 2. Danh sách endpoint
+
+
+| # | Method | Path | Mục đích | Quyền | Màn hình/consumer | Trạng thái |
+|---:|---|---|---|---|---|---|
+| 1 | `POST` | `/auth/signup` | Tạo buyer account | Public | Sign in overlay → đăng ký | ✅ |
+| 2 | `POST` | `/auth/signin` | Đăng nhập email/phone | Public | Sign in overlay | ✅ |
+| 3 | `POST` | `/auth/refresh` | Đổi refresh token | Public với refresh token | Client auth interceptor | ✅ |
+| 4 | `POST` | `/auth/signout` | Revoke session/token family | Authenticated | Account/sign out | ✅ |
+| 5 | `POST` | `/auth/email/verify` | Verify email | Public với token | Email link | ✅ |
+| 6 | `POST` | `/auth/email/resend` | Gửi lại email verification | Authenticated | Sign in/onboarding | ✅ |
+| 7 | `POST` | `/auth/phone/request-otp` | Gửi phone OTP | Authenticated | Profile/onboarding | ✅ |
+| 8 | `POST` | `/auth/phone/verify-otp` | Verify phone OTP | Authenticated | Profile/onboarding | ✅ |
+| 9 | `POST` | `/auth/password/forgot` | Khởi tạo reset password | Public | Forgot password | ✅ |
+| 10 | `POST` | `/auth/password/reset` | Đặt password mới | Public với reset token | Reset password | ✅ |
+| 11 | `POST` | `/auth/2fa/setup` | Tạo TOTP enrollment | Admin authenticated | Admin security settings | ✅ |
+| 12 | `POST` | `/auth/2fa/verify` | Verify login/2FA enrollment | Challenge/authenticated | Admin login/step-up | ✅ |
+| 13 | `GET` | `/users/me` | Đọc profile | Authenticated | Buyer Account/Profile | ✅ |
+| 14 | `PUT` | `/users/me` | Cập nhật profile | Authenticated | Buyer Account/Profile | ✅ |
+| 15 | `GET` | `/users/me/addresses` | Danh sách địa chỉ | Authenticated | Address book/checkout | ✅ |
+| 16 | `POST` | `/users/me/addresses` | Thêm địa chỉ | Authenticated | Address book | ✅ |
+| 17 | `PUT` | `/users/me/addresses/{addressId}` | Sửa địa chỉ | Authenticated | Address book | ✅ |
+| 18 | `DELETE` | `/users/me/addresses/{addressId}` | Soft delete địa chỉ | Authenticated | Address book | ✅ |
+| 19 | `POST` | `/users/register-seller` | Tạo shop/onboarding | Authenticated + email verified | Seller onboarding | ✅ |
+| 20 | `GET` | `/seller/onboarding` | Đọc tiến độ onboarding | Seller | Seller onboarding | ✅ |
+| 21 | `PUT` | `/seller/onboarding/profile` | Lưu hồ sơ shop | Seller | Step 1 — Hồ sơ | ✅ |
+| 22 | `PUT` | `/seller/onboarding/warehouse` | Lưu kho/vận chuyển | Seller | Step 3 — Kho & vận chuyển | ✅ |
+| 23 | `POST` | `/seller/onboarding/kyc/documents/presign` | Lấy signed upload URL | Seller | Step 2 — KYC | ✅ |
+| 24 | `POST` | `/seller/onboarding/kyc/documents/complete` | Xác nhận upload document | Seller | Step 2 — KYC | ✅ |
+| 25 | `POST` | `/seller/onboarding/kyc/submit` | Submit KYC case | Seller | Step 2 — KYC | ✅ |
+| 26 | `PUT` | `/seller/onboarding/bank` | Lưu thông tin ngân hàng | Seller | Step 4 — Ngân hàng | ✅ |
+| 27 | `GET` | `/seller/shop` | Đọc shop profile | Seller/staff | Seller Settings | ✅ |
+| 28 | `PUT` | `/seller/shop` | Cập nhật shop profile | Seller | Seller Settings | ✅ |
+| 29 | `GET` | `/admin/shops/kyc` | KYC queue | `KYC_READ` | Admin Shops/KYC | ✅ |
+| 30 | `GET` | `/admin/shops/{shopId}/kyc` | KYC detail/document metadata | `KYC_READ` | KYC review overlay | ✅ |
+| 31 | `POST` | `/admin/shops/{shopId}/kyc/review` | Approve/request info/reject | `KYC_DECIDE` | KYC review overlay | ✅ |
+| 32 | `GET` | `/admin/users/{userId}/roles` | Đọc role/permission | `ROLE_READ` | Admin Users/Roles | ✅ |
+| 33 | `PATCH` | `/admin/users/{userId}/roles` | Grant/revoke role | `ROLE_ASSIGN` + 2FA | Admin role editor | ✅ |
+| 34 | `PATCH` | `/admin/users/{userId}/status` | Suspend/restore user | `USER_SUSPEND` + 2FA | Admin Users | ✅ |
+| 35 | `GET` | `/admin/audit-logs` | Tra cứu audit | Role được cấp | Admin audit/support | ✅ |
+| 36 | `GET` | `/.well-known/jwks.json` | Public JWKS key set cho Gateway và internal services | Public / Internal REST | API Gateway, internal clients | ✅ |
+| 37 | `GET` | `/users/me/favorites` | Danh sách sản phẩm yêu thích (reference) | Authenticated | Favorite Products | ✅ |
+| 38 | `POST` | `/users/me/favorites` | Thêm sản phẩm vào yêu thích | Authenticated | Product card/PDP | ✅ |
+| 39 | `DELETE` | `/users/me/favorites/{productId}` | Bỏ yêu thích | Authenticated | Favorite Products/PDP | ✅ |
+| 40 | `GET` | `/users/me/favorites/contains` | Batch kiểm tra trạng thái tim | Authenticated | Product list/PDP | ✅ |
+| 41 | `POST` | `/shops/{shopId}/follow` | Theo dõi shop | Authenticated | Shop hero/PDP shop card | ✅ |
+| 42 | `DELETE` | `/shops/{shopId}/follow` | Bỏ theo dõi shop | Authenticated | Shop hero | ✅ |
+| 43 | `GET` | `/users/me/following` | Danh sách shop đang theo dõi | Authenticated | Account | ✅ |
+| 44 | `GET` | `/shops/{shopId}/followers/count` | Số người theo dõi shop | Public | Shop hero | ✅ |
+| 45 | `GET` | `/shops/{shopId}` | Hồ sơ shop công khai (HLD #10) | Public | `Taca Buyer / Shop` | ✅ |
+| 46 | `GET` | `/health/live` | Liveness process-only (Gateway active healthcheck gọi — bắt buộc) | Internal/ops | Ops healthcheck | ⏳ Chỉ có `/actuator/health` |
+| 47 | `GET` | `/health/ready` | Readiness: MySQL/Kafka/config bắt buộc | Internal/ops | Ops healthcheck | ⏳ Chỉ có `/actuator/health` |
+| 48 | `POST` | `/auth/password/change` | Đổi mật khẩu khi đã đăng nhập | Authenticated (+ `X-MFA-Step-Up` nếu user bật 2FA) | Account/Security | ✅ |
+| 49 | `POST` | `/auth/google` | Đăng nhập bằng Google ID token | Public | Sign in overlay | ✅ |
+| 50 | `GET` | `/auth/google/authorize` | Bắt đầu authorization-code flow (redirect Google) | Public | Sign in overlay | ✅ |
+| 51 | `GET` | `/auth/google/callback` | Callback Google, trả session như #49 | Public (state cookie) | Browser | ✅ |
+| 52 | `POST` | `/auth/identities/google/link` | Liên kết Google vào tài khoản hiện có | Authenticated | Account/Security | ✅ |
+| 53 | `DELETE` | `/seller/onboarding/kyc/documents/{documentId}` | Xoá document KYC chưa submit | Seller | Step 2 — KYC | ✅ |
+| 54 | `GET` | `/locations/vn/provinces` | Danh mục tỉnh/thành VN | Public | Address form | ✅ |
+| 55 | `GET` | `/locations/vn/provinces/{provinceCode}/wards` | Danh mục phường/xã theo tỉnh | Public | Address form | ✅ |
+| 56 | `GET` | `/actuator/health` | Health Spring Boot (`show-details: never`) — path thật trong code | Public (permitAll) | Ops | ✅ |
+
+## 3. Chi tiết endpoint
+
+### 3.1 `POST /auth/signup` — tạo buyer account
 
 Quyền: Public · Rate limit: `10 req/phút/IP` · Response: `201`
 
@@ -189,7 +252,7 @@ Lỗi:
 | 409 | `AUTH_PHONE_EXISTS` | Phone non-null đã tồn tại. |
 | 429 | `RATE_LIMITED` | Vượt rate limit. |
 
-### 2.2 `POST /auth/signin` — đăng nhập
+### 3.2 `POST /auth/signin` — đăng nhập
 
 Quyền: Public · Rate limit: `10 req/phút/IP` · Response: `200`
 
@@ -231,7 +294,7 @@ Lỗi:
 | 423 | `AUTH_ACCOUNT_LOCKED` | 5 lần fail trong 15 phút, lock còn hiệu lực. |
 | 429 | `RATE_LIMITED` | Vượt rate limit. |
 
-### 2.3 `POST /auth/refresh` — refresh token rotation
+### 3.3 `POST /auth/refresh` — refresh token rotation
 
 Quyền: Public với refresh token · Response: `200`
 
@@ -258,7 +321,7 @@ Lỗi:
 | 401 | `AUTH_REFRESH_REUSED` | Token đã revoked được dùng lại; revoke cả family. |
 | 403 | `AUTH_ACCOUNT_SUSPENDED` | User không còn được login. |
 
-### 2.4 `POST /auth/signout` — revoke session
+### 3.4 `POST /auth/signout` — revoke session
 
 Quyền: Authenticated · Response: `204` không body
 
@@ -278,7 +341,7 @@ Request:
 
 Lỗi: `401 AUTH_TOKEN_INVALID`, `428 RBAC_MFA_REQUIRED` nếu `all_sessions=true` nhưng thiếu re-auth, `500 INTERNAL_ERROR` nếu lỗi ngoài dự kiến.
 
-### 2.5 `POST /auth/email/verify` — verify email
+### 3.5 `POST /auth/email/verify` — verify email
 
 Quyền: Public với opaque token · Response: `200`
 
@@ -305,7 +368,7 @@ Response:
 
 Lỗi: `400 AUTH_VERIFICATION_INVALID` nếu sai/hết hạn/đã dùng; `404 AUTH_USER_NOT_FOUND` không được phân biệt với invalid token ở public response.
 
-### 2.6 `POST /auth/email/resend` — gửi lại email verification
+### 3.6 `POST /auth/email/resend` — gửi lại email verification
 
 Quyền: Authenticated · Rate limit: tối đa 3 lần/giờ/user · Response: `202`
 
@@ -331,7 +394,7 @@ Response:
 
 Lỗi: `400 AUTH_INVALID_INPUT`, `409 AUTH_VERIFICATION_ALREADY_COMPLETE`, `429 AUTH_RESEND_LIMIT_EXCEEDED`.
 
-### 2.7 `POST /auth/phone/request-otp` — yêu cầu phone OTP
+### 3.7 `POST /auth/phone/request-otp` — yêu cầu phone OTP
 
 Quyền: Authenticated · Response: `202`
 
@@ -363,7 +426,7 @@ Response không chứa OTP raw:
 
 Lỗi: `400 AUTH_INVALID_INPUT`, `409 AUTH_PHONE_EXISTS`, `429 AUTH_OTP_RATE_LIMITED`.
 
-### 2.8 `POST /auth/phone/verify-otp` — verify phone
+### 3.8 `POST /auth/phone/verify-otp` — verify phone
 
 Quyền: Authenticated · Response: `200`
 
@@ -385,7 +448,7 @@ Response: `phone_verified=true`, `phone_verified_at`.
 
 Lỗi: `400 AUTH_VERIFICATION_INVALID`, `429 AUTH_OTP_ATTEMPTS_EXCEEDED`, `409 AUTH_PHONE_EXISTS`.
 
-### 2.9 `POST /auth/password/forgot` — khởi tạo reset
+### 3.9 `POST /auth/password/forgot` — khởi tạo reset
 
 Quyền: Public · Response: `202` luôn cùng message an toàn
 
@@ -415,7 +478,7 @@ Response:
 
 Lỗi: `400 AUTH_INVALID_INPUT`, `429 RATE_LIMITED`. Không trả `USER_NOT_FOUND`.
 
-### 2.10 `POST /auth/password/reset` — đặt password mới
+### 3.10 `POST /auth/password/reset` — đặt password mới
 
 Quyền: Public với reset token · Response: `204`
 
@@ -435,7 +498,7 @@ Request:
 
 Lỗi: `400 AUTH_RESET_INVALID`, `400 AUTH_INVALID_INPUT`, `429 RATE_LIMITED`.
 
-### 2.11 `POST /auth/2fa/setup` — tạo TOTP enrollment
+### 3.11 `POST /auth/2fa/setup` — tạo TOTP enrollment
 
 Quyền: Admin authenticated · Response: `201`
 
@@ -462,7 +525,7 @@ Ràng buộc:
 - Setup chưa enabled cho tới khi verify TOTP.
 - Nếu user đã có credential `ENABLED`, trả `409 AUTH_MFA_ALREADY_ENABLED`.
 
-### 2.12 `POST /auth/2fa/verify` — login hoặc enrollment
+### 3.12 `POST /auth/2fa/verify` — login hoặc enrollment
 
 Quyền: MFA challenge hoặc authenticated enrollment · Response: `200`
 
@@ -500,7 +563,7 @@ Response `LOGIN`: tokens mới. Response `ENROLL`: `status=ENABLED` và recovery
 
 Lỗi: `401 AUTH_MFA_INVALID`, `400 AUTH_MFA_CHALLENGE_EXPIRED`, `429 AUTH_MFA_ATTEMPTS_EXCEEDED`.
 
-### 2.13 `GET /users/me` — đọc profile
+### 3.13 `GET /users/me` — đọc profile
 
 Quyền: Authenticated · Response: `200`
 
@@ -528,7 +591,7 @@ Response:
 
 Lỗi: `401 AUTH_TOKEN_INVALID`, `404 AUTH_USER_NOT_FOUND` nếu subject không còn tồn tại.
 
-### 2.14 `PUT /users/me` — cập nhật profile
+### 3.14 `PUT /users/me` — cập nhật profile
 
 Quyền: Authenticated · Response: `200`
 
@@ -560,7 +623,7 @@ Request:
 
 Lỗi: `400 PROFILE_INVALID`, `409 AUTH_PHONE_EXISTS`, `401 AUTH_TOKEN_INVALID`.
 
-### 2.15 `GET /users/me/addresses` — list address
+### 3.15 `GET /users/me/addresses` — list address
 
 Quyền: Authenticated · Query: `page`, `size`, `sort=created_at,desc` · Response: `200`
 
@@ -573,9 +636,12 @@ Response item:
   "phone": "+84901234567",
   "line1": "12 Nguyễn Huệ",
   "line2": "Tòa A, căn 501",
-  "ward": "Bến Nghé",
-  "district": "Quận 1",
+  "country_code": "VN",
+  "province_code": "79",
   "province": "Hồ Chí Minh",
+  "ward_code": "26740",
+  "ward": "Bến Nghé",
+  "district": null,
   "postal_code": "700000",
   "is_default": true,
   "created_at": "2026-08-30T09:10:00Z",
@@ -585,7 +651,7 @@ Response item:
 
 Lỗi: `400 AUTH_INVALID_INPUT` nếu query sai, `401 AUTH_TOKEN_INVALID`.
 
-### 2.16 `POST /users/me/addresses` — thêm address
+### 3.16 `POST /users/me/addresses` — thêm address
 
 Quyền: Authenticated · Response: `201`
 
@@ -597,17 +663,19 @@ Request:
 | `phone` | string | Có | E.164 | `"+84901234567"` |
 | `line1` | string | Có | 1–255 | `"12 Nguyễn Huệ"` |
 | `line2` | string | Không | Tối đa 255 | `"Tòa A"` |
-| `ward` | string | Có | 1–120 | `"Bến Nghé"` |
-| `district` | string | Có | 1–120 | `"Quận 1"` |
-| `province` | string | Có | 1–120 | `"Hồ Chí Minh"` |
+| `country_code` | string | Có | Chỉ `VN` | `"VN"` |
+| `province_code` | string | Có | Mã trong `GET /locations/vn/provinces` | `"79"` |
+| `ward_code` | string | Có | Phải thuộc `province_code` | `"26740"` |
 | `postal_code` | string | Không | Tối đa 12 | `"700000"` |
 | `is_default` | boolean | Không | Default `false`; address đầu tiên tự default | `true` |
 
-Response `201` cùng shape với item ở `GET /users/me/addresses` (§2.15) — `id` mới sinh, `created_at`/`updated_at` bằng thời điểm tạo.
+Response `201` cùng shape với item ở `GET /users/me/addresses` (§3.15) — `id` mới sinh, `created_at`/`updated_at` bằng thời điểm tạo.
 
-Lỗi: `400 PROFILE_INVALID`, `409 ADDRESS_LIMIT_REACHED`, `409 ADDRESS_DEFAULT_REQUIRED`.
+Client **không** gửi tên tỉnh/phường; service tự resolve tên từ catalog và lưu cả mã lẫn tên (mô hình 2 cấp, không còn `district`; cột `district` cũ chỉ còn cho bản ghi trước `V021`).
 
-### 2.17 `PUT /users/me/addresses/{addressId}` — sửa address
+Lỗi: `400 PROFILE_INVALID`, `422 ADDRESS_LOCATION_INVALID`, `409 ADDRESS_LIMIT_REACHED`, `409 ADDRESS_DEFAULT_REQUIRED`.
+
+### 3.17 `PUT /users/me/addresses/{addressId}` — sửa address
 
 Quyền: Authenticated · Response: `200`
 
@@ -623,7 +691,7 @@ Response `200` cùng shape với `GET /users/me/addresses` item, `updated_at` m�
 
 Lỗi: `400 PROFILE_INVALID`, `404 ADDRESS_NOT_FOUND`, `409 ADDRESS_DEFAULT_REQUIRED`.
 
-### 2.18 `DELETE /users/me/addresses/{addressId}` — soft delete
+### 3.18 `DELETE /users/me/addresses/{addressId}` — soft delete
 
 Quyền: Authenticated · Response: `204`
 
@@ -636,7 +704,7 @@ Ràng buộc:
 
 Lỗi: `404 ADDRESS_NOT_FOUND`, `409 ADDRESS_DEFAULT_REQUIRED`.
 
-### 2.19 `POST /users/register-seller` — tạo shop/onboarding
+### 3.19 `POST /users/register-seller` — tạo shop/onboarding
 
 Quyền: Authenticated + email verified · Response: `201`
 
@@ -676,7 +744,7 @@ Response:
 
 Lỗi: `403 AUTH_EMAIL_NOT_VERIFIED`, `409 SHOP_ALREADY_EXISTS`, `409 AUTH_TAX_CODE_EXISTS`, `400 PROFILE_INVALID`.
 
-### 2.20 `GET /seller/onboarding` — tiến độ onboarding
+### 3.20 `GET /seller/onboarding` — tiến độ onboarding
 
 Quyền: `SELLER`/owner · Response: `200`
 
@@ -706,7 +774,7 @@ Lỗi: `404 SHOP_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`.
 
 `onboarding_status` trả ở các response step là enum **suy ra** từ `current_step` + cờ step (không phải cột lưu — xem `docs/db/auth-user.md` §5.1 `OnboardingStatus`): `NOT_STARTED` (chưa hoàn thành step nào), `IN_PROGRESS`, `READY_TO_SUBMIT` (đủ hồ sơ/KYC/bank, chờ seller submit), `COMPLETED`.
 
-### 2.21 `PUT /seller/onboarding/profile` — step Hồ sơ
+### 3.21 `PUT /seller/onboarding/profile` — step Hồ sơ
 
 Quyền: Seller owner · Response: `200`
 
@@ -726,7 +794,7 @@ Request:
 
 Lỗi: `400 PROFILE_INVALID`, `403 RBAC_PERMISSION_DENIED`, `409 AUTH_TAX_CODE_EXISTS`, `409 SHOP_INVALID_STATE`.
 
-### 2.22 `PUT /seller/onboarding/warehouse` — step Kho & vận chuyển
+### 3.22 `PUT /seller/onboarding/warehouse` — step Kho & vận chuyển
 
 Quyền: Seller owner · Response: `200`
 
@@ -749,7 +817,7 @@ Request:
 
 Lỗi: `400 PROFILE_INVALID`, `403 RBAC_PERMISSION_DENIED`, `409 SHOP_INVALID_STATE`.
 
-### 2.23 `POST /seller/onboarding/kyc/documents/presign` — tạo signed URL
+### 3.23 `POST /seller/onboarding/kyc/documents/presign` — tạo signed URL
 
 Quyền: Seller owner · Response: `201`
 
@@ -783,7 +851,7 @@ Response:
 
 Lỗi: `400 KYC_DOCUMENT_INVALID`, `413 KYC_DOCUMENT_TOO_LARGE`, `409 KYC_DOCUMENT_LIMIT_REACHED`.
 
-### 2.24 `POST /seller/onboarding/kyc/documents/complete` — complete upload
+### 3.24 `POST /seller/onboarding/kyc/documents/complete` — complete upload
 
 Quyền: Seller owner · Response: `201`
 
@@ -803,7 +871,7 @@ Service kiểm tra object metadata/checksum/content type với Storage Adapter; 
 
 Lỗi: `400 KYC_DOCUMENT_INVALID`, `404 KYC_DOCUMENT_NOT_FOUND`, `409 KYC_DOCUMENT_ALREADY_COMPLETED`.
 
-### 2.25 `POST /seller/onboarding/kyc/submit` — submit KYC
+### 3.25 `POST /seller/onboarding/kyc/submit` — submit KYC
 
 Quyền: Seller owner + email verified · Response: `200`
 
@@ -832,7 +900,7 @@ Response:
 
 Lỗi: `400 KYC_DOCUMENT_INVALID`, `409 SHOP_INVALID_STATE`, `409 KYC_ALREADY_PENDING`, `403 AUTH_EMAIL_NOT_VERIFIED`.
 
-### 2.26 `PUT /seller/onboarding/bank` — step Ngân hàng
+### 3.26 `PUT /seller/onboarding/bank` — step Ngân hàng
 
 Quyền: Seller owner · Response: `200`
 
@@ -854,7 +922,7 @@ Response chỉ trả `bank_name`, masked account `********1234`, `verified=false
 
 Lỗi: `400 PROFILE_INVALID`, `409 BANK_ACCOUNT_INVALID`, `403 RBAC_PERMISSION_DENIED`.
 
-### 2.27 `GET /seller/shop` — đọc shop profile
+### 3.27 `GET /seller/shop` — đọc shop profile
 
 Quyền: Seller owner/staff · Response: `200`
 
@@ -881,7 +949,7 @@ Quyền: Seller owner/staff · Response: `200`
 
 Lỗi: `404 SHOP_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`.
 
-### 2.28 `PUT /seller/shop` — cập nhật shop profile
+### 3.28 `PUT /seller/shop` — cập nhật shop profile
 
 Quyền: Seller owner · Response: `200`
 
@@ -893,7 +961,7 @@ Request cho phép `name`, `description`, `logo_object_key`; `tax_code`, owner v�
 
 Lỗi: `400 PROFILE_INVALID`, `403 RBAC_PERMISSION_DENIED`, `409 SHOP_SLUG_EXISTS`, `409 SHOP_INVALID_STATE`.
 
-### 2.29 `GET /admin/shops/kyc` — KYC queue
+### 3.29 `GET /admin/shops/kyc` — KYC queue
 
 Quyền: `KYC_READ` · Query:
 
@@ -922,7 +990,7 @@ Response item:
 
 Lỗi: `401 AUTH_TOKEN_INVALID`, `403 RBAC_PERMISSION_DENIED`, `400 AUTH_INVALID_INPUT`.
 
-### 2.30 `GET /admin/shops/{shopId}/kyc` — KYC detail
+### 3.30 `GET /admin/shops/{shopId}/kyc` — KYC detail
 
 Quyền: `KYC_READ` · Response: `200`
 
@@ -964,7 +1032,7 @@ Response:
 
 Lỗi: `404 SHOP_NOT_FOUND`, `404 KYC_CASE_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`.
 
-### 2.31 `POST /admin/shops/{shopId}/kyc/review` — quyết định KYC
+### 3.31 `POST /admin/shops/{shopId}/kyc/review` — quyết định KYC
 
 Quyền: `KYC_DECIDE` + step-up 2FA khi reject/suspend · Response: `200`
 
@@ -991,7 +1059,7 @@ Ràng buộc:
 
 Lỗi: `400 KYC_DECISION_INVALID`, `403 RBAC_PERMISSION_DENIED`, `428 RBAC_MFA_REQUIRED`, `409 SHOP_INVALID_STATE`.
 
-### 2.32 `GET /admin/users/{userId}/roles` — đọc role/permission
+### 3.32 `GET /admin/users/{userId}/roles` — đọc role/permission
 
 Quyền: `ROLE_READ` hoặc `SUPER_ADMIN` · Response: `200`
 
@@ -1018,7 +1086,7 @@ Response:
 
 Lỗi: `404 AUTH_USER_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`.
 
-### 2.33 `PATCH /admin/users/{userId}/roles` — grant/revoke role
+### 3.33 `PATCH /admin/users/{userId}/roles` — grant/revoke role
 
 Quyền: `ROLE_ASSIGN` + `X-MFA-Step-Up` · Response: `200`
 
@@ -1049,7 +1117,7 @@ Ràng buộc:
 
 Lỗi: `400 RBAC_INVALID_ROLE`, `403 RBAC_PERMISSION_DENIED`, `428 RBAC_MFA_REQUIRED`, `409 RBAC_ASSIGNMENT_EXISTS`, `409 RBAC_ASSIGNMENT_NOT_FOUND`.
 
-### 2.34 `PATCH /admin/users/{userId}/status` — suspend/restore
+### 3.34 `PATCH /admin/users/{userId}/status` — suspend/restore
 
 Quyền: `USER_SUSPEND` + `X-MFA-Step-Up` · Response: `200`
 
@@ -1071,7 +1139,7 @@ Khi suspend: revoke toàn bộ refresh token family, ghi audit, phát `user.stat
 
 Lỗi: `404 AUTH_USER_NOT_FOUND`, `403 RBAC_PERMISSION_DENIED`, `428 RBAC_MFA_REQUIRED`, `403 AUTH_ACCOUNT_SUSPENDED`.
 
-### 2.35 `GET /admin/audit-logs` — tra cứu audit
+### 3.35 `GET /admin/audit-logs` — tra cứu audit
 
 Quyền: `ROLE_READ`, `KYC_READ`, `USER_READ` hoặc permission tương ứng · Response: `200`
 
@@ -1108,7 +1176,7 @@ Không trả `metadata` có secret/PII raw; field nhạy cảm phải masked.
 
 Lỗi: `400 AUTH_INVALID_INPUT`, `403 RBAC_PERMISSION_DENIED`.
 
-### 2.36 `GET /.well-known/jwks.json` — Public JWKS key set
+### 3.36 `GET /.well-known/jwks.json` — Public JWKS key set
 
 Quyền: Public / Internal REST · Cache-Control: `public, max-age=600` · Response: `200`
 
@@ -1137,7 +1205,7 @@ Ràng buộc:
 
 Lỗi: `500 INTERNAL_ERROR` nếu keystore không sẵn sàng.
 
-### 2.37 `GET /users/me/favorites` — danh sách yêu thích
+### 3.37 `GET /users/me/favorites` — danh sách yêu thích
 
 Quyền: Authenticated · Query: `page`, `size`, `sort=created_at,desc` · Response: `200`
 
@@ -1154,7 +1222,7 @@ Chỉ trả reference `product_id`; client/BFF hydrate thẻ sản phẩm (title
 
 Lỗi: `400 AUTH_INVALID_INPUT`, `401 AUTH_TOKEN_INVALID`.
 
-### 2.38 `POST /users/me/favorites` — thêm yêu thích
+### 3.38 `POST /users/me/favorites` — thêm yêu thích
 
 Quyền: Authenticated · Response: `201` (hoặc `200` nếu đã có — idempotent)
 
@@ -1172,11 +1240,11 @@ Response `201`: `{ "data": { "product_id": "...", "created_at": "2026-08-30T09:1
 
 Lỗi: `400 AUTH_INVALID_INPUT`, `409 FAVORITE_LIMIT_REACHED` (đạt `MAX_FAVORITES_PER_USER=500`).
 
-### 2.39 `DELETE /users/me/favorites/{productId}` — bỏ yêu thích
+### 3.39 `DELETE /users/me/favorites/{productId}` — bỏ yêu thích
 
 Quyền: Authenticated · Response: `204` (idempotent — không tồn tại vẫn `204`)
 
-### 2.40 `GET /users/me/favorites/contains` — batch trạng thái tim
+### 3.40 `GET /users/me/favorites/contains` — batch trạng thái tim
 
 Quyền: Authenticated · Query: `product_ids` (danh sách phân tách bằng dấu phẩy, tối đa 100) · Response: `200`
 
@@ -1192,7 +1260,7 @@ Quyền: Authenticated · Query: `product_ids` (danh sách phân tách bằng d�
 
 Lỗi: `400 AUTH_INVALID_INPUT` nếu quá 100 ID hoặc ID sai định dạng.
 
-### 2.41 `POST /shops/{shopId}/follow` — theo dõi shop
+### 3.41 `POST /shops/{shopId}/follow` — theo dõi shop
 
 Quyền: Authenticated · Response: `201` (hoặc `200` idempotent nếu đã follow)
 
@@ -1204,11 +1272,11 @@ Ràng buộc: shop phải tồn tại và `status != DELETED` (kiểm bằng b�
 
 Lỗi: `404 SHOP_NOT_FOUND`, `409 SHOP_FOLLOW_LIMIT_REACHED` (đạt `MAX_FOLLOWED_SHOPS_PER_USER=1000`).
 
-### 2.42 `DELETE /shops/{shopId}/follow` — bỏ theo dõi
+### 3.42 `DELETE /shops/{shopId}/follow` — bỏ theo dõi
 
 Quyền: Authenticated · Response: `204` (idempotent)
 
-### 2.43 `GET /users/me/following` — shop đang theo dõi
+### 3.43 `GET /users/me/following` — shop đang theo dõi
 
 Quyền: Authenticated · Query: `page`, `size`, `sort=created_at,desc` · Response: `200`
 
@@ -1223,7 +1291,7 @@ Quyền: Authenticated · Query: `page`, `size`, `sort=created_at,desc` · Respo
 
 `name/slug/logo_url` là snapshot từ bảng `shops`; có thể trễ so với cập nhật mới nhất của shop.
 
-### 2.44 `GET /shops/{shopId}/followers/count` — số người theo dõi
+### 3.44 `GET /shops/{shopId}/followers/count` — số người theo dõi
 
 Quyền: Public · Response: `200`
 
@@ -1233,7 +1301,7 @@ Quyền: Public · Response: `200`
 
 `follower_count` eventual; không đảm bảo realtime tuyệt đối.
 
-### 2.45 `GET /shops/{shopId}` — hồ sơ shop công khai
+### 3.45 `GET /shops/{shopId}` — hồ sơ shop công khai
 
 Quyền: Public · Response: `200`
 
@@ -1266,7 +1334,9 @@ Ràng buộc:
 
 Lỗi: `404 SHOP_NOT_FOUND` (không tồn tại hoặc `status = DELETED`).
 
-### 2.46 `GET /health/live` — liveness
+### 3.46 `GET /health/live` — liveness (⏳ chưa có trong code)
+
+> Code hiện chỉ expose Spring Actuator `GET /actuator/health` (permitAll trong `SecurityConfig`, `show-details: never`). Gateway healthcheck phải trỏ `/actuator/health` cho tới khi service thêm `/health/live`.
 
 Quyền: Internal/ops · Response: `200`
 
@@ -1276,13 +1346,37 @@ Quyền: Internal/ops · Response: `200`
 
 Liveness process-only — không kiểm MySQL/Kafka/JWKS keystore; process còn nhận request thì `UP`. Gateway active healthcheck gọi endpoint này — ràng buộc cứng theo `api-gateway-docs/docs/lld/api-gateway.md` §5.2.
 
-### 2.47 `GET /health/ready` — readiness
+### 3.47 `GET /health/ready` — readiness (⏳ chưa có trong code)
 
 Quyền: Internal/ops · Response: `200` hoặc `503`
 
 Kiểm MySQL (`userdb`), Kafka và cấu hình bắt buộc (JWKS keystore, secret manager). Không trả secret/internal address.
 
-## 3. Bảng mã lỗi dùng chung
+### 3.48 `POST /auth/password/change` — đổi mật khẩu
+
+Quyền: Authenticated · Header: `X-MFA-Step-Up` khi user bật 2FA · Response: `200`
+
+Request: `current_password`, `new_password`, `all_sessions` (boolean, default `false`). Khi `all_sessions=true` mọi session khác bị revoke và response trả cặp token mới cho session hiện tại. Phát `user.password_changed`.
+
+Lỗi: `401 AUTH_CURRENT_PASSWORD_INVALID`, `400 AUTH_PASSWORD_REUSE`, `400 AUTH_INVALID_INPUT`, `401 AUTH_MFA_REQUIRED`.
+
+### 3.49 Google Sign-In — `POST /auth/google`, `GET /auth/google/authorize`, `GET /auth/google/callback`, `POST /auth/identities/google/link`
+
+- `POST /auth/google`: body `id_token` (Google). Token được verify với JWKS Google (`AUTH_GOOGLE_JWK_SET_URI`) và `aud` thuộc `AUTH_GOOGLE_ALLOWED_CLIENT_IDS`. Trả session như `POST /auth/signin`; nếu tài khoản bật 2FA thì trả challenge và client phải gọi `POST /auth/2fa/verify` với purpose `LOGIN`.
+- `GET /auth/google/authorize` → redirect Google (PKCE, state cookie 10 phút); `GET /auth/google/callback?code=&state=` trả session payload như `POST /auth/google`.
+- `POST /auth/identities/google/link`: user đã đăng nhập liên kết Google identity.
+- Lỗi: `401 AUTH_GOOGLE_TOKEN_INVALID`, `409 AUTH_GOOGLE_LINK_REQUIRED` (email đã có tài khoản password, cần link), `409 AUTH_GOOGLE_IDENTITY_LINKED`, `503 AUTH_GOOGLE_UNAVAILABLE`.
+- Chi tiết: `docs/google-signin-contract.md` trong service repo.
+
+### 3.50 `DELETE /seller/onboarding/kyc/documents/{documentId}` — xoá document KYC
+
+Quyền: Seller · Response: `204`. Chỉ xoá document chưa submit. Lỗi: `409 KYC_DOCUMENT_DELETE_NOT_ALLOWED`, `404` khi không thuộc shop.
+
+### 3.51 `GET /locations/vn/provinces`, `GET /locations/vn/provinces/{provinceCode}/wards`
+
+Quyền: Public · Response: `200` danh sách `{code, name}`. Danh mục 2 cấp tỉnh → phường/xã (không có quận/huyện). Lỗi: `404 LOCATION_PROVINCE_NOT_FOUND`. Chi tiết: `docs/vietnam-location-api.md` trong service repo.
+
+## 4. Mã lỗi chung
 
 | Code | HTTP | Ý nghĩa | Thông điệp hiển thị |
 |---|---:|---|---|
@@ -1294,7 +1388,7 @@ Kiểm MySQL (`userdb`), Kafka và cấu hình bắt buộc (JWKS keystore, secr
 | `AUTH_ACCOUNT_LOCKED` | 423 | Login lock 15 phút | `Tài khoản đang tạm khóa. Vui lòng thử lại sau.` |
 | `AUTH_ACCOUNT_SUSPENDED` | 403 | Account suspended/deleted | `Tài khoản hiện không thể sử dụng.` |
 | `AUTH_EMAIL_NOT_VERIFIED` | 403 | Chưa verify email | `Vui lòng xác thực email trước.` |
-| `AUTH_PHONE_NOT_VERIFIED` | 403 | Phone chưa verify | `Vui lòng xác thực số điện thoại trước.` |
+| `AUTH_PHONE_NOT_VERIFIED` ⏳ | 403 | Phone chưa verify | `Vui lòng xác thực số điện thoại trước.` |
 | `AUTH_USER_NOT_FOUND` | 404 | User không tồn tại hoặc đã xoá | `Không tìm thấy tài khoản.` |
 | `AUTH_TOKEN_INVALID` | 401 | Token sai | `Phiên đăng nhập không hợp lệ.` |
 | `AUTH_TOKEN_EXPIRED` | 401 | Token expired | `Phiên đăng nhập đã hết hạn.` |
@@ -1325,7 +1419,7 @@ Kiểm MySQL (`userdb`), Kafka và cấu hình bắt buộc (JWKS keystore, secr
 | `RBAC_INVALID_ROLE` | 400 | Role/scope không hợp lệ | `Vai trò hoặc phạm vi không hợp lệ.` |
 | `RBAC_ASSIGNMENT_EXISTS` | 409 | Assignment đã tồn tại | `Quyền này đã được cấp.` |
 | `RBAC_ASSIGNMENT_NOT_FOUND` | 409 | Assignment không tồn tại | `Không tìm thấy quyền cần thu hồi.` |
-| `KYC_DOCUMENT_INVALID` | 400 | File metadata/checksum/type sai | `Tài liệu không hợp lệ.` |
+| `KYC_DOCUMENT_INVALID` ⏳ | 400 | File metadata/checksum/type sai | `Tài liệu không hợp lệ.` |
 | `KYC_DOCUMENT_TOO_LARGE` | 413 | File > 10 MiB | `Tài liệu vượt quá dung lượng cho phép.` |
 | `KYC_DOCUMENT_LIMIT_REACHED` | 409 | Quá 10 file/case | `Hồ sơ đã đạt giới hạn số tài liệu.` |
 | `KYC_DOCUMENT_NOT_FOUND` | 404 | Document không tồn tại | `Không tìm thấy tài liệu.` |
@@ -1333,62 +1427,23 @@ Kiểm MySQL (`userdb`), Kafka và cấu hình bắt buộc (JWKS keystore, secr
 | `KYC_ALREADY_PENDING` | 409 | Case đang chờ review | `Hồ sơ đang được xét duyệt.` |
 | `KYC_DECISION_INVALID` | 400/409 | Decision/reason/state sai | `Quyết định KYC chưa hợp lệ.` |
 | `KYC_CASE_NOT_FOUND` | 404 | KYC case không tồn tại | `Không tìm thấy hồ sơ KYC.` |
-| `KYC_REQUIRED` | 403 | Chưa đạt điều kiện KYC | `Vui lòng hoàn tất xác minh gian hàng.` |
+| `KYC_REQUIRED` ⏳ | 403 | Chưa đạt điều kiện KYC | `Vui lòng hoàn tất xác minh gian hàng.` |
 | `BANK_ACCOUNT_INVALID` | 409 | Bank account không hợp lệ | `Thông tin tài khoản ngân hàng chưa hợp lệ.` |
-| `RATE_LIMITED` | 429 | Vượt request limit | `Bạn thao tác quá nhanh. Vui lòng thử lại sau.` |
-| `INTERNAL_ERROR` | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
+| `RATE_LIMITED` ⏳ | 429 | Vượt request limit | `Bạn thao tác quá nhanh. Vui lòng thử lại sau.` |
+| `INTERNAL_ERROR` ⏳ | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
+| `AUTH_CURRENT_PASSWORD_INVALID` | 401 | Mật khẩu hiện tại sai khi đổi mật khẩu | `Mật khẩu hiện tại không đúng.` |
+| `AUTH_PASSWORD_REUSE` | 400 | Mật khẩu mới trùng mật khẩu cũ | `Mật khẩu mới phải khác mật khẩu hiện tại.` |
+| `AUTH_GOOGLE_TOKEN_INVALID` | 401 | Google ID token/callback không hợp lệ | `Đăng nhập Google không hợp lệ.` |
+| `AUTH_GOOGLE_LINK_REQUIRED` | 409 | Email đã có tài khoản, cần liên kết | `Email đã có tài khoản. Vui lòng đăng nhập để liên kết Google.` |
+| `AUTH_GOOGLE_IDENTITY_LINKED` | 409 | Google identity đã gắn tài khoản khác | `Tài khoản Google đã được liên kết.` |
+| `AUTH_GOOGLE_UNAVAILABLE` | 503 | Không verify được với Google | `Đăng nhập Google tạm thời không khả dụng.` |
+| `ADDRESS_LOCATION_INVALID` | 422 | Mã tỉnh/phường sai hoặc phường không thuộc tỉnh | `Địa chỉ chưa đúng.` |
+| `LOCATION_PROVINCE_NOT_FOUND` | 404 | Mã tỉnh không tồn tại | `Không tìm thấy tỉnh/thành.` |
+| `VALIDATION_ERROR` | 422 | Bean Validation thất bại ở một số endpoint | `Thông tin gửi lên chưa đúng.` |
+| `SELLER_PROFILE_INCOMPLETE` | 400 | Thiếu hồ sơ seller khi submit | `Hồ sơ cửa hàng chưa đủ.` |
+| `KYC_DOCUMENT_*` | 400/409 | Lỗi document KYC chi tiết: `REQUEST_INVALID`, `TYPE_UNSUPPORTED`, `CONTENT_TYPE_UNSUPPORTED`, `FILENAME_INVALID`, `SIZE_INVALID`, `CHECKSUM_INVALID`, `UPLOAD_INCOMPLETE`, `VERIFICATION_FAILED`, `STATE_INVALID`, `REQUIRED` (400); `DUPLICATE`, `DELETE_NOT_ALLOWED` (409) | `Tài liệu KYC chưa hợp lệ.` |
 
-## 4. Mock contract tích hợp
-
-### 4.1 Notification command
-
-Auth-user publish command vào `notification.commands.v1` sau transaction:
-
-```json
-{
-  "event_id": "01912f55-7a1b-7c12-9c55-8b1c34a6d921",
-  "schema_version": 1,
-  "command_type": "PASSWORD_RESET_REQUESTED",
-  "occurred_at": "2026-08-30T09:00:00Z",
-  "dedupe_key": "password-reset:user-01912f31:token-01912f56",
-  "user_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
-  "channel": "EMAIL",
-  "recipient": "minhanh@example.com",
-  "template": "auth-password-reset-v1",
-  "data": {
-    "display_name": "Nguyễn Minh Anh",
-    "reset_url": "https://taca.vn/reset-password?t=opaque-token-reference",
-    "expires_in_minutes": 30
-  }
-}
-```
-
-### 4.2 Object storage presign
-
-Mock request/response được mô tả ở endpoint KYC presign. Adapter phải kiểm tra `owner_id`, `purpose`, `content_type`, `size_bytes`, `sha256`; không cho client dùng object key của case khác.
-
-### 4.3 Event downstream
-
-Các event `user.created`, `user.updated`, `user.email_verified`, `user.status_changed`, `user.role_changed`, `shop.created`, `shop.updated`, `shop.status_changed`, `shop.kyc.*` dùng chung envelope:
-
-```json
-{
-  "event_id": "01912fe2-7a1b-7c12-9c55-8b1c34a6d921",
-  "schema_version": 1,
-  "aggregate_type": "USER",
-  "aggregate_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
-  "event_type": "user.status_changed",
-  "occurred_at": "2026-08-30T09:00:00Z",
-  "payload": {
-    "user_id": "01912f10-7a1b-7c12-9c55-8b1c34a6d921",
-    "old_status": "ACTIVE",
-    "new_status": "SUSPENDED",
-    "reason": "Vi phạm chính sách nền tảng."
-  }
-}
-```
-
-Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — theo quy ước chung của repo. Consumer dedupe theo `event_id`. Bảng field chi tiết từng event nằm ở `docs/lld/auth-user.md` §6.2.
+> Mã gắn ⏳ có trong thiết kế nhưng code chưa trả. Lỗi không bắt được hiện rơi về response mặc định của Spring (không theo envelope), chưa có `INTERNAL_ERROR`.
 
 ## 5. Giả định & câu hỏi mở
 

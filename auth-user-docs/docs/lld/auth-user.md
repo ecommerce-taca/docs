@@ -1,7 +1,8 @@
 # LLD — Auth User Service
 
-> Nguồn: `EcommercePlatform-v4(6).excalidraw` · `New File 1.penpot.zip` · Cập nhật: `2026-08-30`
-> Tech stack: Java 25 · Spring Boot (pin version trong repository BOM) · MySQL 8.4 (`userdb`) · Kafka · S3/MinIO
+> Nguồn: `docs/api/auth-user.md` · `docs/db/auth-user.md` · `docs/contracts/*` trong service repo · Code: `ecommerce-taca/user-auth-service` @ `develop` (`7c268a0`) · Cập nhật: `2026-10-31`
+> Trạng thái triển khai: 🟡 Triển khai một phần — auth/profile/address/seller onboarding/KYC/RBAC/favorites/follow/Google sign-in đã có code; health chỉ `/actuator/health`; event `user.favorite.*`, `shop.followed/unfollowed` chưa phát.
+> Tech stack: Java 25 · Spring Boot · MySQL 8.4 (`userdb`, Flyway) · Redis (revoked-user cache) · Kafka (transactional outbox) · S3/MinIO · port local `8081`
 
 ## 1. Phạm vi
 
@@ -84,7 +85,7 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
 | Bảng | Cột chính | Index cần có |
 |---|---|---|
 | `users` | `id`, `email`, `phone`, `password_hash`, `full_name`, `date_of_birth`, `status`, `email_verified_at`, `phone_verified_at` | Unique normalized email; unique normalized phone khi khác `NULL`; status; created time |
-| `addresses` | `id`, `user_id`, `recipient`, `phone`, `line1`, `ward`, `district`, `province`, `is_default`, `deleted_at` | `(user_id, is_default)`, `(user_id, deleted_at)` |
+| `addresses` | `id`, `user_id`, `recipient`, `phone`, `line1`, `country_code`, `province_code`, `province`, `ward_code`, `ward`, `district` (legacy), `is_default`, `deleted_at` | `(user_id, is_default)`, `(user_id, deleted_at)` |
 | `favorites` | `id`, `user_id`, `product_id`, `created_at` | Unique `(user_id, product_id)`, `(user_id, created_at)` |
 | `shop_follows` | `id`, `user_id`, `shop_id`, `created_at` | Unique `(user_id, shop_id)`, `(shop_id, created_at)`, `(user_id, created_at)` |
 | `shops` | `id`, `owner_user_id`, `name`, `slug`, `business_name`, `tax_code`, `status`, `warehouse_snapshot`, `bank_account_snapshot` | Unique owner; unique slug; status; tax code |
@@ -116,8 +117,9 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
 
 | Endpoint | Quyền | Kiểm tra |
 |---|---|---|
-| `GET /health/live` | Internal/ops | Process-only; Gateway active healthcheck gọi — ràng buộc cứng (`api-gateway-docs/docs/lld/api-gateway.md` §5.2). |
-| `GET /health/ready` | Internal/ops | MySQL `userdb`, Kafka, config bắt buộc (JWKS keystore/secret manager). |
+| `GET /actuator/health` | Public (permitAll) | ✅ Path thật trong code: Spring Actuator, `show-details: never`. |
+| `GET /health/live` | Internal/ops | ⏳ Chưa có. Thiết kế: process-only; Gateway active healthcheck gọi (`api-gateway-docs/docs/lld/api-gateway.md` §5.2). |
+| `GET /health/ready` | Internal/ops | ⏳ Chưa có. Thiết kế: MySQL `userdb`, Kafka, config bắt buộc. |
 
 ## 3. Luồng xử lý
 
@@ -130,7 +132,7 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
   └─ sai → 400/409, không ghi user
   ↓ hợp lệ
 3 Transaction tạo users(status=ACTIVE, email_verified=false), role BUYER
-  ├→ tạo verification_tokens(email, expires=24h)
+  ├→ tạo verification_tokens(email, expires=30m)
   └→ ghi outbox user.created + notification.email_verification.requested
   ↓ commit
 4 Trả 201 user_id + access token 15 phút + refresh token 30 ngày
@@ -359,20 +361,20 @@ Topic: `notification.commands.v1`
   "data": {
     "display_name": "Nguyen Minh Anh",
     "verification_url": "https://taca.vn/verify?t=opaque-token-reference",
-    "expires_in_minutes": 1440
+    "expires_in_minutes": 30
   }
 }
 ```
 
 Contract rules:
 
-- `channel`: `EMAIL` hoặc `SMS`.
+- `channel`: `EMAIL` (`AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`) hoặc `SMS` (`PHONE_OTP_REQUESTED`, template `auth-phone-otp-v1`). Schema chuẩn: `docs/contracts/schema/notification-command-v1.schema.json` trong service repo. Kafka key = `user_id`; header `event_id`, `command_type`, `schema_version`.
 - `command_type`: `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED`.
 - `data` **không chứa token**: auth-user tự dựng URL và gửi `verification_url`/`expires_in_minutes` (email verify) hoặc `reset_url`/`expires_in_minutes` (reset password) — quyết định Cecilia 2026-09-18.
-- Notification Service trả kết quả async bằng event `notification.delivered.v1` hoặc `notification.failed.v1` với `dedupe_key` giữ nguyên.
+- Command dùng `dedupe_key` (snake_case). Notification Service phát event kết quả async (delivered/failed); payload của Notification dùng **camelCase** (`notificationId`, `dedupeKey`, …), nên consumer phải map `dedupeKey` ↔ `dedupe_key`. Auth-user hiện **không** consume event kết quả (không có `@KafkaListener`).
 - Auth-user không rollback user khi notification provider lỗi; user có thể resend.
 - Notification Service phải mask recipient trong log và không log token/OTP raw.
-- **Known gap v1 (`PHONE_OTP_REQUESTED`)**: Notification v1 chỉ hỗ trợ channel `EMAIL`/`IN_APP` (xem `notification-docs/docs/lld/notification.md` §1.1) — command `channel=SMS` bị trả `409 NOTIFICATION_CHANNEL_DISABLED`; luồng phone OTP sẽ không hoàn tất cho tới khi có provider SMS (quyết định Cecilia 2026-09-18, chấp nhận gap).
+- **Known gap v1 (`PHONE_OTP_REQUESTED`)**: Notification v1 chỉ hỗ trợ channel `EMAIL`/`IN_APP` (xem `notification-docs/docs/lld/notification.md` §1.1) — command `channel=SMS` không qua được validate schema phía Notification và bị đưa vào DLQ của Notification; **không có** response đồng bộ nào (không có `409 NOTIFICATION_CHANNEL_DISABLED` trả về auth-user, vì đây là Kafka command). Auth-user vẫn trả `202 Accepted` cho `request-otp`; luồng phone OTP không hoàn tất cho tới khi có provider SMS (quyết định 2026-09-18, chấp nhận gap).
 
 ### 3.13 Mock contract — Object Storage cho KYC document
 
@@ -496,7 +498,7 @@ Ràng buộc:
 | `MAX_FOLLOWED_SHOPS_PER_USER` | 1000 | shop | Vượt trả `409 SHOP_FOLLOW_LIMIT_REACHED`. |
 | `FAVORITES_CONTAINS_MAX_IDS` | 100 | product_id/request | Batch check trạng thái tim. |
 | `PAGE_SIZE_DEFAULT` | 20 | record | `PAGE_SIZE_MAX=100`. |
-| `EMAIL_VERIFICATION_TTL` | 24 | giờ | Token dùng một lần. |
+| `EMAIL_VERIFICATION_TTL` | 30 | phút | `AUTH_EMAIL_VERIFICATION_TTL_MINUTES`; token dùng một lần. |
 | `PHONE_OTP_TTL` | 5 | phút | `PHONE_OTP_MAX_ATTEMPTS=5`. |
 | `PASSWORD_RESET_TTL` | 30 | phút | Reset token dùng một lần. |
 | `EMAIL_RESEND_LIMIT` | 3 | lần/giờ | Theo user. |
@@ -504,11 +506,17 @@ Ràng buộc:
 | `TOTP_STEP` | 30 | giây | Chuẩn TOTP. |
 | `KYC_MAX_FILE_SIZE` | 10 | MiB/file | PDF/JPG/PNG trong v1. |
 | `KYC_MAX_FILES_PER_CASE` | 10 | file/case | Object private. |
-| `SIGNED_URL_TTL` | 10 | phút | KYC review/download. |
+| `SIGNED_URL_TTL` | 10 | phút | KYC presign/download, shop logo URL. |
+| `KYC_SUBMISSION_EXPIRY` | 30 | ngày | `AUTH_KYC_SUBMISSION_EXPIRY_DAYS`. |
+| `REVOKED_USER_CACHE_TTL` | 15 | phút | Redis, bằng access token TTL. |
+| `GOOGLE_STATE_COOKIE_TTL` | 10 | phút | Authorization-code flow. |
+| Outbox publisher | batch 50, delay 2000 ms, max-retries 3, backoff 2s, send-timeout 35000 ms | — | `auth.outbox-publisher.*`, `AUTH_OUTBOX_PUBLISHER_ENABLED` (default `true`). |
+| Outbox cleanup | published 7 ngày, failed 30 ngày, batch 500, mỗi 1h | — | `auth.outbox-cleanup.*`. |
+| KYC expiry job | batch 50, fixed-delay 60000 ms | — | `AUTH_KYC_EXPIRY_ENABLED`, `AUTH_KYC_EXPIRY_*` (thay cho lịch `00:05` UTC trong thiết kế). |
+| Topic | `notification.commands.v1`, `user.events.v1`, `shop.events.v1`, DLQ `auth-user.events.dlq.v1` | — | `auth.kafka.topics.*`; topic guard `AUTH_KAFKA_TOPIC_GUARD_ENABLED`. |
 | `INTERNAL_REQUEST_TIMEOUT` | 5 | giây | Storage/Notification adapter. |
 | `KAFKA_RETRY_COUNT` | 3 | lần | Cách nhau `KAFKA_RETRY_BACKOFF=2s`. |
 | `KAFKA_RETRY_BACKOFF` | 2 | giây | Sau đó dead-letter. |
-| `KYC_EXPIRY_JOB` | `00:05` | UTC mỗi ngày | Đánh dấu document/case expired idempotent. |
 | `AUDIT_RETENTION` | 365 | ngày | Không lưu secret/OTP/token raw. |
 | `TIMESTAMP_STORAGE` | UTC | timezone | API trả ISO-8601; UI hiển thị user timezone. |
 
@@ -618,6 +626,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `user.events.v1` | `user.email_verified` | `user_id`, `verified_at` | Verify thành công | `user_id` |
 | `user.events.v1` | `user.status_changed` | `user_id`, `old_status`, `new_status`, `reason` | Lock/suspend/restore/delete | `user_id` |
 | `user.events.v1` | `user.role_changed` | `user_id`, `role`, `shop_id`, `action` | Grant/revoke role | `user_id` |
+| `user.events.v1` | `user.password_changed` | `user_id`, thời điểm đổi | Reset/đổi mật khẩu | `user_id` |
 | `shop.events.v1` | `shop.created` | `shop_id`, `owner_user_id`, `status` | Register seller thành công | `shop_id` |
 | `shop.events.v1` | `shop.updated` | `shop_id`, changed fields trong allowlist snapshot (`name`, `slug`, `logo_object_key`, `description`), `updated_at`, `version` | Seller cập nhật shop profile | `shop_id` |
 | `shop.events.v1` | `shop.status_changed` | `shop_id`, `old_status`, `new_status`, `reason`, `changed_at` | Shop chuyển `DRAFT/ACTIVE/SUSPENDED/DELETED` (gồm admin suspend/restore) | `shop_id` |
@@ -629,8 +638,8 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `notification.commands.v1` | `AUTH_VERIFICATION_REQUESTED` | channel, recipient, template, data, dedupe key | Signup/resend | `user_id` |
 | `notification.commands.v1` | `PASSWORD_RESET_REQUESTED` | channel, recipient, template, reset token data | Forgot password | `user_id` |
 | `notification.commands.v1` | `PHONE_OTP_REQUESTED` | channel, recipient, OTP challenge data | Phone verification | `user_id` |
-| `user.events.v1` | `user.favorite.added` / `user.favorite.removed` *(optional v1)* | `user_id`, `product_id` | Thêm/bỏ favorite | `user_id` |
-| `shop.events.v1` | `shop.followed` / `shop.unfollowed` *(optional v1)* | `shop_id`, `user_id`, `follower_count` | Follow/unfollow shop | `shop_id` |
+| `user.events.v1` | ⏳ `user.favorite.added` / `user.favorite.removed` *(optional v1, chưa phát)* | `user_id`, `product_id` | Thêm/bỏ favorite | `user_id` |
+| `shop.events.v1` | ⏳ `shop.followed` / `shop.unfollowed` *(optional v1, chưa phát)* | `shop_id`, `user_id`, `follower_count` | Follow/unfollow shop | `shop_id` |
 
 > `user.favorite.*` và `shop.*followed` là event tùy chọn cho analytics/notification tương lai (VD: shop có sản phẩm mới → thông báo follower). Không có consumer bắt buộc trong v1; nếu không bật thì bỏ khỏi outbox.
 
@@ -640,7 +649,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 
 | Nguồn | Event | Xử lý |
 |---|---|---|
-| Business domain services | Không lắng nghe event nghiệp vụ trong v1 | Auth-user là source of truth; mutation user/shop đi qua API của service này. |
+| Business domain services | Không lắng nghe event nghiệp vụ trong v1 (code không có `@KafkaListener`) | Auth-user là source of truth; mutation user/shop đi qua API của service này. |
 | Object storage adapter | Callback/HTTP complete | Xác minh object metadata và cập nhật `kyc_documents`; request phải idempotent theo object checksum. |
 
 ### 6.4 Reliability và retry
