@@ -15,7 +15,7 @@ Tài liệu thiết kế (HLD, Frontend) và tài liệu từng service (API Spe
 | Order Commerce | [`order-commerce-docs`](order-commerce-docs/docs) | `order-commerce-service` @ `main` (`bf512b5`) | ⏳ | Repo chỉ có `README.md`. Doc tách theo domain `cart`, `checkout`, `order`, `voucher`. |
 | Payment Wallet | [`payment-wallet-docs`](payment-wallet-docs/docs) | `payment-wallet-service` @ `main` (`859b7b1`) | 🟡 | Payout API chưa có (ADR-003); outbox chỉ publish `payment.created`, `wallet.allocated`; event không có recipient. |
 | Shipment | [`shipment-docs`](shipment-docs/docs) | `shipment-service` @ `develop` (`a375a41`) | 🟡 | Chỉ carrier `MOCK` chạy end-to-end; GHN fail-closed, SPX/J&T chưa có adapter. |
-| Notification | `notification-docs` (PR #54) | `notification-service` @ `main` (`6c6d9a2`) | 🟡 | Chưa xử lý `payment.expired`/`payment.refunded`; chưa có template `message-received-v1`. |
+| Notification | [`notification-docs`](notification-docs/docs) | `notification-service` @ `main` (`6c6d9a2`) | 🟡 | Chưa xử lý `payment.expired`/`payment.refunded`; chưa có template `message-received-v1`. |
 | Message | [`message-docs`](message-docs/docs) | `message-service` @ `main` (`bb00012`) | ⏳ | Repo chỉ có `README.md`. |
 | Rating & Comment | [`rating-comment-docs`](rating-comment-docs/docs) | `rating-comment-service` @ `main` (`355daa3`) | ⏳ | Repo chỉ có `README.md`. |
 | API Gateway | [`api-gateway-docs`](api-gateway-docs/docs) | chưa có repo | ⏳ | Thiết kế Kong 3.x DB-less. |

@@ -334,10 +334,10 @@ Category cho command: `AUTH_VERIFICATION_REQUESTED`/`PASSWORD_RESET_REQUESTED`/`
 
 Recipient trong domain event (`extractRecipient`):
 
-1. Field đã chốt: `payload.buyer.user_id` (bắt buộc) / `payload.buyer.email` (optional) — xem `order-commerce-docs/docs/lld/order-commerce.md` §6.1.
+1. Field đã chốt: `payload.buyer.user_id` (bắt buộc) / `payload.buyer.email` (optional) — xem `order-commerce-docs/docs/lld/order.md` §6.1.
 2. Fallback (log warning `consumer.recipient_fallback`): `payload.recipient.user_id/email`, rồi flat `user_id|buyer_id|recipient_user_id` và `email|buyer_email|recipient_email`.
 
-> Payout (`wallet.events.v1`) theo `payment-wallet-docs/docs/lld/payment-wallet.md` §6.1 dùng `owner_user_id`/`owner_email` — code **chưa** đọc hai field này, nên event payout chỉ có recipient khi producer gửi thêm một dạng ở trên (xem §8).
+> Payout: theo `payment-wallet-docs/docs/lld/payment-wallet.md` §6.1, code Payment-Wallet hiện không publish `payout.*` ra Kafka và payload không có recipient (không có `owner_user_id`/`owner_email`). Thiết kế cũ dùng `owner_user_id`/`owner_email`, nhưng `extractRecipient` cũng chưa đọc hai field này, nên email payout chưa gửi được (xem §8).
 
 ### 6.3 Reliability
 
