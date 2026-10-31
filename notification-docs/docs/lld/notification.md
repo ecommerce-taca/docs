@@ -241,8 +241,8 @@ PROCESSING (lease hết hạn) ──reclaim──► PROCESSING
 | Order-Commerce | `order.events.v1` | `order.confirmed`, `order.paid`, `order.cancelled` | Xem bảng §6.2. | ✅ |
 | Order-Commerce | `invoice.events.v1` | `invoice.issued` | Xem bảng §6.2. | ✅ |
 | Shipment | `shipment.events.v1` | `shipment.delivered`, `shipment.failed` | Xem bảng §6.2. | ✅ |
-| Payment-Wallet | `payment.events.v1` | `payment.succeeded`, `payment.failed` | Xem bảng §6.2. | ✅ |
-| Payment-Wallet | `wallet.events.v1` | `payout.succeeded`, `payout.failed` | Xem bảng §6.2. | 🟡 Recipient `owner_*` chưa đọc. |
+| Payment-Wallet | `payment.events.v1` | `payment.succeeded`, `payment.failed` | Xem bảng §6.2. | ⏳ Phía Notification đã map, nhưng Payment-Wallet chưa route 2 event này ra Kafka; payload Payment-Wallet là record camelCase phẳng, không có `event_type`/`payload`/`buyer` nên sẽ fail `DomainEventSchema` → DLQ. |
+| Payment-Wallet | `wallet.events.v1` | `payout.succeeded`, `payout.failed` | Xem bảng §6.2. | ⏳ Payment-Wallet chưa phát `payout.*` ra Kafka (chỉ `wallet.allocated`); payload chưa có recipient, và Notification chỉ đọc `buyer.*` (không đọc `owner_*`). |
 
 Event khác trên các topic trên (vd. `payment.expired`, `payment.refunded`, `order.delivered`) **chưa được map** → ghi `processed_events` và bỏ qua.
 
@@ -325,7 +325,7 @@ Envelope domain event (`DomainEventSchema`):
 | `invoice.issued` | `invoice-issued-v1` | EMAIL | `ORDER` | `ORDER` / `invoice_id` | ✅ |
 | `shipment.delivered` | `shipment-delivered-v1` | IN_APP | `SHIPMENT` | `SHIPMENT` / `shipment_id` | ✅ |
 | `shipment.failed` | `shipment-failed-v1` | EMAIL + IN_APP | `SHIPMENT` | `SHIPMENT` / `shipment_id` | ✅ |
-| `payment.succeeded` / `payment.failed` | `payment-result-v1` | EMAIL + IN_APP | `PAYMENT` | `PAYMENT` / `payment_id` | ✅ |
+| `payment.succeeded` / `payment.failed` | `payment-result-v1` | EMAIL + IN_APP | `PAYMENT` | `PAYMENT` / `payment_id` | 🟡 Map có trong code; producer chưa phát, và payload Payment-Wallet dùng `paymentId` (camelCase) chứ không phải `payment_id` |
 | `payout.succeeded` / `payout.failed` | `payout-result-v1` | EMAIL + IN_APP | `PAYMENT` | `PAYMENT` / `payout_id` | 🟡 recipient `owner_*` chưa đọc |
 
 `reference_id` fallback về `aggregate_id` khi payload thiếu key.

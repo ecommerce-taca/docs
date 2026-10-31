@@ -87,13 +87,13 @@ Order state là source of truth của Order-Commerce; payment/shipment/inventory
 | Topic | Event | Payload chính |
 |---|---|---|
 | `order.events.v1` | `order.created` | order/group, buyer, shop, items snapshot, total, payment method |
-| `order.events.v1` | `order.confirmed` | order/group, shop, payment method, confirmed_at |
-| `order.events.v1` | `order.paid` | order, payment reference, paid_at |
+| `order.events.v1` | `order.confirmed` | order/group, `buyer` (`user_id`, `email`), shop, payment method, confirmed_at |
+| `order.events.v1` | `order.paid` | order, `buyer` (`user_id`, `email` có thể `null`), payment reference, paid_at |
 | `order.events.v1` | `order.processing` | order, shop |
 | `order.events.v1` | `order.shipped` | order, shipment reference |
 | `order.events.v1` | `order.delivered` | order snapshot + `buyer` (`user_id`, `email`) + `items[]` (`product_id`, `sku_id`) + `delivered_at` — `buyer`/`items[]` là bắt buộc để Rating-Comment dựng eligibility |
-| `order.events.v1` | `order.cancelled` | order, reason, compensation action |
-| `invoice.events.v1` | `invoice.issued` | invoice/order/number/total/pdf reference |
+| `order.events.v1` | `order.cancelled` | order, `buyer` (`user_id`, `email`), reason, cancelled_at, compensation action |
+| `invoice.events.v1` | `invoice.issued` | invoice/order/number, `buyer` (`user_id`, `email`), total/pdf reference |
 
 Phân biệt bắt buộc giữa hai event dễ nhầm:
 
@@ -198,6 +198,8 @@ lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3
 | Shipment | `shipment.delivered` | Order chuyển `SHIPPED → DELIVERED`; cập nhật `delivered_at`. |
 | Shipment | `shipment.failed` | Ghi nhận delivery failed vào timeline/shipment projection; **giữ** `OrderStatus = SHIPPED` (enum không có FAILED) — xử lý tiếp qua refund/return workflow ở Payment/Support, không tự đổi order status. |
 | Auth User | `user.status_changed` (mock policy) | Chặn hành động account mới nếu suspended; không đổi order history. |
+
+> **Lệch với code producer (2026-10-31, xem `CONTRACT-MATRIX.md`):** Payment-Wallet (`payment-wallet-service@main`) hiện chỉ route `payment.created` và `wallet.allocated` ra Kafka; `payment.succeeded/failed/expired/refunded` chỉ nằm trong outbox. Payload Payment-Wallet là record camelCase phẳng (`eventId`, `occurredAt`, `paymentId`…), **không** có envelope `event_type`/`payload` như các topic khác — consumer Order phải chờ Payment-Wallet chuẩn hoá envelope (`payment-wallet-docs/docs/lld/payment-wallet.md` §6.1).
 
 ## 7. Mã lỗi
 

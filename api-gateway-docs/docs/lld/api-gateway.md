@@ -223,6 +223,7 @@ So với bản NestJS, thứ tự nghiệp vụ giữ nguyên; khác biệt là 
 | `/api/v1/users/**` (gồm `/users/me/favorites/**`, `/users/me/following`) | `auth-user` | Authenticated | 5s | Không retry mutation |
 | `/api/v1/seller/onboarding/**`, `/api/v1/seller/shop`, `/api/v1/admin/users/**`, `/api/v1/admin/shops/**`, `/api/v1/admin/audit-logs` | `auth-user` | Role-gated | 5s | Không retry mutation |
 | `/api/v1/shops/{shopId}`, `/api/v1/shops/{shopId}/followers/count`, `/api/v1/shops/{shopId}/follow` | `auth-user` | GET public (profile/followers count); follow authenticated | 5s | GET tối đa 1 lần |
+| `/api/v1/locations/vn/**` | `auth-user` | Public (danh mục tỉnh/phường cho form địa chỉ) | 5s | GET tối đa 1 lần |
 | `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/seller/products/**`, `/api/v1/admin/catalog/**`, `/api/v1/shops/{shopId}/products` | `product-catalog` | GET public; seller/admin mutation role-gated | GET 5s, mutation 5s | GET tối đa 1 lần |
 | `/api/v1/products/search` (exact — ưu tiên trước `/api/v1/products/**`), `/api/v1/search/**`, `/api/v1/admin/search/**` | `search` | GET public; admin role-gated | 5s | GET tối đa 1 lần |
 | `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**`, `/api/v1/seller/vouchers/**`, `/api/v1/seller/orders/**`, `/api/v1/admin/vouchers/**` | `order-commerce` | Authenticated; seller/admin route theo endpoint | 5s; checkout 10s | Chỉ GET; mutation dùng idempotency ở service |
@@ -602,6 +603,8 @@ upstreams:
           interval: 10
           http_failures: 3
 ```
+
+> **Path probe thực tế theo upstream (kiểm code 2026-10-31, xem `CONTRACT-MATRIX.md`):** `/health/live` có ở product-catalog, search, inventory, shipment, notification, payment-wallet (Actuator group `live`). **auth-user chưa có** — chỉ có `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` (k8s probe dùng hai path sau). Cho tới khi auth-user thêm `/health/live`, `up-auth-user` phải override `http_path: /actuator/health/liveness`. Order-commerce, rating-comment, message chưa có code.
 
 Ba khác biệt so với circuit breaker tự viết, **phải biết trước khi tin vào con số cũ**:
 
