@@ -525,20 +525,24 @@ Chuyển trạng thái:
 | `product.events.v1` | `product.unblocked` | `product_id`, `next_status` (`ACTIVE` → hiện lại doc ở Search, `INACTIVE` → giữ ẩn), actor | Admin unblock | `product_id` |
 | `product.events.v1` | `product.archived` | `product_id`, reason, archived_at | Archive | `product_id` |
 | `product.events.v1` | `product.skus_updated` | `product_id`, `shop_id`, `version`, `skus[]` (toàn bộ SKU sau khi replace) | `PUT /seller/products/{id}/skus` commit | `product_id` |
-| `product.events.v1` | `product.media_uploaded` | `product_id`, `shop_id`, `media_id`, `object_key`, `content_type`, … | Media complete | `product_id` |
+| `product.events.v1` | `product.media_uploaded` | `product_id`, `shop_id`, `media_id`, `object_key`, `content_type`, `size_bytes`, `sha256`, `is_cover`, `scope`, `sku_id`, `status`, `url` | Media complete | `product_id` |
 | `product.events.v1` | `product.media_deleted` | `product_id`, `shop_id`, `media_id` | Media delete | `product_id` |
-| `sku.events.v1` | `sku.created` | `sku_id`, `product_id`, `shop_id`, `variant_key`, attributes, price | **Chỉ** từ import worker | `sku_id` |
+| `sku.events.v1` | `sku.created` | `sku_id`, `product_id`, `shop_id`, `seller_sku`, `variant_key`, `status` (không có attributes/price) | **Chỉ** từ import worker | `sku_id` |
 | `sku.events.v1` | `sku.updated` | `sku_id`, `product_id`, `shop_id`, changed fields, version | ⏳ Chưa phát (SKU thay đổi qua API đi bằng `product.skus_updated`) | `sku_id` |
 | `sku.events.v1` | `sku.status_changed` | `sku_id`, `product_id`, `shop_id`, old/new status, reason | ⏳ Chưa phát | `sku_id` |
 | `category.events.v1` | `category.created/updated` | category, parent, path, status | ⏳ Chưa phát (admin category API không ghi outbox) | `category_id` |
 | `category.events.v1` | `category.status_changed` | old/new status, path | ⏳ Chưa phát | `category_id` |
 | `catalog.events.v1` | `product.category_changed` | `product_id`, `shop_id`, `primary_category_id`, `secondary_category_ids`, `version` | Assignment changed | `product_id` |
 | `catalog.events.v1` | `product.media_updated` | media IDs, cover, version | ⏳ Không phát — thay bằng `product.media_uploaded`/`product.media_deleted` trên `product.events.v1` | `product_id` |
-| `catalog.events.v1` | `product.shop_snapshot_updated` | product_id, shop_id, changed snapshot fields | Shop event projection update | `product_id` |
+| `catalog.events.v1` | `product.shop_snapshot_updated` | `shop_id`, `name`, `slug`, `old_name`, `old_slug`, `updated_at` — **không có** `product_id`; `aggregate_type=SHOP_PROJECTION`, `aggregate_id=shop_id` | Shop đổi tên/slug trong projection | `shop_id` |
 
 Tất cả event ghi vào `outbox_events` trong cùng transaction Mongo; Debezium (`deploy/debezium/outbox-connector.json`, collection `product_catalog.outbox_events`) route theo field `topic`, key = `aggregate_id`, đưa `version`, `actor_user_id`, `event_type`, `schema_version`, `occurred_at`, `aggregate_type` vào envelope và `traceparent` vào Kafka header. `product.unblocked` hiện luôn có `next_status: "INACTIVE"`.
 
-> **Lệch với Search (cần xử lý ở code):** Search chờ `product.media_updated` trên `catalog.events.v1` và `sku.updated`/`sku.status_changed`/`category.*`, nhưng Product Catalog chưa phát các event này (xem `search-docs/docs/lld/search.md` §6.1).
+> **Lệch với Search (cần xử lý ở code, kiểm 2026-10-31 — xem `CONTRACT-MATRIX.md`):**
+> - Search xử lý `product.media_uploaded` (chỉ khi `is_cover=true`, lấy `url`) nhưng bỏ qua `product.media_deleted`, nên xoá ảnh cover không cập nhật `cover_url`. Search vẫn còn nhánh chờ `product.media_updated`, event mà Catalog không phát.
+> - `sku.updated`/`sku.status_changed`/`category.*` Search có handler nhưng Catalog chưa phát.
+> - `product.shop_snapshot_updated` có `aggregate_id=shop_id`; `CatalogHandler` của Search dùng `aggregate_id` làm product ID, nên patch vào document không tồn tại. Catalog cần phát mỗi product một event (hoặc Search cần update-by-query theo `shop.shop_id`).
+> - Connector không đặt `event_id`/`aggregate_id` vào value (EventRouter đưa `event_id` vào header `id`, `aggregate_id` làm key). Search và Product Catalog consumer đều bắt buộc `event_id` trong body, nên cần thêm `event_id:envelope:event_id,aggregate_id:envelope:aggregate_id` vào `collection.fields.additional.placement`.
 
 > Map giá cho Search index: Search lấy `price.sale` làm scalar `long` VND cho range/sort; `base`/`currency` để hiển thị. `category_path` và `visibility_status` sinh ra từ phía Product khi publish để Search không phải join thêm.
 

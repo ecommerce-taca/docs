@@ -628,13 +628,14 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `user.events.v1` | `user.role_changed` | `user_id`, `role`, `shop_id`, `action` | Grant/revoke role | `user_id` |
 | `user.events.v1` | `user.password_changed` | `user_id`, thời điểm đổi | Reset/đổi mật khẩu | `user_id` |
 | `shop.events.v1` | `shop.created` | `shop_id`, `owner_user_id`, `status` | Register seller thành công | `shop_id` |
-| `shop.events.v1` | `shop.updated` | `shop_id`, changed fields trong allowlist snapshot (`name`, `slug`, `logo_object_key`, `description`), `updated_at`, `version` | Seller cập nhật shop profile | `shop_id` |
+| `shop.events.v1` | `shop.updated` | `shop_id`, `changed_fields[]`, `snapshot` (object lồng, chỉ chứa field đổi trong `name`, `description`, `logo_object_key` — **không có** `slug`), `updated_at`, `version` | Seller cập nhật shop profile | `shop_id` |
 | `shop.events.v1` | `shop.status_changed` | `shop_id`, `old_status`, `new_status`, `reason`, `changed_at` | Shop chuyển `DRAFT/ACTIVE/SUSPENDED/DELETED` (gồm admin suspend/restore) | `shop_id` |
 | `shop.events.v1` | `shop.kyc.submitted` | `shop_id`, `kyc_case_id`, document types | Submit KYC | `shop_id` |
 | `shop.events.v1` | `shop.kyc.approved` | `shop_id`, `kyc_case_id`, `approved_at` | Admin approve | `shop_id` |
 | `shop.events.v1` | `shop.kyc.needs_info` | `shop_id`, `kyc_case_id`, `reason` | Cần bổ sung | `shop_id` |
 | `shop.events.v1` | `shop.kyc.rejected` | `shop_id`, `kyc_case_id`, `reason` | Admin reject | `shop_id` |
 | `shop.events.v1` | `shop.kyc.expired` | `shop_id`, `kyc_case_id`, `expired_documents` | Scheduled job | `shop_id` |
+| `shop.events.v1` | `kyc.document.delete_requested` | `shop_id`, `document_id`, `object_key` | Seller xoá tài liệu KYC (`DeleteKycDocumentService`) | `shop_id` |
 | `notification.commands.v1` | `AUTH_VERIFICATION_REQUESTED` | channel, recipient, template, data, dedupe key | Signup/resend | `user_id` |
 | `notification.commands.v1` | `PASSWORD_RESET_REQUESTED` | channel, recipient, template, reset token data | Forgot password | `user_id` |
 | `notification.commands.v1` | `PHONE_OTP_REQUESTED` | channel, recipient, OTP challenge data | Phone verification | `user_id` |

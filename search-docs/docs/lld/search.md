@@ -99,7 +99,7 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 
 ### 3.2 Product event indexing
 
-1. Consumer nhận event với `event_id`, `aggregate_id`, `version`, `traceparent`.
+1. Consumer nhận event với `event_id`, `aggregate_id`, `version`, `traceparent`. `event_id` phải nằm trong value JSON (thiếu → DLQ ngay); connector Debezium của Catalog hiện chưa đặt `event_id` vào envelope (xem `product-catalog-docs/docs/lld/product-catalog.md` §6.2).
 2. Kiểm schema/version, dedupe event và đọc current indexed version.
 3. `product.created/updated/published` → upsert document; `unpublished/blocked/archived` → đổi visibility hoặc delete logical; `unblocked` → theo `next_status` (`ACTIVE` hiện lại, `INACTIVE` giữ ẩn).
 4. Bulk write index, cập nhật indexed version/event ID và metric lag.
@@ -179,15 +179,16 @@ Các hằng số trên ở `src/common/constants.ts` và `src/search-query/const
 
 ### 6.1 Event lắng nghe
 
-Routing theo **topic** (không theo `event_type`), trừ `product.skus_updated`. `ProductHandler` xử lý mọi event trên `product.events.v1` qua `ProductDocumentBuilder` (visibility lấy từ `payload.visibility_status`/`next_status`); `product.media_updated` chỉ cập nhật `cover_url`. Search không phát event; chỉ publish DLQ `search.events.dlq.v1`.
+Routing theo **topic** (không theo `event_type`), trừ `product.skus_updated`. `ProductHandler` xử lý mọi event trên `product.events.v1` qua `ProductDocumentBuilder` (visibility lấy từ `payload.visibility_status`/`next_status`); `product.media_uploaded` (khi `is_cover=true`) và `product.media_updated` chỉ cập nhật `cover_url`. Search không phát event; chỉ publish DLQ `search.events.dlq.v1`.
 
 | Topic | Event | Xử lý |
 |---|---|---|
 | `product.events.v1` | `product.created`, `product.updated`, `product.published`, `product.unpublished`, `product.blocked`, `product.unblocked`, `product.archived` | Build/upsert/hide/delete logical document. `product.unblocked` mang `next_status`: nếu `ACTIVE` thì hiển thị lại document, nếu `INACTIVE` thì giữ ẩn — không bỏ qua event này, nếu không sản phẩm được gỡ chặn sẽ không bao giờ quay lại index. |
+| `product.events.v1` | `product.media_uploaded` | `ProductDocumentBuilder`: chỉ khi `payload.is_cover=true` và có `payload.url` thì patch `cover_url`; ngược lại bỏ qua. `product.media_deleted` hiện **không** được xử lý (cover đã xoá vẫn còn trong index). |
 | `product.events.v1` | `product.skus_updated` | Catalog gửi toàn bộ danh sách SKU của product trên topic product; route sang `SkuHandler.handleSkusUpdated`. |
 | `sku.events.v1` | `sku.created`, `sku.updated`, `sku.status_changed` | Cập nhật SKU/variant/price searchable; gộp giá trị variant dimension của các SKU `ACTIVE` vào `attributes` (db §3.1). |
 | `category.events.v1` | `category.created`, `category.updated`, `category.status_changed` | (Code ghi chú: Product Catalog hiện chưa publish category event, nên khi projection chưa biết category thì index leaf id.) Upsert projection `search-categories` (db §3.4); đổi path thì reindex affected docs, đổi tên thì không. |
-| `catalog.events.v1` | `product.category_changed`, `product.media_updated`, `product.shop_snapshot_updated` | Reindex document affected. |
+| `catalog.events.v1` | `product.category_changed`, `product.media_updated`, `product.shop_snapshot_updated` | Reindex document affected. `product.media_updated` không được Catalog phát (Catalog dùng `product.media_uploaded`/`product.media_deleted` trên `product.events.v1`). `product.shop_snapshot_updated` của Catalog có `aggregate_id=shop_id` và không có `product_id`, nên `CatalogHandler` hiện patch nhầm document ID = shop ID (gap code, xem `CONTRACT-MATRIX.md`). |
 | `rating.events.v1` | `rating.aggregate.updated` | Cập nhật `rating_avg`/`rating_count` của product; contract do `rating-comment` sở hữu (payload: `product_id`, `avg`, `count`, `distribution`). |
 
 ### 6.2 Mock contract — Product event

@@ -40,7 +40,7 @@ Theo `docs/api/order-commerce.md` §1 (base path `/api/v1`, auth qua Gateway, en
 }
 ```
 
-Giá lấy từ Shipment `GET /internal/shipping/quote`. Dependency down → `503 ORDER_DEPENDENCY_UNAVAILABLE` (UI phải cho retry, không tự đặt fee = 0).
+Giá lấy từ Shipment `POST /api/v1/internal/shipping/quote` (`shipment-docs/docs/api/shipment.md` §3.2; header `X-Internal-Service-Token`). Dependency down → `503 ORDER_DEPENDENCY_UNAVAILABLE` (UI phải cho retry, không tự đặt fee = 0).
 
 ### 3.2 `POST /checkout/preview`
 

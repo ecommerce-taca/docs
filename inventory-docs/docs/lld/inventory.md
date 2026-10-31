@@ -199,7 +199,7 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 
 | Topic | Event | Payload chính |
 |---|---|---|
-| `inventory.events.v1` | `inventory.stock_snapshot.updated` | sku/product, available/reserved/committed snapshot, source_version, as_of |
+| `inventory.events.v1` | `inventory.stock_snapshot.updated` | `sku_id`, `product_id`, `available_qty`, `reserved_qty`, `committed_qty`, `source_version`, `as_of` (tên field theo consumer `InventoryProjectionService` của Product Catalog) |
 | `inventory.events.v1` | `inventory.reservation.created` | reservation/order_intent, SKU quantities, expires_at |
 | `inventory.events.v1` | `inventory.reservation.committed` | reservation/order, committed_at |
 | `inventory.events.v1` | `inventory.reservation.released` | reservation/order/reason |

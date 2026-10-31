@@ -234,7 +234,7 @@ Response `200`:
 }
 ```
 
-`PROCESSING → SHIPPED`. Order-Commerce gọi `POST /internal/shipments` với `carrier` seller vừa chọn, nhận `tracking_code` thật từ Shipment (không phải seller tự gõ) — xem `shipment-docs/docs/api/shipment.md` §3.3. `carrier` không nằm trong danh sách khả dụng của đơn (đã đổi từ lúc seller xem carrier list) → `400 SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` (Order-Commerce pass-through nguyên trạng lỗi từ Shipment). Seller **không** set `DELIVERED` trực tiếp — trạng thái đó chỉ do Shipment event xác nhận (carrier webhook).
+`PROCESSING → SHIPPED`. Order-Commerce gọi `POST /api/v1/internal/shipments` với `carrier` seller vừa chọn, nhận `tracking_code` thật từ Shipment (không phải seller tự gõ) — xem `shipment-docs/docs/api/shipment.md` §3.4. `carrier` không nằm trong danh sách khả dụng của đơn (đã đổi từ lúc seller xem carrier list) → `400 SHIPMENT_CARRIER_UNAVAILABLE_FOR_ORDER` (Order-Commerce pass-through nguyên trạng lỗi từ Shipment). Seller **không** set `DELIVERED` trực tiếp — trạng thái đó chỉ do Shipment event xác nhận (carrier webhook).
 
 ### 3.5 `POST /seller/orders/bulk-accept` — accept hàng loạt
 
