@@ -1,6 +1,6 @@
 # API Spec — Search Service
 
-> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · Code: `ecommerce-taca/search-service` @ `develop` (`9750a2f`) · Cập nhật: `2026-10-31`
+> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · Code: `ecommerce-taca/search-service` @ `develop` (`13d36e3`) · Cập nhật: `2026-10-31`
 > Trạng thái triển khai: ✅ Đã triển khai — search, suggest, readiness, admin status/reindex/cancel, Kafka consumer 5 topic, DLQ; nhánh `main` mới chỉ có README, code nằm ở `develop`.
 > Base path: `/api/v1` (trừ `GET /health/live` và `GET /metrics` không có prefix) · Port mặc định `3000` · External access qua API Gateway
 

@@ -8,9 +8,9 @@ Tài liệu thiết kế (HLD, Frontend) và tài liệu từng service (API Spe
 
 | Service | Docs | Repo @ nhánh (commit) | Trạng thái | Ghi chú |
 |---|---|---|---|---|
-| Auth User | [`auth-user-docs`](auth-user-docs/docs) | `user-auth-service` @ `develop` (`7c268a0`) | 🟡 | Endpoint nghiệp vụ đủ; health chỉ có `/actuator/health[/liveness|/readiness]`, chưa có `/health/live`; event favorite/follow chưa phát. |
-| Product Catalog | [`product-catalog-docs`](product-catalog-docs/docs) | `Product-Catalog-Service` @ `develop` (`fe1e0d7`) | 🟡 | Contract với Search/Auth-user đã khớp (search-service#27, Product-Catalog-Service#44); chưa phát `sku.updated`, `sku.status_changed`, `category.*`; admin chưa kiểm step-up. |
-| Search | [`search-docs`](search-docs/docs) | `search-service` @ `develop` (`9750a2f`) | ✅ | Một số event consumer chờ chưa được Product Catalog phát (xem dòng trên). |
+| Auth User | [`auth-user-docs`](auth-user-docs/docs) | `user-auth-service` @ `develop` (`7c268a0`) | 🟡 | Endpoint nghiệp vụ đủ; health chỉ có `/actuator/health` (`/liveness`, `/readiness` chỉ khi chạy trên K8s), chưa có `/health/live`; event favorite/follow chưa phát. |
+| Product Catalog | [`product-catalog-docs`](product-catalog-docs/docs) | `Product-Catalog-Service` @ `develop` (`6572ece`) | 🟡 | Contract với Search/Auth-user đã khớp (search-service#27, Product-Catalog-Service#44); chưa phát `sku.updated`, `sku.status_changed`, `category.*`; admin chưa kiểm step-up. |
+| Search | [`search-docs`](search-docs/docs) | `search-service` @ `develop` (`13d36e3`) | ✅ | Một số event consumer chờ chưa được Product Catalog phát (xem dòng trên). |
 | Inventory | [`inventory-docs`](inventory-docs/docs) | `inventory-service` @ `develop` (`92c1454`) | ⏳ | Chỉ có scaffold (health, auth policy, Liquibase baseline). |
 | Order Commerce | [`order-commerce-docs`](order-commerce-docs/docs) | `order-commerce-service` @ `main` (`bf512b5`) | ⏳ | Repo chỉ có `README.md`. Doc tách theo domain `cart`, `checkout`, `order`, `voucher`. |
 | Payment Wallet | [`payment-wallet-docs`](payment-wallet-docs/docs) | `payment-wallet-service` @ `main` (`859b7b1`) | 🟡 | Payout API chưa có (ADR-003); outbox chỉ publish `payment.created`, `wallet.allocated`; event camelCase không có envelope `event_type`/`payload`, không có recipient. |

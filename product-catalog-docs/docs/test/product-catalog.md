@@ -1,6 +1,6 @@
 # Test Plan — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · `docs/api/product-catalog.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · `docs/api/product-catalog.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`6572ece`) · Cập nhật: `2026-10-31`
 > Trạng thái triển khai: ✅ Đã triển khai — unit test `*.spec.ts` cạnh source (Jest); `product-catalog-api.http` + `.postman.json` cho test thủ công; CI `.github/workflows/ci.yml`.
 > Phạm vi: Product/SPU, SKU/variant, dynamic attributes, category, media metadata, shop/KYC projection, inventory display projection, outbox và public/seller/admin API.
 > Môi trường: Jest (`*.spec.ts`) + Supertest, MongoDB local (`mongo-init.sh`), file `product-catalog-api.http`/Postman
@@ -140,7 +140,7 @@
 | `CategoryPolicy` | Depth 1–5, cycle detection, primary/secondary limits, inactive/archived assignment. |
 | `MediaPolicy` | Type/size/quota, one READY cover, object key tenant binding, checksum. |
 | `InventoryProjectionService` | Quantity non-negative, stock status threshold 5, stale after 60s, source version monotonic, dedupe. |
-| `ShopProjectionService` | Allowlist fields (`shop.updated` không có `logo_url` sẵn → resolve `logo_object_key` thành URL), suy `kyc_status` từ `event_type` (payload KYC không có field này), dedupe theo `event_id`+`occurred_at` (không có `source_version` ở event KYC), suspended status. |
+| `ShopProjectionService` | `shop.updated` lấy tên từ `payload.snapshot.name` (test `shop-projection.service.spec.ts`); `logo_object_key` chưa được đọc nên logo không đổi, suy `kyc_status` từ `event_type` (payload KYC không có field này), dedupe theo `event_id`+`occurred_at` (không có `source_version` ở event KYC), suspended status. |
 | `RatingProjectionService` | Upsert `rating_summary`, dedupe theo `event_id`, giá trị mặc định khi chưa có review (`avg=null, count=0`). |
 | `OutboxPublisher` | Write-only: ghi record đúng schema/aggregate key trong cùng transaction với domain mutation; **không** test retry/backoff/DLQ ở unit này (thuộc connector, không phải class này); redaction payload (không leak secret/KYC document); envelope có `version` cho consumer order; ghi đúng `topic` theo `event_type` (map 1-1 với `lld` §6.2); `actor_user_id` lấy từ request context khi có, `null` khi event sinh ra từ việc consume event khác; `traceparent` lấy từ active trace context, `null` nếu không có (background job). |
 | `AuthorizationPolicy` | Seller owner/staff scope, admin roles, step-up, public visibility. |

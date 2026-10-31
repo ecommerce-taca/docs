@@ -42,7 +42,7 @@ Mọi file mở đầu bằng tiêu đề + 3 dòng blockquote:
 
 ### 3.3 LLD
 
-1. `## 1. Phạm vi` · 2. `## 2. Cấu trúc bên trong` (cây package thật trong repo) · 3. `## 3. Luồng xử lý` · 4. `## 4. Hằng số & cấu hình` (cột `Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú`) · 5. `## 5. Enum & trạng thái` · 6. `## 6. Event phát ra / lắng nghe` · 7. `## 7. Mã lỗi` · 8. `## 8. Giả định & câu hỏi mở`.
+1. `## 1. Phạm vi` · 2. `## 2. Cấu trúc bên trong` (cây package thật trong repo) · 3. `## 3. Luồng xử lý` · 4. `## 4. Hằng số & cấu hình` (cột `Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú`; hằng số cố định trong code hoặc thiết kế chưa code ghi `—` ở cột biến môi trường) · 5. `## 5. Enum & trạng thái` · 6. `## 6. Event phát ra / lắng nghe` · 7. `## 7. Mã lỗi` · 8. `## 8. Giả định & câu hỏi mở`.
 
 ### 3.4 Test Plan
 

@@ -150,32 +150,32 @@ Commit/release/expire cùng reservation đã hoàn tất trả idempotent succes
 
 ## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Ghi chú |
-|---|---:|---|
-| `QTY_MIN` | 0 | Integer, không âm. |
-| `QTY_MAX_PER_SKU` | 999999999 | Chống overflow/nhập nhầm. |
-| `RESERVATION_TTL` | 15 phút | Align Order checkout. |
-| `RESERVATION_MAX_ITEMS` | 100 | SKU/request. |
-| `ADJUSTMENT_MAX_DELTA` | 999999999 | Bounded request. |
-| `DB_LOCK_TIMEOUT` | 3s | Deadlock/lock conflict map 503 hoặc retry policy. |
-| `IDEMPOTENCY_RETENTION` | 24h | Command result snapshot. |
-| `EXPIRY_BATCH_SIZE` | 500 | Mỗi job batch. |
-| `EXPIRY_INTERVAL` | 30s | Job trigger; phải idempotent multi-instance. |
-| `OUTBOX_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
-| `STOCK_SNAPSHOT_EVENT` | per successful mutation | Product projection only. |
-| `INTERNAL_TIMEOUT` | 5s | REST client; không kéo dài DB lock. |
-| `TIMESTAMP_FORMAT` | UTC ISO-8601 | DB DATETIME(6), API/event UTC. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| `QTY_MIN` | 0 | — | Integer, không âm. |
+| `QTY_MAX_PER_SKU` | 999999999 | — | Chống overflow/nhập nhầm. |
+| `RESERVATION_TTL` | 15 phút | — | Align Order checkout. |
+| `RESERVATION_MAX_ITEMS` | 100 | — | SKU/request. |
+| `ADJUSTMENT_MAX_DELTA` | 999999999 | — | Bounded request. |
+| `DB_LOCK_TIMEOUT` | 3s | — | Deadlock/lock conflict map 503 hoặc retry policy. |
+| `IDEMPOTENCY_RETENTION` | 24h | — | Command result snapshot. |
+| `EXPIRY_BATCH_SIZE` | 500 | — | Mỗi job batch. |
+| `EXPIRY_INTERVAL` | 30s | — | Job trigger; phải idempotent multi-instance. |
+| `OUTBOX_RETRY_COUNT` | 3 | — | Backoff 2s rồi DLQ. |
+| `STOCK_SNAPSHOT_EVENT` | per successful mutation | — | Product projection only. |
+| `INTERNAL_TIMEOUT` | 5s | — | REST client; không kéo dài DB lock. |
+| `TIMESTAMP_FORMAT` | UTC ISO-8601 | — | DB DATETIME(6), API/event UTC. |
 
 Cấu hình đã có trong `application.yml` (✅):
 
-| Tên | Giá trị mặc định | Biến môi trường/property |
-|---|---|---|
-| Port | `8080` | `server.port` |
-| Datasource | `jdbc:mysql://localhost:3306/inventorydb`, user `inventory` | `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` |
-| Kafka | `localhost:9092`, group `inventory-service-group`, `auto-offset-reset: earliest` | `SPRING_KAFKA_BOOTSTRAP_SERVERS` |
-| Liquibase | `classpath:db/changelog/db.changelog-master.yaml` | `spring.liquibase.*` |
-| Internal token | (không default) | `inventory.security.internal-token` |
-| Hikari connection timeout | 2000 ms | set trong `HealthProbeService` |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| Port | `8080` | `server.port` | Ghi cứng trong yaml; `SERVER_PORT` vẫn ghi đè được nhờ relaxed binding của Spring. |
+| Datasource | `jdbc:mysql://localhost:3306/inventorydb`, user `inventory` | `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` | |
+| Kafka | `localhost:9092`, group `inventory-service-group`, `auto-offset-reset: earliest` | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | |
+| Liquibase | `classpath:db/changelog/db.changelog-master.yaml` | `spring.liquibase.*` | |
+| Internal token | (không default) | `inventory.security.internal-token` | |
+| Hikari connection timeout | 2000 ms | set trong `HealthProbeService` | |
 
 Các hằng số ở bảng trên là thiết kế ⏳.
 

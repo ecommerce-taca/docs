@@ -165,13 +165,13 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-SELLER-09 | `PUT /seller/onboarding/bank` | Account valid | 200 | Masked account | Ciphertext khác raw. |
 | IT-SELLER-10 | `PUT /seller/onboarding/bank` | Account invalid/confirm false | 400 | `PROFILE_INVALID`/`BANK_ACCOUNT_INVALID` | Không lưu raw. |
 | IT-SELLER-11 | `POST /seller/onboarding/kyc/documents/presign` | PDF/JPG/PNG <=10MiB | 201 | Signed URL TTL 10m | Private key/object. |
-| IT-SELLER-12 | `POST /seller/onboarding/kyc/documents/presign` | Unsupported MIME | 400 | `KYC_DOCUMENT_INVALID` | Không presign. |
+| IT-SELLER-12 | `POST /seller/onboarding/kyc/documents/presign` | Unsupported MIME | 400 | `KYC_DOCUMENT_CONTENT_TYPE_UNSUPPORTED` | Không presign. |
 | IT-SELLER-13 | `POST /seller/onboarding/kyc/documents/presign` | 10MiB + 1 byte | 413 | `KYC_DOCUMENT_TOO_LARGE` | Không lưu metadata. |
 | IT-SELLER-14 | `POST /seller/onboarding/kyc/documents/complete` | Object/checksum valid | 201 | Document UPLOADED/VERIFIED | Verify storage head. |
-| IT-SELLER-15 | `POST /seller/onboarding/kyc/documents/complete` | Object key khác owner | 400/403 | `KYC_DOCUMENT_INVALID` | Không cross-case. |
-| IT-SELLER-16 | `POST /seller/onboarding/kyc/documents/complete` | Checksum mismatch | 400 | `KYC_DOCUMENT_INVALID` | Không READY/UPLOADED. |
+| IT-SELLER-15 | `POST /seller/onboarding/kyc/documents/complete` | Document của shop khác | 404 | `KYC_DOCUMENT_NOT_FOUND` | Không cross-case. |
+| IT-SELLER-16 | `POST /seller/onboarding/kyc/documents/complete` | Checksum mismatch | 400 | `KYC_DOCUMENT_VERIFICATION_FAILED` | Không READY/UPLOADED. |
 | IT-SELLER-17 | `POST /seller/onboarding/kyc/submit` | Hồ sơ đủ/doc valid | 200 | Case PENDING | Phát `shop.kyc.submitted`. |
-| IT-SELLER-18 | `POST /seller/onboarding/kyc/submit` | Thiếu doc/upload pending | 400 | `KYC_DOCUMENT_INVALID` | Không tạo case pending. |
+| IT-SELLER-18 | `POST /seller/onboarding/kyc/submit` | Thiếu doc/upload pending | 400 | `KYC_DOCUMENT_REQUIRED` / `KYC_DOCUMENT_UPLOAD_INCOMPLETE` | Không tạo case pending. |
 | IT-SELLER-19 | `POST /seller/onboarding/kyc/submit` | Case đang pending | 409 | `KYC_ALREADY_PENDING` | Idempotent state. |
 | IT-SELLER-20 | `GET /seller/shop` | Owner/staff đúng scope | 200 | Shop masked/summary | Staff không thấy bank raw. |
 | IT-SELLER-21 | `PUT /seller/shop` | Name/description/logo valid | 200 | Shop updated + event | Không sửa owner/status tùy ý. |

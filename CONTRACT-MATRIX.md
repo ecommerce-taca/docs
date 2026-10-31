@@ -1,6 +1,6 @@
 # Contract Matrix — giữa các service
 
-> Nguồn · Code đối chiếu: `user-auth-service@develop` (`7c268a0`), `Product-Catalog-Service@develop` (`fe1e0d7`), `search-service@develop` (`9750a2f`), `inventory-service@develop` (`92c1454`), `shipment-service@develop` (`a375a41`), `payment-wallet-service@main` (`859b7b1`), `notification-service@main` (`6c6d9a2`). Order-Commerce, Message, Rating-Comment chỉ có README nên dùng doc làm spec. · Cập nhật: 2026-10-31
+> Nguồn · Code đối chiếu: `user-auth-service@develop` (`7c268a0`), `Product-Catalog-Service@develop` (`6572ece`), `search-service@develop` (`13d36e3`), `inventory-service@develop` (`92c1454`), `shipment-service@develop` (`a375a41`), `payment-wallet-service@main` (`859b7b1`), `notification-service@main` (`6c6d9a2`). Order-Commerce, Message, Rating-Comment chỉ có README nên dùng doc làm spec. · Cập nhật: 2026-10-31
 > Ký hiệu: ✅ khớp · ❌ đang hỏng luồng dữ liệu · ℹ️ khác hình thức hoặc phần chưa triển khai, giữ nguyên (nhóm B §1) · ⏳ một phía chưa có code, chưa kiểm được end-to-end.
 
 File này liệt kê mọi contract **giữa** các service: Kafka topic/event, envelope, payload, header, REST gọi chéo, route Gateway, health path, error envelope và tên biến môi trường. Doc từng service vẫn là nguồn chi tiết; khi code đổi, cập nhật dòng tương ứng ở đây.
@@ -13,7 +13,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 
 **A. Từng hỏng luồng dữ liệu — đã sửa ở phía consumer (merge 2026-10-31):** C1 + C5 → [search-service#27](https://github.com/ecommerce-taca/search-service/pull/27); C6 → [Product-Catalog-Service#44](https://github.com/ecommerce-taca/Product-Catalog-Service/pull/44).
 
-| # | Lệch | Ảnh hưởng | Sửa đề xuất (phía consumer) |
+| # | Lệch | Ảnh hưởng | Cách sửa đã merge (phía consumer) |
 |---|---|---|---|
 | C1 | Connector Debezium của Catalog đặt `event_id` ở header `id` và `aggregate_id` ở Kafka key, không trong value. Search bắt buộc `event_id` trong body. | Mọi event Catalog → Search vào DLQ. | Search: lấy `event_id` từ header `id`, `aggregate_id` từ key khi body thiếu. |
 | C5 | `product.shop_snapshot_updated` có `aggregate_id = shop_id`; Search dùng `aggregate_id` làm ID document. | Đổi tên shop không cập nhật index. | Search: với event này, update-by-query theo `shop.shop_id`. |
@@ -28,9 +28,10 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | C7 | Search bỏ qua `product.media_deleted`. | Payload không có `is_cover`, Search không biết ảnh bị xoá có phải cover; ghi nhận là giới hạn. |
 | C8 | Catalog chưa phát `sku.updated`, `sku.status_changed`, `category.*`. | SKU đi qua `product.skus_updated` (đã khớp). Category event là phần chưa triển khai của Catalog. |
 | C9 | Notification phát `notification.delivered/failed` camelCase. | Auth-user chưa consume; consumer tương lai đọc camelCase. |
-| C10 | Auth-user chỉ có `/actuator/health/{liveness,readiness}`. | Gateway (chưa có code) cấu hình `http_path` riêng cho `up-auth-user`. |
+| C10 | Auth-user chỉ có `/actuator/health`; `/actuator/health/{liveness,readiness}` có khi chạy trên Kubernetes (Spring Boot tự bật probe, manifest `deploy/k8s/dev` dùng hai path này). | Gateway (chưa có code) cấu hình `http_path` riêng cho `up-auth-user`. |
 | C11 | Notification chưa seed `message-received-v1`; SMS chưa có provider. | Message chưa có code; SMS là gap đã chấp nhận (2026-09-18). |
 | C12 | Tên env Kafka khác nhau giữa service. | Mỗi service tự đọc env của mình; deploy theo bảng §7. |
+| C13 | Auth-user `shop.updated` gửi logo dạng `snapshot.logo_object_key`; Catalog chỉ đọc `logo_url` phẳng. | Không làm hỏng luồng tên shop (C6 đã sửa); chỉ logo shop trong projection Catalog không đổi. Cần chốt cách resolve object key → URL trước khi sửa consumer (Catalog LLD §8 #27). |
 
 ## 2. Envelope Kafka theo producer
 
@@ -51,7 +52,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 |---|---|---|---|---|---|
 | `user.events.v1` | `user.created/updated/email_verified/password_changed/role_changed/status_changed` | Auth-user ✅ | Order (doc, `user.status_changed`) ⏳ | — | ⏳ |
 | `shop.events.v1` | `shop.created` | Auth-user ✅ | Catalog ✅ | `shop_id`, `status` (Catalog tự sinh tên/slug tạm khi thiếu) | ✅ |
-| `shop.events.v1` | `shop.updated` | Auth-user ✅ | Catalog ✅ | `name`, `slug`, `logo_url` phẳng | ✅ C6 (đã sửa) (`snapshot` lồng, `logo_object_key`) |
+| `shop.events.v1` | `shop.updated` | Auth-user ✅ | Catalog ✅ | `payload.snapshot.name` (fallback `name` phẳng); `slug`, `logo_url` chỉ khi có ở dạng phẳng | ✅ C6 (đã sửa). Logo: auth-user gửi `snapshot.logo_object_key`, Catalog chưa đọc → logo không đổi (C13) |
 | `shop.events.v1` | `shop.status_changed` | Auth-user ✅ | Catalog ✅ | `new_status`/`status` | ✅ |
 | `shop.events.v1` | `shop.kyc.submitted/approved/needs_info/rejected/expired` | Auth-user ✅ | Catalog ✅; Payment (doc) ⏳ | event_type → KYC status | ✅ |
 | `shop.events.v1` | `kyc.document.delete_requested` | Auth-user ✅ | không ai | — | ✅ (Catalog bỏ qua) |
@@ -68,7 +69,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | `category.events.v1` | `category.created/updated/status_changed` | Catalog ✗ | Search ✅ | — | ℹ️ C8 |
 | `catalog.events.v1` | `product.category_changed` | Catalog ✅ | Search ✅ | `primary_category_id`, `secondary_category_ids` | ✅ C1 (đã sửa) |
 | `catalog.events.v1` | `product.media_updated` | Catalog ✗ | Search ✅ | `media[0].url`/`cover_url` | ℹ️ C7 |
-| `catalog.events.v1` | `product.shop_snapshot_updated` | Catalog ✅ | Search ✅ | `aggregate_id` làm product ID | ✅ C5 (đã sửa) |
+| `catalog.events.v1` | `product.shop_snapshot_updated` | Catalog ✅ | Search ✅ | `payload.shop_id`, `payload.name` → update-by-query theo `shop.shop_id` | ✅ C5 (đã sửa) |
 | `inventory.events.v1` | `inventory.stock_snapshot.updated` | Inventory ⏳ (scaffold) | Catalog ✅ | `sku_id`, `product_id`, `available_qty`, `reserved_qty`, `committed_qty`, `source_version`, `as_of` | ⏳ (doc inventory đã chốt đúng tên field) |
 | `inventory.events.v1` | `inventory.reservation.*`, `inventory.adjusted` | Inventory ⏳ | Order ⏳ | — | ⏳ |
 | `rating.events.v1` | `rating.aggregate.updated` | Rating ⏳ | Catalog ✅, Search ✅ | `product_id`, `avg`, `count` | ⏳ (doc khớp consumer) |
@@ -104,7 +105,7 @@ Header HTTP nội bộ: `X-Request-ID`, `X-User-ID`, `X-User-Roles`, `X-User-Per
 
 | Service | Liveness | Readiness | Gateway probe `/health/live` |
 |---|---|---|---|
-| Auth-user | `/actuator/health/liveness` | `/actuator/health/readiness` | ℹ️ C10 |
+| Auth-user | `/actuator/health/liveness` (chỉ trên K8s; ngoài K8s dùng `/actuator/health`) | `/actuator/health/readiness` (chỉ trên K8s) | ℹ️ C10 |
 | Product Catalog | `/health/live` | `/health/ready` | ✅ |
 | Search | `/health/live` | `/api/v1/search/health` | ✅ |
 | Inventory | `/health/live` | `/health/ready` | ✅ |

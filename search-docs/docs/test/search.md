@@ -1,6 +1,6 @@
 # Test Plan — Search Service
 
-> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · `docs/api/search.md` · Code: `ecommerce-taca/search-service` @ `develop` (`9750a2f`) · Cập nhật: `2026-10-31`
+> Nguồn: `docs/lld/search.md` · `docs/db/search.md` · `docs/api/search.md` · Code: `ecommerce-taca/search-service` @ `develop` (`13d36e3`) · Cập nhật: `2026-10-31`
 > Trạng thái triển khai: ✅ Đã triển khai — unit test `*.spec.ts` cạnh source; integration (`test/*.int-spec.ts`, `npm run test:int`) và e2e (`test/*.e2e-spec.ts`, `npm run test:e2e`) cho health, indexing, category projection, index bootstrap, reindex, search-query, security, suggest.
 > Môi trường: Jest, Elasticsearch 8.x + Kafka thật cho int/e2e
 

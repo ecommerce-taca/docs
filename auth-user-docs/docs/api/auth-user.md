@@ -186,7 +186,7 @@ Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — t
 | 53 | `DELETE` | `/seller/onboarding/kyc/documents/{documentId}` | Xoá document KYC chưa submit | Seller | Step 2 — KYC | ✅ |
 | 54 | `GET` | `/locations/vn/provinces` | Danh mục tỉnh/thành VN | Public | Address form | ✅ |
 | 55 | `GET` | `/locations/vn/provinces/{provinceCode}/wards` | Danh mục phường/xã theo tỉnh | Public | Address form | ✅ |
-| 56 | `GET` | `/actuator/health` | Health Spring Boot (`show-details: never`) — path thật trong code | Public (permitAll) | Ops | ✅ |
+| 56 | `GET` | `/actuator/health` | Health Spring Boot (`show-details: never`) — path thật trong code; trên K8s có thêm `/liveness`, `/readiness` | Public (permitAll) | Ops | ✅ |
 
 ## 3. Chi tiết endpoint
 
@@ -849,7 +849,7 @@ Response:
 }
 ```
 
-Lỗi: `400 KYC_DOCUMENT_INVALID`, `413 KYC_DOCUMENT_TOO_LARGE`, `409 KYC_DOCUMENT_LIMIT_REACHED`.
+Lỗi: `400 KYC_DOCUMENT_REQUEST_INVALID`, `400 KYC_DOCUMENT_TYPE_UNSUPPORTED`, `400 KYC_DOCUMENT_FILENAME_INVALID`, `400 KYC_DOCUMENT_CONTENT_TYPE_UNSUPPORTED`, `400 KYC_DOCUMENT_SIZE_INVALID`, `400 KYC_DOCUMENT_CHECKSUM_INVALID`, `409 KYC_DOCUMENT_DUPLICATE`, `413 KYC_DOCUMENT_TOO_LARGE`, `409 KYC_DOCUMENT_LIMIT_REACHED`, `409 KYC_ALREADY_PENDING`, `409 SHOP_INVALID_STATE`.
 
 ### 3.24 `POST /seller/onboarding/kyc/documents/complete` — complete upload
 
@@ -869,7 +869,7 @@ Request:
 
 Service kiểm tra object metadata/checksum/content type với Storage Adapter; client không được đổi `object_key` sang case khác.
 
-Lỗi: `400 KYC_DOCUMENT_INVALID`, `404 KYC_DOCUMENT_NOT_FOUND`, `409 KYC_DOCUMENT_ALREADY_COMPLETED`.
+Lỗi: `400 KYC_DOCUMENT_REQUEST_INVALID`, `400 KYC_DOCUMENT_STATE_INVALID`, `400 KYC_DOCUMENT_VERIFICATION_FAILED` (object thiếu hoặc size/content-type/SHA-256 không khớp lúc presign), `400 KYC_DOCUMENT_SIZE_INVALID`, `400 KYC_DOCUMENT_CONTENT_TYPE_UNSUPPORTED`, `400 KYC_DOCUMENT_CHECKSUM_INVALID`, `413 KYC_DOCUMENT_TOO_LARGE`, `404 KYC_DOCUMENT_NOT_FOUND`, `409 KYC_DOCUMENT_ALREADY_COMPLETED`, `409 KYC_ALREADY_PENDING`.
 
 ### 3.25 `POST /seller/onboarding/kyc/submit` — submit KYC
 
@@ -898,7 +898,7 @@ Response:
 }
 ```
 
-Lỗi: `400 KYC_DOCUMENT_INVALID`, `409 SHOP_INVALID_STATE`, `409 KYC_ALREADY_PENDING`, `403 AUTH_EMAIL_NOT_VERIFIED`.
+Lỗi: `400 KYC_DOCUMENT_REQUEST_INVALID`, `400 KYC_DOCUMENT_REQUIRED`, `400 KYC_DOCUMENT_UPLOAD_INCOMPLETE`, `400 SELLER_PROFILE_INCOMPLETE`, `409 SHOP_INVALID_STATE`, `409 KYC_ALREADY_PENDING`, `403 AUTH_EMAIL_NOT_VERIFIED`.
 
 ### 3.26 `PUT /seller/onboarding/bank` — step Ngân hàng
 
@@ -1336,7 +1336,7 @@ Lỗi: `404 SHOP_NOT_FOUND` (không tồn tại hoặc `status = DELETED`).
 
 ### 3.46 `GET /health/live` — liveness (⏳ chưa có trong code)
 
-> Code hiện chỉ expose Spring Actuator `GET /actuator/health` (permitAll trong `SecurityConfig`, `show-details: never`). Gateway healthcheck phải trỏ `/actuator/health` cho tới khi service thêm `/health/live`.
+> Code hiện chỉ expose Spring Actuator `GET /actuator/health` (permitAll trong `SecurityConfig`, `show-details: never`). Khi chạy trên Kubernetes, Spring Boot tự bật thêm `/actuator/health/liveness` và `/actuator/health/readiness` (manifest `deploy/k8s/dev/app.yaml` dùng hai path này); `management.endpoint.health.probes.enabled` chưa bật nên chạy ngoài K8s chỉ có `/actuator/health`. Gateway upstream `up-auth-user` override `http_path: /actuator/health/liveness` (`api-gateway-docs/docs/lld/api-gateway.md` §5.2) cho tới khi service thêm `/health/live`.
 
 Quyền: Internal/ops · Response: `200`
 
@@ -1419,7 +1419,17 @@ Quyền: Public · Response: `200` danh sách `{code, name}`. Danh mục 2 cấp
 | `RBAC_INVALID_ROLE` | 400 | Role/scope không hợp lệ | `Vai trò hoặc phạm vi không hợp lệ.` |
 | `RBAC_ASSIGNMENT_EXISTS` | 409 | Assignment đã tồn tại | `Quyền này đã được cấp.` |
 | `RBAC_ASSIGNMENT_NOT_FOUND` | 409 | Assignment không tồn tại | `Không tìm thấy quyền cần thu hồi.` |
-| `KYC_DOCUMENT_INVALID` ⏳ | 400 | File metadata/checksum/type sai | `Tài liệu không hợp lệ.` |
+| `KYC_DOCUMENT_REQUEST_INVALID` | 400 | Request tài liệu KYC sai (thiếu field, ID sai) | `Yêu cầu tài liệu KYC không hợp lệ.` |
+| `KYC_DOCUMENT_TYPE_UNSUPPORTED` | 400 | `document_type` không hỗ trợ | `Loại tài liệu KYC không được hỗ trợ.` |
+| `KYC_DOCUMENT_FILENAME_INVALID` | 400 | Tên file không hợp lệ | `Tên tệp tài liệu không hợp lệ.` |
+| `KYC_DOCUMENT_CONTENT_TYPE_UNSUPPORTED` | 400 | Content-type ngoài PDF/JPG/PNG | `Định dạng tệp tài liệu không được hỗ trợ.` |
+| `KYC_DOCUMENT_SIZE_INVALID` | 400 | Kích thước ≤ 0 hoặc không khớp | `Kích thước tài liệu không hợp lệ.` |
+| `KYC_DOCUMENT_CHECKSUM_INVALID` | 400 | SHA-256 sai định dạng | `Mã kiểm tra SHA-256 không hợp lệ.` |
+| `KYC_DOCUMENT_DUPLICATE` | 409 | Tài liệu cùng checksum đã có trong case | `Tài liệu đã tồn tại.` |
+| `KYC_DOCUMENT_STATE_INVALID` | 400 | Document không ở trạng thái cho phép complete | `Trạng thái tài liệu không hợp lệ.` |
+| `KYC_DOCUMENT_VERIFICATION_FAILED` | 400 | Object upload không khớp metadata đã presign | `Không thể xác minh tính toàn vẹn của tài liệu.` |
+| `KYC_DOCUMENT_UPLOAD_INCOMPLETE` | 400 | Submit khi còn document chưa complete | `Vẫn còn tài liệu chưa tải lên hoàn tất.` |
+| `KYC_DOCUMENT_REQUIRED` | 400 | Submit khi chưa có document hợp lệ | `Cần ít nhất một tài liệu KYC hợp lệ.` |
 | `KYC_DOCUMENT_TOO_LARGE` | 413 | File > 10 MiB | `Tài liệu vượt quá dung lượng cho phép.` |
 | `KYC_DOCUMENT_LIMIT_REACHED` | 409 | Quá 10 file/case | `Hồ sơ đã đạt giới hạn số tài liệu.` |
 | `KYC_DOCUMENT_NOT_FOUND` | 404 | Document không tồn tại | `Không tìm thấy tài liệu.` |

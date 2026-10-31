@@ -490,43 +490,43 @@ Cảnh báo cấu hình: `taca-error-envelope` phải **bỏ qua** Route WebSock
 
 ## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Đơn vị | Ghi chú |
-|---|---:|---|---|
-| `API_PREFIX` | `/api/v1` | path | Tất cả public API route. |
-| `JWT_ALGORITHM` | `RS256` | algorithm | Chỉ verify signature, không ký token tại Gateway. |
-| `JWT_ACCESS_TOKEN_TTL` | `900` | giây | Tham chiếu auth-user; Gateway không tự phát token. |
-| `JWT_JWKS_CACHE_TTL` | `10` | phút | Cache public key theo `kid`. |
-| `JWT_JWKS_MAX_STALE` | `30` | phút | Quá thời gian này mà JWKS không refresh được thì fail-closed. |
-| `JWT_CLOCK_SKEW` | `30` | giây | Cho `iat`, `nbf`, `exp`; cần đồng bộ NTP. |
-| `REDIS_RATE_LIMIT_STORE` | `true` | boolean | Distributed counter; không dùng local fallback production. |
-| `REDIS_COMMAND_TIMEOUT` | `500` | ms | Timeout cho increment/read rate-limit. |
-| `AUTH_RATE_LIMIT` | `10` | req/phút/IP | Signup/signin/OTP/reset baseline. |
-| `PUBLIC_RATE_LIMIT` | `120` | req/phút/IP | Public API baseline. |
-| `AUTHENTICATED_RATE_LIMIT` | `300` | req/phút/user | Authenticated API baseline. |
-| `RATE_LIMIT_BURST` | `20` | request | Burst nhỏ trong fixed-window adapter. |
-| `UPSTREAM_CONNECT_TIMEOUT` | `2` | giây | Tất cả internal REST route. |
-| `UPSTREAM_READ_TIMEOUT_DEFAULT` | `5` | giây | Route thông thường. |
-| `UPSTREAM_READ_TIMEOUT_LONG` | `10` | giây | Checkout/payment/shipment khi route policy cần. |
-| `UPSTREAM_RETRY_MAX` | `1` | lần | Chỉ GET/HEAD hoặc idempotent route. |
-| `UPSTREAM_RETRY_BACKOFF` | `100` | ms | Không retry 4xx. |
-| `CIRCUIT_FAILURE_THRESHOLD` | `5` | lỗi/30s | Tính theo upstream + route group. |
-| `CIRCUIT_WINDOW` | `30` | giây | Cửa sổ đếm lỗi. |
-| `CIRCUIT_OPEN_DURATION` | `30` | giây | Sau đó cho một probe HALF_OPEN. |
-| `MAX_JSON_BODY_SIZE` | `1` | MiB | Không áp cho signed-url upload bytes. |
-| `MAX_HEADER_SIZE` | `16` | KiB | Vượt quá trả 413/431 tùy adapter HTTP. |
-| `REQUEST_ID_MAX_LENGTH` | `64` | ký tự | Chỉ charset an toàn `[A-Za-z0-9._:-]`. |
-| `CORS_ALLOW_CREDENTIALS` | `false` | boolean | Baseline Bearer header; nếu dùng HttpOnly cookie phải chốt lại. |
-| `CORS_ALLOWED_ORIGINS` | environment allowlist | origin | Không wildcard trong production. |
-| `HEALTH_LIVE_PATH` | `/health/live` | path | Không phụ thuộc upstream. |
-| `HEALTH_READY_PATH` | `/health/ready` | path | Kiểm tra config/JWKS/Redis theo policy. |
-| `METRICS_PATH` | `/metrics` | path | Chỉ internal/observability network. |
-| `WS_ALLOWED_PATH` | `/ws/messages` | path | Path WebSocket duy nhất được upgrade; path khác trả 404. |
-| `WS_HANDSHAKE_TIMEOUT` | `5` | giây | Tối đa cho validate JWT + mở tunnel upstream. |
-| `WS_IDLE_TIMEOUT` | `1800` | giây | Đồng bộ `WEBSOCKET_IDLE_TIMEOUT` của Message Service; không frame trong khoảng này thì đóng socket. |
-| `WS_MAX_CONNECTIONS_PER_USER` | `10` | connection | Vượt trả `429` ở handshake; chống connection flood. |
-| `WS_UPSTREAM` | `message` | service | Mọi WS chỉ proxy tới Message Service. |
-| `LOG_BODY_ENABLED` | `false` | boolean | Không log body production. |
-| `TIMESTAMP_STORAGE` | `UTC` | timezone | Log/response ISO-8601. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| `API_PREFIX` | `/api/v1` | — | Tất cả public API route. |
+| `JWT_ALGORITHM` | `RS256` | xem §4.1 | Chỉ verify signature, không ký token tại Gateway. |
+| `JWT_ACCESS_TOKEN_TTL` | `900` giây | — | Tham chiếu auth-user; Gateway không tự phát token. |
+| `JWT_JWKS_CACHE_TTL` | `10` phút | xem §4.1 | Cache public key theo `kid`. |
+| `JWT_JWKS_MAX_STALE` | `30` phút | xem §4.1 | Quá thời gian này mà JWKS không refresh được thì fail-closed. |
+| `JWT_CLOCK_SKEW` | `30` giây | xem §4.1 | Cho `iat`, `nbf`, `exp`; cần đồng bộ NTP. |
+| `REDIS_RATE_LIMIT_STORE` | `true` | — | Distributed counter; không dùng local fallback production. |
+| `REDIS_COMMAND_TIMEOUT` | `500` ms | xem §4.1 | Timeout cho increment/read rate-limit. |
+| `AUTH_RATE_LIMIT` | `10` req/phút/IP | xem §4.1 | Signup/signin/OTP/reset baseline. |
+| `PUBLIC_RATE_LIMIT` | `120` req/phút/IP | xem §4.1 | Public API baseline. |
+| `AUTHENTICATED_RATE_LIMIT` | `300` req/phút/user | xem §4.1 | Authenticated API baseline. |
+| `RATE_LIMIT_BURST` | `20` request | xem §4.1 | Burst nhỏ trong fixed-window adapter. |
+| `UPSTREAM_CONNECT_TIMEOUT` | `2` giây | xem §4.1 | Tất cả internal REST route. |
+| `UPSTREAM_READ_TIMEOUT_DEFAULT` | `5` giây | xem §4.1 | Route thông thường. |
+| `UPSTREAM_READ_TIMEOUT_LONG` | `10` giây | — | Checkout/payment/shipment khi route policy cần. |
+| `UPSTREAM_RETRY_MAX` | `1` lần | xem §4.1 | Chỉ GET/HEAD hoặc idempotent route. |
+| `UPSTREAM_RETRY_BACKOFF` | `100` ms | xem §4.1 | Không retry 4xx. |
+| `CIRCUIT_FAILURE_THRESHOLD` | `5` lỗi/30s | xem §4.1 | Tính theo upstream + route group. |
+| `CIRCUIT_WINDOW` | `30` giây | xem §4.1 | Cửa sổ đếm lỗi. |
+| `CIRCUIT_OPEN_DURATION` | `30` giây | xem §4.1 | Sau đó cho một probe HALF_OPEN. |
+| `MAX_JSON_BODY_SIZE` | `1` MiB | xem §4.1 | Không áp cho signed-url upload bytes. |
+| `MAX_HEADER_SIZE` | `16` KiB | xem §4.1 | Vượt quá trả 413/431 tùy adapter HTTP. |
+| `REQUEST_ID_MAX_LENGTH` | `64` ký tự | xem §4.1 | Chỉ charset an toàn `[A-Za-z0-9._:-]`. |
+| `CORS_ALLOW_CREDENTIALS` | `false` | xem §4.1 | Baseline Bearer header; nếu dùng HttpOnly cookie phải chốt lại. |
+| `CORS_ALLOWED_ORIGINS` | environment allowlist origin | xem §4.1 | Không wildcard trong production. |
+| `HEALTH_LIVE_PATH` | `/health/live` | xem §4.1 | Không phụ thuộc upstream. |
+| `HEALTH_READY_PATH` | `/health/ready` | xem §4.1 | Kiểm tra config/JWKS/Redis theo policy. |
+| `METRICS_PATH` | `/metrics` | xem §4.1 | Chỉ internal/observability network. |
+| `WS_ALLOWED_PATH` | `/ws/messages` | xem §4.1 | Path WebSocket duy nhất được upgrade; path khác trả 404. |
+| `WS_HANDSHAKE_TIMEOUT` | `5` giây | xem §4.1 | Tối đa cho validate JWT + mở tunnel upstream. |
+| `WS_IDLE_TIMEOUT` | `1800` giây | xem §4.1 | Đồng bộ `WEBSOCKET_IDLE_TIMEOUT` của Message Service; không frame trong khoảng này thì đóng socket. |
+| `WS_MAX_CONNECTIONS_PER_USER` | `10` connection | xem §4.1 | Vượt trả `429` ở handshake; chống connection flood. |
+| `WS_UPSTREAM` | `message` | — | Mọi WS chỉ proxy tới Message Service. |
+| `LOG_BODY_ENABLED` | `false` | — | Không log body production. |
+| `TIMESTAMP_STORAGE` | `UTC` | — | Log/response ISO-8601. |
 
 ### 4.1 Ánh xạ hằng số sang cấu hình Kong
 
