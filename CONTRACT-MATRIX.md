@@ -11,7 +11,7 @@ File này liệt kê mọi contract **giữa** các service: Kafka topic/event, 
 
 Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 
-**A. Đang hỏng luồng dữ liệu — sửa nhỏ ở phía consumer (chờ duyệt):**
+**A. Đang hỏng luồng dữ liệu — sửa nhỏ ở phía consumer (PR đang mở, chờ duyệt merge):** C1 + C5 → [search-service#27](https://github.com/ecommerce-taca/search-service/pull/27); C6 → [Product-Catalog-Service#44](https://github.com/ecommerce-taca/Product-Catalog-Service/pull/44).
 
 | # | Lệch | Ảnh hưởng | Sửa đề xuất (phía consumer) |
 |---|---|---|---|
