@@ -8,7 +8,7 @@ Tài liệu này là **tổng quan** test của Checkout Service và case checko
 
 | Tài liệu | Case ID | ID cũ (Order-Commerce) |
 |---|---|---|
-| `checkout.md` | `CO-API-01..09`, `CO-INT-01..06`, `CO-CALC-01..15` | `O-API-05..10`, `O-API-21`, `O-INT-02`, `O-INT-06`, `O-CALC-01..15` |
+| `checkout.md` | `CO-API-01..09`, `CO-INT-01..07`, `CO-CALC-01..15` | `O-API-05..10`, `O-API-21`, `O-INT-02`, `O-INT-06`, `O-CALC-01..15` |
 | `voucher.md` | `VCH-API-01..12`, `VCH-RECALC-01..08`, `VCH-HOLD-01..02` | `O-API-04..04e`, `O-API-18..20`, `O-VCAN-01..05` |
 
 ## 1. Chuẩn bị
@@ -55,6 +55,7 @@ Tài liệu này là **tổng quan** test của Checkout Service và case checko
 | CO-INT-04 | `cart-service` down sau khi tạo đơn | Response `201` bình thường; job `checked-out` retry tới khi xong. |
 | CO-INT-05 | Giỏ 2 shop, reserve shop A thành công, shop B hết hàng | Mỗi shop một lời gọi reserve (`order_intent_id = order_id`); release reservation shop A, nhả voucher, `409 CHECKOUT_STOCK_UNAVAILABLE`. Thành công thì `orders[].reservation_id` khác nhau. |
 | CO-INT-06 | Buyer retry `POST /checkout` cùng key khi group `RECONCILING` | `409 CHECKOUT_IN_PROGRESS`; không tạo group/reservation mới. |
+| CO-INT-07 | `order-service` tạo đơn nhưng mất response; restart Checkout; đổi tên sản phẩm và địa chỉ ở nguồn; job reconcile | Gửi lại đúng `order_create_request` đã lưu (cùng hash body), không đọc lại Auth/Catalog; nhận response gốc, không `409 ORDER_IDEMPOTENCY_CONFLICT`; group `ORDERS_CREATED`. |
 
 ### 3.2 Golden test phép tính tiền *(bắt buộc — đây là nghiệp vụ lõi)*
 

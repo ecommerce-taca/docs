@@ -71,7 +71,7 @@ com.taca.cart
 1. Gateway xác thực JWT, inject `X-User-ID`.
 2. `GET /cart` đọc document theo `buyer_user_id`; chưa có thì trả giỏ rỗng (không tạo document).
 3. Hydrate: gọi `GET /products/{productId}` cho các `product_id` khác nhau trong giỏ (song song, cache 30s), cập nhật `title_snapshot`, `sku_label_snapshot`, `unit_price_snapshot`, `available`. Product lỗi/timeout → trả snapshot đang lưu, không lỗi.
-4. `POST /cart/items` có `Idempotency-Key` đã thấy trong `add_idempotency` → trả response đã lưu, không cộng. Sau đó validate Product/SKU active và quantity `1..999`; SKU đã có → cộng dồn, cap `999`; vượt `CART_MAX_ITEMS` dòng → `409 CART_TOO_MANY_ITEMS`. Document tạo lần đầu ở thao tác thêm đầu tiên (upsert).
+4. `POST /cart/items` có `Idempotency-Key` → trong một transaction MongoDB: insert `cart_idempotency_keys` (`_id = {buyer_user_id, key}`), cộng quantity, lưu response. Key đã tồn tại và chưa hết 24h → trả response đã lưu, không cộng (khác body → `409 CART_IDEMPOTENCY_CONFLICT`). Sau đó validate Product/SKU active và quantity `1..999`; SKU đã có → cộng dồn, cap `999`; vượt `CART_MAX_ITEMS` dòng → `409 CART_TOO_MANY_ITEMS`. Document tạo lần đầu ở thao tác thêm đầu tiên (upsert).
 5. Availability từ Inventory chỉ để hiển thị; không coi là reservation.
 
 ### 3.2 Checkout đọc giỏ và xoá item đã đặt

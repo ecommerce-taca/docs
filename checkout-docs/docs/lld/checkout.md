@@ -248,8 +248,11 @@ Kiểm tra bước 2: `raw_A = 200000 × 500000/900000 = 111111,11` → `floor` 
       Idempotency-Key = reserve-{order_id}), lưu reservation_id vào checkout_group_orders.
       một đơn fail → release các reservation đã giữ, nhả voucher (RELEASED),
       group FAILED, trả CHECKOUT_STOCK_UNAVAILABLE.
+6b. MySQL tx: dựng body POST /internal/orders đầy đủ (buyer.email, address_snapshot,
+      shop_name, snapshot item, reservation_id + reservation_expires_at của từng đơn)
+      và lưu NGUYÊN VĂN vào checkout_groups.order_create_request. Từ đây body bất biến.
 7. order-service POST /internal/orders (Idempotency-Key = checkout_group_id):
-      gửi snapshot đầy đủ + reservation_id của từng đơn con + payment_method.
+      gửi đúng order_create_request đã lưu ở 6b.
       order-service tạo đơn, invoice PENDING, gọi Payment-Wallet, COD thì commit kho.
       lỗi 4xx → release mọi reservation của group + nhả voucher, group FAILED.
       timeout/5xx → retry cùng key; vẫn không rõ → group RECONCILING (§3.5).
@@ -280,7 +283,7 @@ Idempotent theo header `Idempotency-Key` (`order-service` dùng `cancel-{order_i
 
 ### 3.5 Reconcile group không rõ kết quả
 
-Job quét `checkout_groups` ở `RECONCILING` quá 1 phút và **gọi lại `POST /internal/orders` với cùng `Idempotency-Key` và cùng body** (body dựng lại từ `checkout_group_orders` + `checkout_group_items`). `order-service` idempotent theo key nên:
+Job quét `checkout_groups` ở `RECONCILING` quá 1 phút và **gọi lại `POST /internal/orders` với cùng `Idempotency-Key` và cùng body** (body = `checkout_groups.order_create_request` lưu ở bước 6b, gửi nguyên văn; **không** đọc lại Auth/Catalog vì snapshot có thể đã đổi và cùng key khác body sẽ bị `409 ORDER_IDEMPOTENCY_CONFLICT`). `order-service` idempotent theo key nên:
 
 - Đơn đã tạo → trả lại đúng response đã lưu (đủ `payment_next_action`, `payment_id`, `reservation_expires_at`). Checkout lưu response này vào `idempotency_keys.response_snapshot` của `PLACE_CHECKOUT` rồi hoàn tất bước 8–9 của §3.3. Buyer retry `POST /checkout` sau đó nhận đúng response này.
 - Đơn chưa tạo → `order-service` tạo bình thường (vẫn còn trong TTL reservation).
@@ -297,6 +300,7 @@ Trong lúc group còn `RECONCILING`, buyer retry `POST /checkout` cùng key nh�
 | `VND_MIN/MAX` | 1/999999999999 | — | Integer; không float. |
 | `INTEGRATION_TIMEOUT` | 5s | ⏳ chưa có | Baseline cho Cart/Product/Inventory/Shipment/Auth. |
 | `PRODUCT_DETAIL_CONCURRENCY` | 10 | ⏳ chưa có | Số lời gọi `GET /products/{productId}` song song (§6.4). |
+| `ORDER_CREATE_REQUEST_RETENTION` | 7 ngày | ⏳ chưa có | Job đặt `order_create_request = NULL` cho group `ORDERS_CREATED`/`FAILED` cũ hơn mốc này (giảm giữ PII). |
 | `ORDER_CREATE_TIMEOUT` | 8s | ⏳ chưa có | `order-service` gọi tiếp Payment; Gateway timeout route checkout là 10s. |
 | `PAGE_SIZE_DEFAULT` | 20 | — | Max 100. |
 | `OUTBOX_RETRY_COUNT` | 3 | — | Backoff 2s rồi DLQ `checkout-service.outbox.dlq.v1`. |

@@ -20,9 +20,10 @@
 ```mermaid
 erDiagram
     CARTS ||--o{ CART_ITEMS : "embedded items[]"
+    CARTS ||--o{ CART_IDEMPOTENCY_KEYS : "buyer_user_id"
 ```
 
-`items` là mảng embedded trong document `carts` (tối đa 100 phần tử), không có collection riêng.
+`items` là mảng embedded trong document `carts` (tối đa 100 phần tử), không có collection riêng. Key idempotency của `POST /cart/items` nằm ở collection riêng `cart_idempotency_keys` (§3.1a).
 
 ## 3. Chi tiết collection
 
@@ -33,9 +34,22 @@ erDiagram
 | `_id` | string | Có | `cart_id`, UUIDv7. |
 | `buyer_user_id` | string | Có | Unique; một giỏ mỗi buyer. |
 | `items` | array | Có | ≤100 phần tử, xem §3.2. |
-| `add_idempotency` | array | Không | Key gần đây của `POST /cart/items`: `{key, request_hash, response, expires_at}`; giữ 24h, tối đa 20 phần tử (bỏ phần tử cũ nhất). `checked-out` không cần lưu gì vì xoá theo `item_id` vốn an toàn khi gọi lại. |
 | `version` | int64 | Có | Tăng mỗi lần ghi. |
 | `created_at`, `updated_at` | Date | Có | UTC. |
+
+### 3.1a `cart_idempotency_keys`
+
+Key của `POST /cart/items` (`docs/api/cart.md` §3.2). Collection riêng, **không giới hạn số key**: mọi key đã nhận giữ đủ 24h. `checked-out` không cần lưu gì vì xoá theo `item_id` vốn an toàn khi gọi lại.
+
+| Field | Kiểu | Bắt buộc | Ràng buộc |
+|---|---|:--:|---|
+| `_id` | object | Có | `{buyer_user_id, key}`: unique tự nhiên, insert trùng → đã có key. |
+| `request_hash` | string | Có | SHA-256 của body chuẩn hoá; khác hash → `409 CART_IDEMPOTENCY_CONFLICT`. |
+| `response` | object | Có | Response `201` đã trả lần đầu. |
+| `expires_at` | Date | Có | `created_at + 24h`; TTL index xoá tự động. |
+| `created_at` | Date | Có | UTC. |
+
+Ghi key và cập nhật `carts` trong **một transaction MongoDB** (cần replica set, kể cả môi trường local): insert key trước, trùng `_id` thì abort và đọc `response` đã lưu. Hai request đồng thời cùng key → chỉ một insert thành công, quantity chỉ cộng một lần.
 
 ### 3.2 `items[]`
 
@@ -53,7 +67,8 @@ erDiagram
 
 | Collection | Index |
 |---|---|
-| `carts` | unique `{buyer_user_id: 1}`; `{updated_at: 1}` (báo cáo/dọn dẹp sau này). Không có TTL index. |
+| `carts` | unique `{buyer_user_id: 1}`; `{updated_at: 1}` (báo cáo/dọn dẹp sau này). Không có TTL index (giỏ không hết hạn). |
+| `cart_idempotency_keys` | `_id` unique; TTL `{expires_at: 1}` với `expireAfterSeconds: 0`. MongoDB xoá TTL theo chu kỳ ~60s nên service vẫn coi key có `expires_at` đã qua là hết hạn. |
 
 ## 5. Enum và rules
 
