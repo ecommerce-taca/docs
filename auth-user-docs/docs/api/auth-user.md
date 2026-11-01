@@ -1401,7 +1401,8 @@ Quyền: Internal. Header `X-Internal-Service-Token` khớp `AUTH_USER_INTERNAL_
 
 - Field lấy nguyên từ `warehouse_snapshot` (`warehouse_name`, `contact_name`, `contact_phone`, `address.*`, `cod_enabled`); `updated_at` = `shops.updated_at`.
 - Caller map sang `from_address_snapshot` của Shipment: `{contact_name, phone: contact_phone, line1, line2, ward, district, province, postal_code}`, rồi **snapshot** vào đơn/shipment; đổi kho về sau không đổi đơn đã tạo.
-- Chỉ trả cho shop `ACTIVE`/đang bán; không trả bank, KYC hay owner.
+- Trả cho mọi shop chưa bị xoá (`DRAFT`, `ACTIVE`, `SUSPENDED`), vì đơn đã đặt của shop bị tạm khoá vẫn cần giao; shop `DELETED` hoặc soft-deleted → `404 SHOP_NOT_FOUND`. Không trả bank, KYC hay owner.
+- `409 SHOP_WAREHOUSE_MISSING` khi thiếu một trong `warehouse_name`, `contact_name`, `contact_phone`, `address.line1`, `address.ward`, `address.province`. `cod_enabled` mặc định `true` nếu snapshot không ghi `false`.
 - Lỗi: `401 AUTH_TOKEN_INVALID` (thiếu/sai token nội bộ), `404 SHOP_NOT_FOUND`, `409 SHOP_WAREHOUSE_MISSING` (seller chưa hoàn tất bước kho). Không log `contact_phone`/địa chỉ.
 
 ## 4. Mã lỗi chung
