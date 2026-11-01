@@ -53,20 +53,20 @@ Ràng buộc:
 
 ### 3.3 Huỷ một phần nhóm đơn — tính lại voucher
 
-Khi một **đơn con** trong nhóm nhiều shop bị huỷ (buyer, seller, hoặc hệ thống), `order-service` gọi `POST /internal/checkout-groups/{checkoutGroupId}/recalculate` (`checkout.md` §3.4). Voucher `PLATFORM`/`FREESHIP` đã phân bổ cho cả nhóm phải tính lại; nếu không, phần giảm của đơn bị huỷ sẽ bốc hơi hoặc bị tính hai lần.
+Khi một **đơn con** trong nhóm nhiều shop bị huỷ (buyer, seller, hoặc hệ thống), `order-service` gọi `POST /internal/checkout-groups/{checkoutGroupId}/recalculate` (`checkout.md` §3.4).
 
-Quy tắc: **giữ voucher, tính lại trên phần còn lại.**
+Quy tắc v1 (chốt 2026-11-01, đóng CONTRACT-MATRIX S11): **số tiền của các đơn còn lại không đổi.**
 
-1. Mã `SHOP` của đơn bị huỷ được nhả (`RELEASED`, `used_count` trả lại) vì đơn của shop đó không còn.
-2. Bỏ đơn bị huỷ ra, tính lại `base_platform` và `base_ship` trên các đơn còn lại.
-3. Kiểm lại `min_order` của từng voucher `PLATFORM`/`FREESHIP` trên base mới.
-4. **Còn đủ điều kiện** → phân bổ lại theo `checkout.md` §3.2. Đơn còn lại có thể được giảm **nhiều hơn** trước; phần chênh ghi là điều chỉnh giảm.
-5. **Không còn đủ `min_order`** → voucher bị gỡ khỏi nhóm, redemption `RELEASED`, `used_count` trả lại, các đơn còn lại mất phần giảm đó. Chênh lệch buyer phải trả thêm:
-   - Đơn **chưa thu tiền** (COD, hoặc VNPAY chưa capture): trả `grand_total` mới, buyer trả theo số mới.
-   - Đơn **đã thu tiền** (VNPAY đã capture): **không** truy thu buyer. Trả `absorbed_amount`, sàn chịu, ghi `VOUCHER_ADJUSTMENT_ABSORBED` trong `voucher_adjustments`.
-6. Huỷ **toàn bộ** nhóm → nhả tất cả voucher, `used_count` trả về nguyên trạng.
+Lý do: Payment-Wallet (đã có code) chốt `orders[].amount` của từng đơn con lúc `order-service` tạo payment, và không có API sửa số tiền. COD capture đúng số đã chốt khi nhận `shipment.delivered` (`ProcessCodPaymentService`); VNPAY đã thu đủ trước khi đơn được huỷ một phần (đơn `PENDING_PAYMENT` chỉ bị huỷ theo timeout của cả payment). Nếu đổi `grand_total` thì shipper thu (qua `cod_amount`) và Payment ghi sổ sẽ lệch nhau. Giữ nguyên số tiền thì Order, Shipment và Payment luôn khớp mà không cần sửa Payment.
 
-`order-service` gửi kèm cờ `payment_captured` của từng đơn còn lại (nó sở hữu payment projection); Checkout không tự suy ra trạng thái tiền. Mọi lần tính lại ghi `voucher_adjustments` kèm `grand_total` trước/sau để đối soát.
+1. Mã `SHOP` của đơn bị huỷ: redemption `RELEASED`, `used_count` trả lại.
+2. Mã `PLATFORM`/`FREESHIP`:
+   - Mọi đơn dùng mã đều bị huỷ → `RELEASED`, `used_count` trả lại.
+   - Còn đơn dùng mã → mã **giữ nguyên** cho các đơn còn lại với đúng phần đã phân bổ; `voucher_redemptions.discount_amount` trừ đi phần của đơn bị huỷ. **Không** phân bổ lại phần đó sang đơn còn lại.
+3. Kiểm lại `min_order` của từng mã `PLATFORM`/`FREESHIP` còn giữ, trên base của các đơn còn lại. Không còn đủ → **vẫn giữ** phần giảm cho đơn còn lại (không truy thu buyer); ghi `voucher_adjustments` loại `VOUCHER_ADJUSTMENT_ABSORBED` với `absorbed_amount` = phần giảm của mã đó trên đơn còn lại (sàn chịu dù điều kiện không còn đúng, để Finance theo dõi).
+4. Huỷ **toàn bộ** nhóm → nhả tất cả voucher, `used_count` trả về nguyên trạng.
+
+`order-service` vẫn gửi `payment_captured` của từng đơn còn lại để ghi audit; v1 không dùng cờ này để tính. Khi Payment-Wallet có API sửa số tiền payment, có thể bật lại việc phân bổ lại (`REALLOCATED`) mà không đổi shape API.
 
 ### 3.4 Vòng đời lượt dùng (redemption)
 
@@ -97,7 +97,7 @@ recalculate gỡ voucher / huỷ đơn có mã SHOP / huỷ cả nhóm → RELEA
 | `DiscountType` | `PERCENT`, `FIXED`, `FREESHIP`. Tổ hợp hợp lệ (nguồn chuẩn, khớp `docs/db/voucher.md` §3 và công thức `checkout.md` §3.2): `scope=SHOP`/`PLATFORM` nhận `PERCENT`/`FIXED`, áp lên tiền hàng; `scope=FREESHIP` nhận `FREESHIP` (VND) hoặc `PERCENT` (phần trăm phí ship, có `max_discount_amount`), áp lên phí ship. Tổ hợp khác → `400 CHECKOUT_VOUCHER_INVALID` khi tạo/sửa. |
 | `VoucherScope` | `PLATFORM`, `SHOP`, `FREESHIP`. Vừa là phạm vi áp dụng vừa là **slot cộng dồn**: tối đa 1 mã mỗi scope (`SHOP` là 1 mã **mỗi shop**). |
 | `RedemptionStatus` | `HELD`, `REDEEMED`, `RELEASED` (§3.4). |
-| `AdjustmentType` | `REALLOCATED`, `VOUCHER_REMOVED`, `VOUCHER_ADJUSTMENT_ABSORBED`, `GROUP_CANCELLED`. |
+| `AdjustmentType` | `REALLOCATED` (dự phòng, v1 không phát sinh), `VOUCHER_REMOVED` (v1 không phát sinh), `VOUCHER_ADJUSTMENT_ABSORBED`, `GROUP_CANCELLED`, `SHARE_RELEASED` (trả lại phần giảm của đơn bị huỷ). |
 
 ## 6. Event phát ra / lắng nghe
 

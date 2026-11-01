@@ -113,6 +113,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | Order → Checkout | `POST /internal/checkout-groups/{id}/recalculate` | `checkout-docs` api §3.4 | chưa có code | ⏳ |
 | Cart → Product | `GET /products/{productId}` (batch không có `skus[]`, không dùng) | khớp | Catalog ✅ | ✅ |
 | Checkout → Product | `GET /products/{productId}` (giá SKU, SKU active, `tax_rate_bps`) | `checkout-docs` lld §6.3–6.4 | Catalog ✅ | ✅ |
+| Checkout, Order → Auth-user | `GET /api/v1/internal/shops/{shopId}/pickup-address` | `auth-user-docs` api §3.52 | chưa có code | ⏳ |
 | Gateway → Auth-user | `/api/v1/locations/vn/**` | Đã thêm vào route table | `VietnamLocationController` (permitAll) | ✅ |
 | Gateway → mọi upstream | `/api/v1/...` | route table | Catalog (`GLOBAL_PREFIX=api/v1`), Search, Notification, Auth, Payment, Shipment đều có prefix `/api/v1` | ✅ |
 | Notification → Auth-user | JWKS `/.well-known/jwks.json` (`JWT_JWKS_URL`) | khớp | `SecurityConfig` permitAll | ✅ |
@@ -204,8 +205,8 @@ Order-Commerce (chưa có code) được tách thành `cart-service` (`cart-docs
 | S08 | Voucher validate thiếu lý do `ALREADY_USED` mà list voucher dùng. | UI phải map hai bộ mã. | Thêm vào validate. |
 | S09 | `voucher_redemptions` có hai unique mâu thuẫn. | — | Chốt unique `(voucher_id, checkout_group_id)` + giới hạn mỗi buyer ở service. |
 | S10 | Gateway LLD ghi auth-user đã có `/health/live`; code chưa có (C10). | Mâu thuẫn trong cùng file. | Sửa câu. |
-| S11 | Payment-Wallet chưa có API đổi `amount` của payment COD sau khi huỷ một phần làm đổi `grand_total`. | Shipper thu đúng số mới (qua `cod_amount`), nhưng đối soát Payment lệch. | **Mở** — `order-docs` lld §8 mục 6, cần Payment owner quyết định. |
-| S12 | Địa chỉ lấy hàng của shop (`from_address_snapshot`) chưa có contract đọc từ auth-user. | Không tạo được shipment/carrier quote thật. | **Mở** — `order-docs` api §5 mục 3. |
+| S11 | Payment-Wallet chưa có API đổi `amount` của payment COD sau khi huỷ một phần làm đổi `grand_total`. | Shipper thu đúng số mới (qua `cod_amount`), nhưng đối soát Payment lệch. | **Đã đóng (docs, 2026-11-01)** — recalculate v1 **không đổi số tiền** đơn còn lại; mã không còn đủ điều kiện thì sàn chịu (`absorbed_amount`). Không cần sửa Payment. `checkout-docs` lld `voucher.md` §3.3. Còn lại: Payment chưa huỷ được dòng COD của đơn bị huỷ (treo `PENDING_COD`, không lệch tiền) — `order-docs` lld §8 mục 6. |
+| S12 | Địa chỉ lấy hàng của shop (`from_address_snapshot`) chưa có contract đọc từ auth-user. | Không tạo được shipment/carrier quote thật. | **Đã chốt contract** — auth-user `GET /api/v1/internal/shops/{shopId}/pickup-address` đọc `warehouse_snapshot` có sẵn (`auth-user-docs` api §3.52). ⏳ Cần code ở `user-auth-service`. |
 | S13 | Error code: `ORDER_CART_*`/`ORDER_VOUCHER_*`… đổi sang `CART_*`/`CHECKOUT_*`. Không service có code nào đọc các mã này; Gateway doc cập nhật `CHECKOUT_DEPENDENCY_UNAVAILABLE`. | — | Đã đổi. |
 
 ### 10.1 Recheck chi tiết sau khi tách (2026-11-01)
@@ -220,7 +221,7 @@ Một lượt rà contract chi tiết sau PR tách service tìm thêm 12 điểm
 | R04 | `code` chỉ unique theo `(scope, shop_id)` nhưng checkout nhận mã. | Checkout nhận `voucher_ids`; validate trả `voucher_id`, khớp nhiều → `AMBIGUOUS_CODE` + `candidates[]`. |
 | R05 | Voucher cần đọc cả giỏ nhưng cart internal bắt buộc `item_ids`. | `item_ids` tuỳ chọn ở cart internal, validate và list voucher. |
 | R06 | Batch `GET /products?product_ids=` không có `skus[]` (đã kiểm code Catalog). | Cart và Checkout dùng `GET /products/{productId}` (`checkout-docs` lld §6.4). |
-| R07 | Bất biến `grand_total` bỏ sót `absorbed_amount`. | Thêm `− absorbed_amount` ở order DB và checkout DB. |
+| R07 | Bất biến `grand_total` bỏ sót `absorbed_amount`. | Thay bằng quyết định S11: `grand_total` không đổi sau place, `absorbed_amount` chỉ để đối soát và không nằm trong công thức. |
 | R08 | `POST /cart/items` cộng dồn nhưng ghi là idempotent. | `Idempotency-Key` tuỳ chọn, `CART_IDEMPOTENCY_CONFLICT`. |
 | R09 | `checked-out` hứa trả cùng kết quả nhưng chỉ lưu group gần nhất. | Bỏ lời hứa; xoá theo `item_id` vốn an toàn khi gọi lại. |
 | R10 | `CO-CALC-06` còn giảm 200.000. | Sửa thành 199.999 theo trần `subtotal_s − 1`. |

@@ -257,7 +257,7 @@ Response `200`:
 | `order_id`, `checkout_group_id`, `shop_id`, `buyer_user_id` | `orders` |
 | `buyer_email` | `orders.buyer_email` (bắt buộc, `@Email`) |
 | `carrier` | Seller chọn |
-| `from_address_snapshot` | Địa chỉ lấy hàng của shop, đọc từ auth-user lúc ship (xem §5 mục 3) |
+| `from_address_snapshot` | Địa chỉ lấy hàng của shop: đọc `GET /api/v1/internal/shops/{shopId}/pickup-address` của auth-user (`auth-user-docs/docs/api/auth-user.md` §3.52) lúc carrier quote và lúc SHIP, map `{contact_name, phone, line1, line2, ward, district, province, postal_code}`, snapshot vào shipment |
 | `to_address_snapshot` | `orders.address_snapshot` |
 | `items[]` (≤100) | `order_items` |
 | `cod_amount` | `grand_total` hiện tại nếu `payment_method=COD` (đã gồm điều chỉnh recalculate), ngược lại `0` |
@@ -367,7 +367,7 @@ Headers: `X-Internal-Service-Token`, `Idempotency-Key` = `checkout_group_id`. G�
 (Ví dụ rút gọn một đơn con và một item; số khớp golden `CO-CALC-01`, đơn Shop A.)
 
 - `orders[].reservation_id`: **mỗi đơn con một reservation** (Checkout reserve riêng từng đơn), để commit/release một đơn không đụng kho của đơn khác trong nhóm.
-- `items[].order_item_id`: Checkout sinh trước, `order-service` dùng làm `order_items.id`. Recalculate trả kết quả theo id này (`checkout-docs/docs/api/checkout.md` §3.4).
+- `items[].order_item_id`: Checkout sinh trước, `order-service` dùng làm `order_items.id`. Recalculate trả `items[]` theo id này (v1 giá trị không đổi) (`checkout-docs/docs/api/checkout.md` §3.4).
 
 Response `201` — VNPAY:
 
@@ -409,4 +409,4 @@ Bảng đầy đủ ở `docs/lld/order.md` §7. Endpoint buyer/seller trả: `O
 |---|---|---|---|
 | 1 | Seller cancel/refund policy chưa đủ trong HLD. | Ảnh hưởng compensation. | Product/Finance |
 | 2 | `address_snapshot` lưu số điện thoại đầy đủ (cần cho Shipment); API chỉ trả `phone_masked`. | Ảnh hưởng privacy. | Security |
-| 3 | Địa chỉ lấy hàng của shop (`from_address_snapshot`) đọc từ auth-user khi ship; chưa có contract endpoint cụ thể trong doc auth-user. | Thiếu thì không tạo được shipment. | Auth-user + Order owner |
+| 3 | Đã chốt contract (2026-11-01, đóng S12): `from_address_snapshot` đọc từ auth-user `GET /internal/shops/{shopId}/pickup-address` (⏳ auth-user chưa có code). `409 SHOP_WAREHOUSE_MISSING` → façade/SHIP trả `409 ORDER_STATE_INVALID` kèm `details.reason=SHOP_WAREHOUSE_MISSING`. | Tới khi auth-user có code thì vẫn không tạo được shipment. | Auth-user + Order owner |

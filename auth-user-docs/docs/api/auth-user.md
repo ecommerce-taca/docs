@@ -188,6 +188,7 @@ Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — t
 | 54 | `GET` | `/locations/vn/provinces` | Danh mục tỉnh/thành VN | Public | Address form | ✅ |
 | 55 | `GET` | `/locations/vn/provinces/{provinceCode}/wards` | Danh mục phường/xã theo tỉnh | Public | Address form | ✅ |
 | 56 | `GET` | `/actuator/health` | Health Spring Boot (`show-details: never`) — path thật trong code; trên K8s có thêm `/liveness`, `/readiness` | Public (permitAll) | Ops | ✅ |
+| 57 | `GET` | `/internal/shops/{shopId}/pickup-address` | Địa chỉ lấy hàng (kho) của shop cho tính phí ship và tạo shipment | Internal (`checkout-service`, `order-service`; `X-Internal-Service-Token`), Gateway không expose | — | ⏳ Thiết kế 2026-11-01, chưa có code |
 
 ## 3. Chi tiết endpoint
 
@@ -1377,6 +1378,32 @@ Quyền: Seller · Response: `204`. Chỉ xoá document chưa submit. Lỗi: `40
 
 Quyền: Public · Response: `200` danh sách `{code, name}`. Danh mục 2 cấp tỉnh → phường/xã (không có quận/huyện). Lỗi: `404 LOCATION_PROVINCE_NOT_FOUND`. Chi tiết: `docs/vietnam-location-api.md` trong service repo.
 
+### 3.52 `GET /internal/shops/{shopId}/pickup-address` — địa chỉ lấy hàng (⏳ chưa có trong code)
+
+Đóng CONTRACT-MATRIX S12. Dữ liệu đã có sẵn: `shops.warehouse_snapshot` do seller lưu ở `PUT /seller/onboarding/warehouse` (§3.22, `UpdateSellerWarehouseService`). Endpoint chỉ **đọc** snapshot đó ra cho service nội bộ; không đổi endpoint hay event nào đang có.
+
+Quyền: Internal. Header `X-Internal-Service-Token` khớp `AUTH_USER_INTERNAL_TOKEN`; chỉ `checkout-service` (quote phí ship lúc preview/place) và `order-service` (carrier quote + tạo shipment) được gọi. Gateway không route `/api/v1/internal/**`. Response: `200`
+
+```json
+{
+  "data": {
+    "shop_id": "01912f31-7a1b-7c12-9c55-8b1c34a6d921",
+    "warehouse_name": "Kho HCM",
+    "contact_name": "Nguyễn Văn B",
+    "contact_phone": "+84901234567",
+    "address": { "line1": "15 Lê Lợi", "line2": null, "ward": "Bến Thành", "district": "Quận 1", "province": "TP.HCM", "postal_code": null },
+    "cod_enabled": true,
+    "updated_at": "2026-10-20T08:00:00Z"
+  },
+  "meta": { "request_id": "01912fd9-7a1b-7c12-9c55-8b1c34a6d921" }
+}
+```
+
+- Field lấy nguyên từ `warehouse_snapshot` (`warehouse_name`, `contact_name`, `contact_phone`, `address.*`, `cod_enabled`); `updated_at` = `shops.updated_at`.
+- Caller map sang `from_address_snapshot` của Shipment: `{contact_name, phone: contact_phone, line1, line2, ward, district, province, postal_code}`, rồi **snapshot** vào đơn/shipment; đổi kho về sau không đổi đơn đã tạo.
+- Chỉ trả cho shop `ACTIVE`/đang bán; không trả bank, KYC hay owner.
+- Lỗi: `401 AUTH_TOKEN_INVALID` (thiếu/sai token nội bộ), `404 SHOP_NOT_FOUND`, `409 SHOP_WAREHOUSE_MISSING` (seller chưa hoàn tất bước kho). Không log `contact_phone`/địa chỉ.
+
 ## 4. Mã lỗi chung
 
 | Code | HTTP | Ý nghĩa | Thông điệp hiển thị |
@@ -1412,6 +1439,7 @@ Quyền: Public · Response: `200` danh sách `{code, name}`. Danh mục 2 cấp
 | `SHOP_ALREADY_EXISTS` | 409 | User đã có shop | `Tài khoản đã có hồ sơ người bán.` |
 | `SHOP_NOT_FOUND` | 404 | Không tìm thấy shop | `Không tìm thấy gian hàng.` |
 | `SHOP_INVALID_STATE` | 409 | Action sai shop state | `Trạng thái gian hàng không cho phép thao tác.` |
+| `SHOP_WAREHOUSE_MISSING` | 409 | ⏳ Shop chưa khai báo kho (§3.52) | `Gian hàng chưa có địa chỉ lấy hàng.` |
 | `SHOP_SLUG_EXISTS` | 409 | Slug trùng | `Đường dẫn gian hàng đã tồn tại.` |
 | `FAVORITE_LIMIT_REACHED` | 409 | Đạt `MAX_FAVORITES_PER_USER` | `Bạn đã đạt giới hạn số sản phẩm yêu thích.` |
 | `SHOP_FOLLOW_LIMIT_REACHED` | 409 | Đạt `MAX_FOLLOWED_SHOPS_PER_USER` | `Bạn đã đạt giới hạn số shop theo dõi.` |

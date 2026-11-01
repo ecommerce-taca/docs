@@ -35,7 +35,7 @@ mfe-buyer/mfe-seller/admin ──Gateway──► checkout-service
                                    ├─ MySQL checkoutdb: checkout groups, vouchers, redemptions, outbox
                                    ├─ REST cart-service: đọc giỏ / checked-out
                                    ├─ REST Product Catalog: GET /products/{id} (giá SKU, SKU active, tax_rate_bps)
-                                   ├─ REST Auth User: địa chỉ buyer
+                                   ├─ REST Auth User: địa chỉ buyer; GET /internal/shops/{id}/pickup-address (địa chỉ kho shop)
                                    ├─ REST Shipment: shipping quote
                                    ├─ REST Inventory: availability / reserve / release (trước khi có đơn)
                                    ├─ REST order-service: POST /internal/orders
@@ -241,7 +241,9 @@ Kiểm tra bước 2: `raw_A = 200000 × 500000/900000 = 111111,11` → `floor` 
 1. Validate JWT, Idempotency-Key, payment_method, address (Auth User), slot voucher.
 2. cart-service: đọc item đã chọn (thiếu hết → CHECKOUT_CART_EMPTY).
 3. Product: GET /products/{productId} cho từng product (§6.4) → giá SKU, SKU active, tax_rate_bps → snapshot.
-4. Shipment quote theo shop → CheckoutCalculator (§3.2).
+4. Auth User GET /internal/shops/{shopId}/pickup-address cho mỗi shop → from_address_snapshot;
+   Shipment quote theo shop → CheckoutCalculator (§3.2). Shop chưa có kho (409 SHOP_WAREHOUSE_MISSING)
+   → item của shop đó coi như không bán được: preview trả warning ITEM_UNAVAILABLE, place trả 409 CHECKOUT_PRODUCT_UNAVAILABLE.
 5. MySQL tx: tạo checkout_groups(PENDING) + checkout_group_orders (order_id sinh trước, UUIDv7)
             + giữ lượt voucher (voucher_redemptions HELD, used_count += 1).
 6. Inventory reserve MỖI ĐƠN CON một lần (order_intent_id = order_id,
@@ -275,9 +277,9 @@ Payment-Wallet lỗi khi `order-service` tạo payment: đơn đã tạo vẫn t
 `order-service` gọi `POST /internal/checkout-groups/{checkoutGroupId}/recalculate` sau khi đã huỷ đơn (`order-docs/docs/lld/order.md` §3.3). Checkout:
 
 1. Đánh dấu các `checkout_group_orders` bị huỷ là `CANCELLED`.
-2. Áp quy tắc ở `voucher.md` §3.3 bằng **cùng** `CheckoutCalculator` §3.2 trên các đơn còn lại.
-3. Cập nhật `voucher_redemptions` (nhả lượt nếu voucher bị gỡ), ghi `voucher_adjustments` (trước/sau), outbox `voucher.released` khi có nhả.
-4. Trả số tiền mới cho từng đơn còn lại; `order-service` áp vào đơn.
+2. Áp quy tắc ở `voucher.md` §3.3: **số tiền các đơn còn lại không đổi** (Payment-Wallet không sửa được `amount`); chỉ nhả mã `SHOP` của đơn huỷ, trừ phần `PLATFORM`/`FREESHIP` của đơn huỷ khỏi redemption, và kiểm `min_order` trên base còn lại bằng cùng `CheckoutCalculator` §3.2.
+3. Cập nhật `voucher_redemptions`, ghi `voucher_adjustments`, outbox `voucher.released` khi có nhả.
+4. Trả số tiền (không đổi) và `absorbed_amount` của từng đơn còn lại; `order-service` chỉ ghi audit.
 
 Idempotent theo header `Idempotency-Key` (`order-service` dùng `cancel-{order_id}`): gọi lặp trả cùng kết quả, không nhả `used_count` hai lần.
 
@@ -333,6 +335,7 @@ Hằng số voucher ở `voucher.md` §4.
 | Thuế suất Product Catalog (REST) | Gọi ra | §6.3 |
 | Giá/trạng thái SKU từ Product Catalog (REST) | Gọi ra | §6.4 |
 | Shipment quote (REST) | Gọi ra | `shipment-docs/docs/api/shipment.md` §3.2 |
+| Địa chỉ lấy hàng của shop (REST, auth-user) | Gọi ra | `auth-user-docs/docs/api/auth-user.md` §3.52 (⏳ auth-user chưa có code) |
 
 Checkout không consume Kafka. Mọi event đi qua transactional outbox.
 

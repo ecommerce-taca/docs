@@ -60,7 +60,8 @@ Số tiền phân bổ của từng đơn con tại lúc place, dùng làm đầ
 | `order_id` | BINARY(16) | N | Checkout sinh trước khi gọi `order-service`; PK cùng `checkout_group_id`. |
 | `shop_id` | BINARY(16) | N | — |
 | `reservation_id` | BINARY(16) | Y | Inventory reference, có sau bước reserve. **Mỗi đơn con một reservation** (`docs/lld/checkout.md` §6.1). |
-| `subtotal`, `shop_discount`, `platform_discount`, `shipping_fee`, `freeship_discount`, `tax`, `grand_total`, `absorbed_amount` | BIGINT | N | `≥0`; `absorbed_amount` mặc định 0; `grand_total = subtotal − shop_discount − platform_discount + shipping_fee − freeship_discount − absorbed_amount`. |
+| `subtotal`, `shop_discount`, `platform_discount`, `shipping_fee`, `freeship_discount`, `tax`, `grand_total` | BIGINT | N | `≥0`; `grand_total = subtotal − shop_discount − platform_discount + shipping_fee − freeship_discount`; v1 không đổi sau place (`docs/lld/voucher.md` §3.3). |
+| `absorbed_amount` | BIGINT | N | Mặc định 0; phần giảm sàn chịu khi mã không còn đủ `min_order` sau huỷ một phần. Chỉ để đối soát, không nằm trong công thức `grand_total`. |
 | `status` | VARCHAR(16) | N | `ACTIVE`/`CANCELLED`. |
 | `updated_at` | DATETIME(6) | N | UTC. |
 
@@ -77,7 +78,7 @@ Snapshot **bất biến** từng dòng hàng lúc place. Recalculate cần nó �
 | `unit_price` | BIGINT | N | `≥1`, giá đã gồm VAT tại lúc place. |
 | `quantity` | INT | N | 1–999. |
 | `tax_rate_bps` | INT | N | Snapshot từ Product Catalog (`docs/lld/checkout.md` §6.3). |
-| `discount_allocated`, `tax_amount` | BIGINT | N | Kết quả tính hiện hành của dòng; recalculate ghi đè. |
+| `discount_allocated`, `tax_amount` | BIGINT | N | Kết quả tính lúc place; v1 không đổi sau đó (`docs/lld/voucher.md` §3.3). |
 
 ### 3.3 Bảng voucher
 
