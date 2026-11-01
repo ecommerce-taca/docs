@@ -409,4 +409,4 @@ Bảng đầy đủ ở `docs/lld/order.md` §7. Endpoint buyer/seller trả: `O
 |---|---|---|---|
 | 1 | Seller cancel/refund policy chưa đủ trong HLD. | Ảnh hưởng compensation. | Product/Finance |
 | 2 | `address_snapshot` lưu số điện thoại đầy đủ (cần cho Shipment); API chỉ trả `phone_masked`. | Ảnh hưởng privacy. | Security |
-| 3 | Đã chốt contract (2026-11-01, đóng S12): `from_address_snapshot` đọc từ auth-user `GET /internal/shops/{shopId}/pickup-address` (⏳ auth-user chưa có code). `409 SHOP_WAREHOUSE_MISSING` → façade/SHIP trả `409 ORDER_STATE_INVALID` kèm `details.reason=SHOP_WAREHOUSE_MISSING`. | Tới khi auth-user có code thì vẫn không tạo được shipment. | Auth-user + Order owner |
+| 3 | Đã chốt contract (2026-11-01, đóng S12): `from_address_snapshot` đọc từ auth-user `GET /internal/shops/{shopId}/pickup-address` (auth-user đã có code, PR #116). `409 SHOP_WAREHOUSE_MISSING` → façade/SHIP trả `409 ORDER_STATE_INVALID` kèm `details.reason=SHOP_WAREHOUSE_MISSING`. | Đã có code ở auth-user; còn chờ order-service gọi. | Auth-user + Order owner |

@@ -483,7 +483,7 @@ Ràng buộc:
 | Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
 |---|---|---|---|
 | `ACCESS_TOKEN_TTL` | 900 giây | — | JWT access token, 15 phút. |
-| `AUTH_USER_INTERNAL_TOKEN` | — | ⏳ chưa có | So constant-time với `X-Internal-Service-Token` cho `/api/v1/internal/**` (hiện chỉ `GET /internal/shops/{shopId}/pickup-address`). |
+| `AUTH_USER_INTERNAL_TOKEN` | — | ✅ `auth.internal.service-token`; trống thì mọi call nội bộ bị 401 | So constant-time với `X-Internal-Service-Token` cho `/api/v1/internal/**` (hiện chỉ `GET /internal/shops/{shopId}/pickup-address`). |
 | `REFRESH_TOKEN_TTL` | 30 ngày | — | Rotation bắt buộc. |
 | `REFRESH_TOKEN_ROTATION` | `true` | — | Token cũ bị revoke sau mỗi refresh. |
 | `PASSWORD_HASH_ALGORITHM` | `Argon2id` | — | Không lưu raw password. |
@@ -724,7 +724,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `SHOP_NOT_FOUND` | 404 | Shop không tồn tại | `Không tìm thấy gian hàng.` |
 | `SHOP_SLUG_EXISTS` | 409 | Slug trùng | `Đường dẫn gian hàng đã tồn tại.` |
 | `SHOP_INVALID_STATE` | 409 | Action không hợp lệ với shop status | `Trạng thái gian hàng không cho phép thao tác này.` |
-| `SHOP_WAREHOUSE_MISSING` | 409 | ⏳ `GET /internal/shops/{shopId}/pickup-address` khi shop chưa có `warehouse_snapshot` | `Gian hàng chưa có địa chỉ lấy hàng.` |
+| `SHOP_WAREHOUSE_MISSING` | 409 | `GET /internal/shops/{shopId}/pickup-address` khi shop chưa có `warehouse_snapshot` | `Gian hàng chưa có địa chỉ lấy hàng.` |
 | `KYC_REQUIRED` ⏳ | 403 | Chưa đạt điều kiện KYC | `Vui lòng hoàn tất xác minh gian hàng.` |
 | `KYC_DOCUMENT_REQUEST_INVALID`, `KYC_DOCUMENT_TYPE_UNSUPPORTED`, `KYC_DOCUMENT_FILENAME_INVALID`, `KYC_DOCUMENT_CONTENT_TYPE_UNSUPPORTED`, `KYC_DOCUMENT_SIZE_INVALID`, `KYC_DOCUMENT_CHECKSUM_INVALID`, `KYC_DOCUMENT_STATE_INVALID`, `KYC_DOCUMENT_VERIFICATION_FAILED`, `KYC_DOCUMENT_UPLOAD_INCOMPLETE`, `KYC_DOCUMENT_REQUIRED` | 400 | `InvalidKycDocumentException.Reason` (một mã cho mỗi lý do; chi tiết ở `api/auth-user.md` §4) | Theo `GlobalExceptionHandler`. |
 | `KYC_DOCUMENT_DUPLICATE` | 409 | Tài liệu cùng checksum đã có trong case | `Tài liệu đã tồn tại.` |

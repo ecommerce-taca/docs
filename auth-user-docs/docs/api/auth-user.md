@@ -188,7 +188,7 @@ Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — t
 | 54 | `GET` | `/locations/vn/provinces` | Danh mục tỉnh/thành VN | Public | Address form | ✅ |
 | 55 | `GET` | `/locations/vn/provinces/{provinceCode}/wards` | Danh mục phường/xã theo tỉnh | Public | Address form | ✅ |
 | 56 | `GET` | `/actuator/health` | Health Spring Boot (`show-details: never`) — path thật trong code; trên K8s có thêm `/liveness`, `/readiness` | Public (permitAll) | Ops | ✅ |
-| 57 | `GET` | `/internal/shops/{shopId}/pickup-address` | Địa chỉ lấy hàng (kho) của shop cho tính phí ship và tạo shipment | Internal (`checkout-service`, `order-service`; `X-Internal-Service-Token`), Gateway không expose | — | ⏳ Thiết kế 2026-11-01, chưa có code |
+| 57 | `GET` | `/internal/shops/{shopId}/pickup-address` | Địa chỉ lấy hàng (kho) của shop cho tính phí ship và tạo shipment | Internal (`checkout-service`, `order-service`; `X-Internal-Service-Token`), Gateway không expose | — | ✅ Code 2026-11-01 (PR #116) |
 
 ## 3. Chi tiết endpoint
 
@@ -1378,7 +1378,7 @@ Quyền: Seller · Response: `204`. Chỉ xoá document chưa submit. Lỗi: `40
 
 Quyền: Public · Response: `200` danh sách `{code, name}`. Danh mục 2 cấp tỉnh → phường/xã (không có quận/huyện). Lỗi: `404 LOCATION_PROVINCE_NOT_FOUND`. Chi tiết: `docs/vietnam-location-api.md` trong service repo.
 
-### 3.52 `GET /internal/shops/{shopId}/pickup-address` — địa chỉ lấy hàng (⏳ chưa có trong code)
+### 3.52 `GET /internal/shops/{shopId}/pickup-address` — địa chỉ lấy hàng
 
 Đóng CONTRACT-MATRIX S12. Dữ liệu đã có sẵn: `shops.warehouse_snapshot` do seller lưu ở `PUT /seller/onboarding/warehouse` (§3.22, `UpdateSellerWarehouseService`). Endpoint chỉ **đọc** snapshot đó ra cho service nội bộ; không đổi endpoint hay event nào đang có.
 

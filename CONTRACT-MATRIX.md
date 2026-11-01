@@ -113,7 +113,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | Order → Checkout | `POST /internal/checkout-groups/{id}/recalculate` | `checkout-docs` api §3.4 | chưa có code | ⏳ |
 | Cart → Product | `GET /products/{productId}` (batch không có `skus[]`, không dùng) | khớp | Catalog ✅ | ✅ |
 | Checkout → Product | `GET /products/{productId}` (giá SKU, SKU active, `tax_rate_bps`) | `checkout-docs` lld §6.3–6.4 | Catalog ✅ | ✅ |
-| Checkout, Order → Auth-user | `GET /api/v1/internal/shops/{shopId}/pickup-address` | `auth-user-docs` api §3.52 | chưa có code | ⏳ |
+| Checkout, Order → Auth-user | `GET /api/v1/internal/shops/{shopId}/pickup-address` | `auth-user-docs` api §3.52 | `user-auth-service` PR #116 | ✅ |
 | Gateway → Auth-user | `/api/v1/locations/vn/**` | Đã thêm vào route table | `VietnamLocationController` (permitAll) | ✅ |
 | Gateway → mọi upstream | `/api/v1/...` | route table | Catalog (`GLOBAL_PREFIX=api/v1`), Search, Notification, Auth, Payment, Shipment đều có prefix `/api/v1` | ✅ |
 | Notification → Auth-user | JWKS `/.well-known/jwks.json` (`JWT_JWKS_URL`) | khớp | `SecurityConfig` permitAll | ✅ |
@@ -206,7 +206,7 @@ Order-Commerce (chưa có code) được tách thành `cart-service` (`cart-docs
 | S09 | `voucher_redemptions` có hai unique mâu thuẫn. | — | Chốt unique `(voucher_id, checkout_group_id)` + giới hạn mỗi buyer ở service. |
 | S10 | Gateway LLD ghi auth-user đã có `/health/live`; code chưa có (C10). | Mâu thuẫn trong cùng file. | Sửa câu. |
 | S11 | Payment-Wallet chưa có API đổi `amount` của payment COD sau khi huỷ một phần làm đổi `grand_total`. | Shipper thu đúng số mới (qua `cod_amount`), nhưng đối soát Payment lệch. | **Đã đóng (docs, 2026-11-01)** — recalculate v1 **không đổi số tiền** đơn còn lại; mã không còn đủ điều kiện thì sàn chịu (`absorbed_amount`). Không cần sửa Payment. `checkout-docs` lld `voucher.md` §3.3. Còn lại: Payment chưa huỷ được dòng COD của đơn bị huỷ (treo `PENDING_COD`, không lệch tiền) — `order-docs` lld §8 mục 6. |
-| S12 | Địa chỉ lấy hàng của shop (`from_address_snapshot`) chưa có contract đọc từ auth-user. | Không tạo được shipment/carrier quote thật. | **Đã chốt contract** — auth-user `GET /api/v1/internal/shops/{shopId}/pickup-address` đọc `warehouse_snapshot` có sẵn (`auth-user-docs` api §3.52). ⏳ Cần code ở `user-auth-service`. |
+| S12 | Địa chỉ lấy hàng của shop (`from_address_snapshot`) chưa có contract đọc từ auth-user. | Không tạo được shipment/carrier quote thật. | **Đã chốt contract** — auth-user `GET /api/v1/internal/shops/{shopId}/pickup-address` đọc `warehouse_snapshot` có sẵn (`auth-user-docs` api §3.52). ✅ Đã có code (`user-auth-service` PR #116, 2026-11-01). |
 | S13 | Error code: `ORDER_CART_*`/`ORDER_VOUCHER_*`… đổi sang `CART_*`/`CHECKOUT_*`. Không service có code nào đọc các mã này; Gateway doc cập nhật `CHECKOUT_DEPENDENCY_UNAVAILABLE`. | — | Đã đổi. |
 
 ### 10.1 Recheck chi tiết sau khi tách (2026-11-01)
