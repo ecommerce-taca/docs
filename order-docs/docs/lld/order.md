@@ -155,11 +155,12 @@ Ràng buộc bổ sung:
 2. MySQL transaction: `status=CANCELLED`, `order_status_history`, outbox `order.cancelled`, tạo `voucher_recalc_requests` (`PENDING`) nếu đơn có `checkout_group_id`.
 3. Compensation sau commit: Inventory `release` reservation của chính đơn bị huỷ (mỗi đơn một reservation, không ảnh hưởng đơn khác trong group); VNPAY đã capture → Payment `POST /api/v1/payments/{paymentId}/refunds`; shipment còn `CREATED` → Shipment tự huỷ khi nhận `order.cancelled` (consumer đã có code).
 4. `VoucherRecalcJob` gọi `checkout-service` `POST /internal/checkout-groups/{checkoutGroupId}/recalculate` (Idempotency-Key `cancel-{order_id}`) với `cancelled_order_ids` và `remaining_orders[]` kèm `payment_captured` (= `payment_status = SUCCESS`).
-5. Áp kết quả lên các đơn còn lại: cập nhật `amounts`, `order_vouchers`, `order_items.discount_allocated`/`tax_amount` theo `items[].order_item_id`, `grand_total` (chỉ đơn chưa thu tiền), ghi `order_status_history` loại `AMOUNT_ADJUSTED`. Đơn đã thu tiền giữ `grand_total` và lưu `absorbed_amount`, nên bất biến `grand_total = subtotal − discount + shipping_fee − freeship_discount − absorbed_amount` vẫn đúng (`docs/db/order.md` §3.1).
+5. Ghi kết quả cho các đơn còn lại: v1 số tiền **không đổi** (`grand_total`, `amounts`, `order_items`, `order_vouchers` giữ nguyên; `checkout-docs/docs/lld/voucher.md` §3.3). Chỉ lưu `absorbed_amount` và ghi `order_status_history` loại `VOUCHER_ADJUSTED` khi `adjustment ≠ NONE`. Vì vậy `cod_amount` gửi Shipment lúc ship và `amount` Payment-Wallet đã chốt luôn bằng `grand_total`.
 6. Checkout down → request giữ `PENDING`, retry backoff; không chặn việc huỷ.
 
 ### 3.4 Fulfill và shipment
 
+- `from_address_snapshot` cho cả carrier quote và SHIP: đọc auth-user `GET /api/v1/internal/shops/{shopId}/pickup-address` (`auth-user-docs/docs/api/auth-user.md` §3.52), header `X-Internal-Service-Token`.
 - `GET /seller/orders/{orderId}/shipment/carriers`: façade, kiểm đơn thuộc shop, `CONFIRMED` hoặc `PROCESSING`, chưa có shipment, rồi gọi Shipment `POST /api/v1/internal/shipping/carrier-quotes`.
 - `ACCEPT`: `CONFIRMED → PROCESSING`.
 - `SHIP`: gọi Shipment `POST /api/v1/internal/shipments` với `carrier` seller chọn và `order_code = order_number`; thành công → `SHIPPED`.
@@ -169,7 +170,7 @@ Ràng buộc bổ sung:
 
 - Invoice có số unique, total/tax breakdown snapshot và `pdf_url` nullable; tạo `PENDING` cùng transaction tạo đơn.
 - `invoice.issued` phát khi chuyển `ISSUED`. Gọi invoice khi còn `PENDING` → `409 ORDER_INVOICE_NOT_READY`.
-- Recalculate làm đổi `grand_total` của đơn chưa issued → invoice cập nhật theo số mới; đã issued → `VOIDED` và phát hành lại (policy chi tiết ở §8 mục 6).
+- Recalculate v1 không đổi số tiền đơn còn lại nên invoice không phải cập nhật hay phát hành lại (§8 mục 6).
 
 Không dùng distributed transaction giữa MySQL/Inventory/Payment/Checkout; dùng idempotency, outbox, compensation và reconcile.
 
@@ -375,5 +376,5 @@ field lồng. Order chưa có code nên phát đúng tên placeholder mà Notifi
 | 3 | Repo `order-commerce-service` giữ làm repo của `order-service` (đề xuất đổi tên). | Header doc cập nhật khi đổi tên. | Tech lead |
 | 4 | Một checkout nhiều shop split thành đơn con theo shop. | Ảnh hưởng voucher, shipment, invoice. | Product owner |
 | 5 | Buyer huỷ được trước shipping; seller cancel policy cần rule chi tiết. Return/dispute **ngoài v1** — service `dispute` (v1.1); nếu cần sớm làm module trong `order-service` (quyết định 2026-09-18). | Ảnh hưởng refund/stock release. | Product/Finance |
-| 6 | Recalculate làm đổi `grand_total` của đơn COD chưa thu tiền, nhưng Payment-Wallet (đã có code) **chưa có API** sửa `amount` của payment đã tạo. | Shipper thu đúng số mới (`cod_amount` gửi Shipment lúc ship lấy `grand_total` hiện tại), nhưng bản ghi payment COD ở Payment-Wallet vẫn giữ `amount` cũ → lệch đối soát khi capture. Cần quyết định: thêm API ở Payment hay huỷ/tạo lại payment. **Lệch có từ trước khi tách, chưa giải quyết.** | Payment owner + Product |
+| 6 | Đã chốt (2026-11-01, đóng S11): recalculate không đổi số tiền đơn còn lại vì Payment-Wallet không sửa được `amount`; mã không còn đủ điều kiện thì sàn chịu (`absorbed_amount`). Hạn chế còn lại: Payment-Wallet chưa có API huỷ `PaymentOrder` COD của **đơn bị huỷ**, nên dòng đó nằm ở `PENDING_COD` (không có `shipment.delivered`). | Đối soát Payment thấy dòng COD treo của đơn đã huỷ; không lệch tiền vì chưa capture. | Payment owner |
 | 7 | Thuế: snapshot theo danh mục từ Checkout; tax authority/provider chưa chốt; invoice PDF provider chưa chốt. | Ảnh hưởng invoice compliance, `pdf_url`. | Finance/DevOps |

@@ -56,9 +56,9 @@
 | ORD-INT-04 | Kafka down | Transaction local + outbox; retry/DLQ. |
 | ORD-INT-05 | Payment-Wallet down khi tạo đơn VNPAY | Đơn vẫn tạo, `payment_next_action.type=RETRY_LATER`; job retry cùng key. |
 | ORD-INT-06 | `checkout-service` down khi recalculate | Huỷ đơn vẫn thành công; request `PENDING`, retry tới khi `DONE`. |
-| ORD-INT-07 | Recalculate trả số mới cho đơn đã thu tiền | `grand_total` giữ nguyên, `absorbed_amount` lưu trên đơn, history `AMOUNT_ADJUSTED`; bất biến `grand_total = subtotal − discount + shipping_fee − freeship_discount − absorbed_amount` đúng. |
+| ORD-INT-07 | Recalculate khi mã không còn đủ `min_order` (COD và VNPAY) | `grand_total`, `amounts`, `order_items` không đổi; `absorbed_amount` lưu trên đơn; history `VOUCHER_ADJUSTED`; COD: `cod_amount` gửi Shipment = `amount` Payment = `grand_total`. |
 | ORD-INT-08 | Group 2 shop, huỷ đơn shop A | Chỉ release `reservation_id` của đơn A; reservation đơn B vẫn `RESERVED`/`COMMITTED`. |
-| ORD-INT-09 | Recalculate trả `items[]` | `order_items.discount_allocated`/`tax_amount` cập nhật theo `order_item_id`; `Σ tax_amount = orders.tax`. |
+| ORD-INT-09 | Recalculate trả `items[]` | Giá trị khớp `order_items` hiện có (không ghi đè); lệch → log cảnh báo, không sửa đơn. |
 
 ### 3.2 Vòng đời COD xuyên service *(hồi quy — nhóm case này từng thiếu và đã để lọt lỗi deadlock)*
 
@@ -106,4 +106,4 @@ Không đơn/payment/commit trùng dưới retry hoặc đồng thời; mọi tr
 | # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
 |---|---|---|---|
 | 1 | Payment-Wallet chưa route `payment.succeeded/failed/expired/refunded` ra Kafka (C3). | Test end-to-end VNPAY chưa chạy được với Payment thật. | Payment owner |
-| 2 | Chưa có API sửa `amount` của payment COD sau recalculate (`docs/lld/order.md` §8 mục 6). | Case ORD-INT-07 cho COD chưa có kỳ vọng phía Payment. | Payment owner + Product |
+| 2 | Đã chốt: recalculate không đổi số tiền nên không cần API sửa `amount` ở Payment (`docs/lld/order.md` §8 mục 6). Payment chưa có API huỷ dòng COD của đơn bị huỷ. | Dòng COD của đơn huỷ treo `PENDING_COD` ở Payment; không ảnh hưởng tiền. | Payment owner |

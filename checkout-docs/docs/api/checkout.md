@@ -202,39 +202,44 @@ Response `200`:
         "amounts": {
           "subtotal": 800000,
           "shop_discount": 300000,
-          "platform_discount": 0,
+          "platform_discount": 111111,
           "shipping_fee": 30000,
           "freeship_discount": 30000,
-          "discount": 300000,
-          "tax": 45454,
-          "grand_total": 500000
+          "discount": 411111,
+          "tax": 35354,
+          "grand_total": 388889
         },
         "items": [
-          { "order_item_id": "oi-01912f9a", "discount_allocated": 187500, "tax_amount": 28409 },
-          { "order_item_id": "oi-01912f9b", "discount_allocated": 112500, "tax_amount": 17045 }
+          { "order_item_id": "oi-01912f9a", "discount_allocated": 256944, "tax_amount": 22096 },
+          { "order_item_id": "oi-01912f9b", "discount_allocated": 154167, "tax_amount": 13258 }
         ],
         "applied_vouchers": [
-          { "scope": "SHOP", "code": "APPLE300K", "discount_amount": 300000 },
-          { "scope": "FREESHIP", "code": "FREESHIPMAX", "discount_amount": 30000 }
+          { "voucher_id": "vch-01912fc3", "scope": "SHOP", "code": "APPLE300K", "discount_amount": 300000 },
+          { "voucher_id": "vch-01912fc7", "scope": "PLATFORM", "code": "TACA200K", "discount_amount": 111111 },
+          { "voucher_id": "vch-01912fc9", "scope": "FREESHIP", "code": "FREESHIPMAX", "discount_amount": 30000 }
         ],
-        "absorbed_amount": 0,
-        "adjustment": "VOUCHER_REMOVED"
+        "absorbed_amount": 111111,
+        "adjustment": "VOUCHER_ADJUSTMENT_ABSORBED"
       }
     ],
-    "released_vouchers": [
-      { "code": "TACA200K", "scope": "PLATFORM", "reason": "VOUCHER_REMOVED" }
+    "released_vouchers": [],
+    "redemption_updates": [
+      { "voucher_id": "vch-01912fc7", "code": "TACA200K", "discount_amount_before": 200000, "discount_amount_after": 111111 },
+      { "voucher_id": "vch-01912fc9", "code": "FREESHIPMAX", "discount_amount_before": 60000, "discount_amount_after": 30000 }
     ]
   },
   "meta": { "request_id": "01912fd0-7a1b-7c12-9c55-8b1c34a6d921" }
 }
 ```
 
-- Checkout tính lại **theo từng dòng** từ snapshot `checkout_group_items` (`docs/db/checkout.md` §3.2a), không từ tổng đơn, nên thuế đúng cả khi giỏ có nhiều thuế suất. `items[]` trả đủ mọi dòng của đơn còn lại; `order-service` ghi đè `order_items.discount_allocated`/`tax_amount` theo `order_item_id`.
-- `payment_captured=true` và voucher bị gỡ → `amounts` vẫn trả discount mới, nhưng `grand_total` giữ nguyên số đã thu và phần chênh trả ở `absorbed_amount` (sàn chịu). Bất biến khi đó: `grand_total = subtotal − discount + shipping_fee − freeship_discount − absorbed_amount`.
+- **v1: số tiền của đơn còn lại không đổi** (`amounts`, `items[]`, `applied_vouchers` trả đúng giá trị đang có), vì Payment-Wallet đã chốt `orders[].amount` lúc tạo payment và không có API sửa. Quy tắc đầy đủ ở `docs/lld/voucher.md` §3.3. Nhờ vậy `grand_total`, `cod_amount` gửi Shipment và số Payment capture luôn bằng nhau.
+- Phần giảm `PLATFORM`/`FREESHIP` của đơn bị huỷ được trả lại (redemption giảm, xem `redemption_updates`), **không** chuyển sang đơn còn lại. Mã `SHOP` của đơn bị huỷ nằm trong `released_vouchers`.
+- `absorbed_amount` > 0 khi mã đơn còn lại đang dùng không còn đủ `min_order` trên base mới: buyer vẫn được giảm, sàn chịu; `adjustment = VOUCHER_ADJUSTMENT_ABSORBED`. Không có gì đổi thì `absorbed_amount = 0`, `adjustment = "NONE"`. `absorbed_amount` chỉ để Finance đối soát, **không** nằm trong công thức `grand_total`.
+- `payment_captured` chỉ ghi audit, v1 không dùng để tính.
 - `remaining_orders` rỗng (huỷ cả nhóm) → `orders=[]`, mọi voucher trong `released_vouchers`.
 - Group không tồn tại → `404 CHECKOUT_GROUP_NOT_FOUND`; gọi lặp cùng key trả cùng response; cùng key khác body → `409 CHECKOUT_IDEMPOTENCY_CONFLICT`.
 
-Quy tắc tính ở `docs/lld/voucher.md` §3.3; ví dụ trên là nhóm golden `CO-CALC-01` sau khi huỷ đơn Shop B, giả định `TACA200K` có `min_order` 900.000: base còn 500.000 nên voucher bị gỡ; `FREESHIPMAX` vẫn đủ điều kiện, giảm hết 30.000 phí ship còn lại. Hai dòng 500.000 + 300.000 thuế 10%: `APPLE300K` phân bổ 187.500/112.500, thuế `round_half_up(312.500 / 11) = 28.409` và `round_half_up(187.500 / 11) = 17.045`, tổng 45.454.
+Ví dụ trên là nhóm golden `CO-CALC-01` (COD) sau khi huỷ đơn Shop B, giả định `TACA200K` có `min_order` 900.000: base còn 500.000 nên mã không còn đủ điều kiện, nhưng đơn Shop A vẫn giữ 111.111 đã phân bổ (sàn chịu). Phần 88.889 của Shop B và 30.000 freeship của Shop B được trả lại cho redemption. Shop B không có mã `SHOP` nên `released_vouchers` rỗng.
 
 ## 4. Mã lỗi chung
 

@@ -38,14 +38,14 @@ Theo `docs/test/checkout.md` §1.
 
 | ID | Case | Kỳ vọng |
 |---|---|---|
-| VCH-RECALC-01 | Nhóm 2 đơn, huỷ 1, phần còn lại **vẫn đủ** `min_order` | Voucher giữ; platform phân bổ lại cho đơn còn lại; `voucher_adjustments` có trước/sau. |
-| VCH-RECALC-02 | Huỷ 1 đơn, phần còn lại **không đủ** `min_order`, đơn còn lại COD | Voucher `RELEASED`, `used_count` trả lại, `grand_total` mới cao hơn. Ví dụ `docs/api/checkout.md` §3.4. |
-| VCH-RECALC-03 | Như trên nhưng `payment_captured=true` | `grand_total` không đổi; `absorbed_amount > 0`; audit `VOUCHER_ADJUSTMENT_ABSORBED`. |
+| VCH-RECALC-01 | Nhóm 2 đơn, huỷ 1, phần còn lại **vẫn đủ** `min_order` | Voucher giữ; đơn còn lại **giữ nguyên** số tiền (không phân bổ lại); redemption `discount_amount` trừ phần của đơn huỷ; `absorbed_amount = 0`, `adjustment = NONE`. |
+| VCH-RECALC-02 | Huỷ 1 đơn, phần còn lại **không đủ** `min_order`, đơn còn lại COD | Ví dụ `docs/api/checkout.md` §3.4: đơn còn lại giữ `grand_total` 388.889; `absorbed_amount` 111.111; `VOUCHER_ADJUSTMENT_ABSORBED`; redemption `TACA200K` 200.000 → 111.111, `FREESHIPMAX` 60.000 → 30.000; `used_count` không đổi. |
+| VCH-RECALC-03 | Như trên nhưng `payment_captured=true` (VNPAY) | Kết quả giống hệt VCH-RECALC-02 (cờ chỉ ghi audit). |
 | VCH-RECALC-04 | Huỷ cả nhóm | Mọi voucher `RELEASED`; `used_count` về giá trị trước checkout. |
 | VCH-RECALC-05 | Gọi lại recalculate cùng `Idempotency-Key` | Cùng response, không nhả `used_count` hai lần. |
 | VCH-RECALC-06 | Đơn bị huỷ có mã `SHOP` | Mã đó `RELEASED`, mã của shop khác không đổi. |
-| VCH-RECALC-07 | Đơn còn lại có 2 dòng thuế suất khác nhau (10% và 5%), voucher bị gỡ | Tính lại từ `checkout_group_items`; `items[]` trả đủ 2 dòng với `discount_allocated`/`tax_amount` mới; `Σ items[].tax_amount = amounts.tax`. |
-| VCH-RECALC-08 | Ví dụ `docs/api/checkout.md` §3.4 | `items[]` = `187.500/28.409` và `112.500/17.045`; `tax = 45.454`. |
+| VCH-RECALC-07 | Đơn còn lại có 2 dòng thuế suất khác nhau (10% và 5%) | `items[]` trả đủ 2 dòng với `discount_allocated`/`tax_amount` **không đổi** so với lúc place (đọc từ `checkout_group_items`); `Σ items[].tax_amount = amounts.tax`. |
+| VCH-RECALC-08 | COD: so `cod_amount` Shipment, `amount` Payment và `grand_total` sau recalculate | Cả ba bằng nhau (388.889 trong ví dụ §3.4); Payment capture không lệch khi `shipment.delivered`. |
 | VCH-HOLD-01 | 2 buyer đồng thời dùng voucher còn 1 lượt | Đúng 1 người `HELD`; người kia `409 CHECKOUT_VOUCHER_LIMIT_REACHED`. |
 | VCH-HOLD-02 | Reserve kho thất bại sau khi giữ lượt | Redemption `RELEASED`, `used_count` trả lại. |
 

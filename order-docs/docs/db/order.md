@@ -44,8 +44,8 @@ Không còn bảng giỏ hay `vouchers`/`voucher_redemptions` (đã sang `cart-s
 | `shop_id` | BINARY(16) | N | — |
 | `shop_name_snapshot` | VARCHAR(255) | N | — |
 | `status` | VARCHAR(32) | N | `OrderStatus`. |
-| `subtotal`, `shop_discount`, `platform_discount`, `shipping_fee`, `freeship_discount`, `discount`, `tax`, `grand_total` | BIGINT | N | `≥0`; `discount = shop_discount + platform_discount`; `grand_total = subtotal − discount + shipping_fee − freeship_discount − absorbed_amount` (`absorbed_amount` = 0 trừ khi đơn đã thu tiền bị gỡ voucher sau recalculate); `grand_total ≥ 1`. |
-| `absorbed_amount` | BIGINT | N | Mặc định 0; phần sàn chịu sau recalculate khi đơn đã thu tiền. |
+| `subtotal`, `shop_discount`, `platform_discount`, `shipping_fee`, `freeship_discount`, `discount`, `tax`, `grand_total` | BIGINT | N | `≥0`; `discount = shop_discount + platform_discount`; `grand_total = subtotal − discount + shipping_fee − freeship_discount`; `grand_total ≥ 1`; v1 không đổi sau khi tạo (Payment-Wallet đã chốt `amount`, `checkout-docs/docs/lld/voucher.md` §3.3). |
+| `absorbed_amount` | BIGINT | N | Mặc định 0; phần giảm sàn chịu khi mã không còn đủ `min_order` sau huỷ một phần. Chỉ để đối soát Finance, không nằm trong công thức `grand_total`. |
 | `payment_method` | VARCHAR(16) | N | `VNPAY`/`COD`. |
 | `payment_status` | VARCHAR(32) | N | `PaymentStatusProjection`. |
 | `payment_id` | BINARY(16) | Y | Payment-Wallet reference; `null` khi tạo payment lỗi. |
@@ -64,7 +64,7 @@ Không còn bảng giỏ hay `vouchers`/`voucher_redemptions` (đã sang `cart-s
 |---|---|---|
 | `tax_rate_bps` | INT | Thuế suất snapshot tại checkout (10% = `1000`), bất biến. Nguồn: `checkout-docs/docs/lld/checkout.md` §6.3. |
 | `tax_amount` | BIGINT | VAT **đã nằm trong** `line_total`, tách ra để ghi hoá đơn; không cộng vào `grand_total`. |
-| `discount_allocated` | BIGINT | Giảm shop + platform phân bổ về dòng này (Checkout tính). Recalculate ghi đè cùng `tax_amount` theo `items[]` của response. |
+| `discount_allocated` | BIGINT | Giảm shop + platform phân bổ về dòng này (Checkout tính). v1 không đổi sau khi tạo đơn. |
 
 ### 3.3 `order_vouchers`
 
