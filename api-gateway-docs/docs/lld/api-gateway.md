@@ -709,7 +709,7 @@ Upstream error tối thiểu:
 ```json
 {
   "error": {
-    "code": "ORDER_STOCK_UNAVAILABLE",
+    "code": "CHECKOUT_STOCK_UNAVAILABLE",
     "message": "Sản phẩm không còn đủ tồn kho.",
     "details": {
       "item_id": "item-01912f31"
