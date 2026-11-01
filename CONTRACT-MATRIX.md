@@ -105,13 +105,14 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | Checkout → Shipment | `POST /api/v1/internal/shipping/quote` | khớp (`checkout-docs` api §3.1) | `QuoteController` POST | ✅ |
 | Order → Shipment | `POST /api/v1/internal/shipping/carrier-quotes` (façade `GET /seller/orders/{id}/shipment/carriers`) | khớp shape `QuoteService.compare` (`order-docs` api §3.6) | `QuoteController` | ✅ |
 | Order → Shipment | `POST /api/v1/internal/shipments` | body đủ field `CreateShipmentRequest` (`buyer_email` bắt buộc, `cod_amount`, `order_code`) — `order-docs` api §3.4 | `ShipmentController` | ✅ |
-| Checkout → Inventory | `POST /internal/inventory/reservations`, `…/{id}/release` (chỉ khi chưa có đơn) | khớp doc Inventory | chưa có code | ⏳ |
+| Checkout → Inventory | `POST /internal/inventory/reservations` (mỗi đơn con một reservation, `order_intent_id = order_id`), `…/{id}/release` (chỉ khi chưa có đơn) | khớp doc Inventory | chưa có code | ⏳ |
 | Order → Inventory | `POST /internal/inventory/reservations/{id}/commit|release` | khớp doc Inventory | chưa có code | ⏳ |
 | Order → Payment | `POST /api/v1/payments`, `POST /api/v1/payments/{id}/refunds` | khớp `CreatePaymentRequest`; `order-service` là caller `InternalService.ORDER_COMMERCE` duy nhất | `PaymentController` | ✅ |
 | Checkout → Cart | `GET /internal/carts/{buyerUserId}`, `POST /internal/carts/{buyerUserId}/checked-out` | `cart-docs` api §3.5–3.6 | chưa có code | ⏳ |
 | Checkout → Order | `POST /internal/orders`, `GET /internal/orders?checkout_group_id=` | `order-docs` api §3.7–3.8 | chưa có code | ⏳ |
 | Order → Checkout | `POST /internal/checkout-groups/{id}/recalculate` | `checkout-docs` api §3.4 | chưa có code | ⏳ |
-| Cart → Product | `GET /products?product_ids=` (≤100) | khớp | Catalog ✅ | ✅ |
+| Cart → Product | `GET /products/{productId}` (batch không có `skus[]`, không dùng) | khớp | Catalog ✅ | ✅ |
+| Checkout → Product | `GET /products/{productId}` (giá SKU, SKU active, `tax_rate_bps`) | `checkout-docs` lld §6.3–6.4 | Catalog ✅ | ✅ |
 | Gateway → Auth-user | `/api/v1/locations/vn/**` | Đã thêm vào route table | `VietnamLocationController` (permitAll) | ✅ |
 | Gateway → mọi upstream | `/api/v1/...` | route table | Catalog (`GLOBAL_PREFIX=api/v1`), Search, Notification, Auth, Payment, Shipment đều có prefix `/api/v1` | ✅ |
 | Notification → Auth-user | JWKS `/.well-known/jwks.json` (`JWT_JWKS_URL`) | khớp | `SecurityConfig` permitAll | ✅ |
@@ -206,3 +207,22 @@ Order-Commerce (chưa có code) được tách thành `cart-service` (`cart-docs
 | S11 | Payment-Wallet chưa có API đổi `amount` của payment COD sau khi huỷ một phần làm đổi `grand_total`. | Shipper thu đúng số mới (qua `cod_amount`), nhưng đối soát Payment lệch. | **Mở** — `order-docs` lld §8 mục 6, cần Payment owner quyết định. |
 | S12 | Địa chỉ lấy hàng của shop (`from_address_snapshot`) chưa có contract đọc từ auth-user. | Không tạo được shipment/carrier quote thật. | **Mở** — `order-docs` api §5 mục 3. |
 | S13 | Error code: `ORDER_CART_*`/`ORDER_VOUCHER_*`… đổi sang `CART_*`/`CHECKOUT_*`. Không service có code nào đọc các mã này; Gateway doc cập nhật `CHECKOUT_DEPENDENCY_UNAVAILABLE`. | — | Đã đổi. |
+
+### 10.1 Recheck chi tiết sau khi tách (2026-11-01)
+
+Một lượt rà contract chi tiết sau PR tách service tìm thêm 12 điểm (ký hiệu R để không trùng S11/S12 ở trên). Tất cả đã sửa trong docs cart/checkout/order; không đổi contract của service đã có code.
+
+| # | Điểm kiểm | Xử lý |
+|---|---|---|
+| R01 | Một reservation cho cả group: huỷ một đơn con nhả luôn kho đơn khác. | Checkout reserve **mỗi đơn con một reservation** (`order_intent_id = order_id`); `orders[].reservation_id` trong `POST /internal/orders`. |
+| R02 | Recalculate chỉ có tổng đơn, không tính lại thuế theo dòng và không trả phân bổ theo dòng. | Bảng `checkout_group_items`; `order_item_id` do Checkout sinh; response recalculate có `orders[].items[]`. |
+| R03 | Reconcile chỉ đọc `GET /internal/orders`, không dựng lại được response checkout. | Reconcile gọi lại `POST /internal/orders` cùng key; buyer retry khi `RECONCILING` → `409 CHECKOUT_IN_PROGRESS`. |
+| R04 | `code` chỉ unique theo `(scope, shop_id)` nhưng checkout nhận mã. | Checkout nhận `voucher_ids`; validate trả `voucher_id`, khớp nhiều → `AMBIGUOUS_CODE` + `candidates[]`. |
+| R05 | Voucher cần đọc cả giỏ nhưng cart internal bắt buộc `item_ids`. | `item_ids` tuỳ chọn ở cart internal, validate và list voucher. |
+| R06 | Batch `GET /products?product_ids=` không có `skus[]` (đã kiểm code Catalog). | Cart và Checkout dùng `GET /products/{productId}` (`checkout-docs` lld §6.4). |
+| R07 | Bất biến `grand_total` bỏ sót `absorbed_amount`. | Thêm `− absorbed_amount` ở order DB và checkout DB. |
+| R08 | `POST /cart/items` cộng dồn nhưng ghi là idempotent. | `Idempotency-Key` tuỳ chọn, `CART_IDEMPOTENCY_CONFLICT`. |
+| R09 | `checked-out` hứa trả cùng kết quả nhưng chỉ lưu group gần nhất. | Bỏ lời hứa; xoá theo `item_id` vốn an toàn khi gọi lại. |
+| R10 | `CO-CALC-06` còn giảm 200.000. | Sửa thành 199.999 theo trần `subtotal_s − 1`. |
+| R11 | `status=EXPIRED` mâu thuẫn quy tắc chỉ trả `ACTIVE`. | Định nghĩa nhánh `EXPIRED` (30 ngày gần nhất, `eligible=false`). |
+| R12 | Enum `DiscountType` nói `PERCENT` chỉ áp tiền hàng, DB cho `FREESHIP` + `PERCENT`. | Một bảng tổ hợp hợp lệ trong `lld/voucher.md` §5. |

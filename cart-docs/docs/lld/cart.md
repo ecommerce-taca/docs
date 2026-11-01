@@ -18,7 +18,7 @@
 
 ```text
 mfe-buyer ──Gateway /api/v1/cart/**──► cart-service ──► MongoDB cartdb.carts
-                                          ├─ REST Product Catalog: GET /products?product_ids= (hydrate + validate)
+                                          ├─ REST Product Catalog: GET /products/{productId} (hydrate + validate SKU)
                                           └─ REST Inventory: GET /internal/inventory/availability (read-only)
 checkout-service ──REST /internal/carts/**──► cart-service
 ```
@@ -54,7 +54,7 @@ com.taca.cart
 | `CartController` | Cart CRUD cho buyer | `buyer_user_id` lấy từ `X-User-ID`; không tin `user_id` trong body. |
 | `InternalCartController` | `GET /internal/carts/{buyerUserId}`, `POST /internal/carts/{buyerUserId}/checked-out` | Bắt buộc `X-Internal-Service-Token`; chỉ `checkout-service` gọi. |
 | `CartService` | Gộp quantity khi thêm SKU trùng, cap 999, tối đa 100 dòng | Update optimistic theo `version` của document. |
-| `ProductCatalogClient` | Batch `GET /products?product_ids=` (≤100) | Timeout → vẫn trả cart với snapshot cũ, `available` giữ giá trị cuối. |
+| `ProductCatalogClient` | `GET /products/{productId}` cho mỗi product khác nhau trong giỏ, song song tối đa 10, cache 30s theo `product_id` | Batch `GET /products?product_ids=` không có `skus[]` nên không dùng. Timeout → vẫn trả cart với snapshot cũ, `available` giữ giá trị cuối. |
 
 ### 2.1 Chuẩn observability
 
@@ -70,8 +70,8 @@ com.taca.cart
 
 1. Gateway xác thực JWT, inject `X-User-ID`.
 2. `GET /cart` đọc document theo `buyer_user_id`; chưa có thì trả giỏ rỗng (không tạo document).
-3. Hydrate: gọi Product batch cho các `product_id` trong giỏ, cập nhật `title_snapshot`, `sku_label_snapshot`, `unit_price_snapshot`, `available`. Product lỗi/timeout → trả snapshot đang lưu, không lỗi.
-4. `POST /cart/items` validate Product/SKU active và quantity `1..999`; SKU đã có → cộng dồn, cap `999`; vượt `CART_MAX_ITEMS` dòng → `409 CART_TOO_MANY_ITEMS`. Document tạo lần đầu ở thao tác thêm đầu tiên (upsert).
+3. Hydrate: gọi `GET /products/{productId}` cho các `product_id` khác nhau trong giỏ (song song, cache 30s), cập nhật `title_snapshot`, `sku_label_snapshot`, `unit_price_snapshot`, `available`. Product lỗi/timeout → trả snapshot đang lưu, không lỗi.
+4. `POST /cart/items` có `Idempotency-Key` đã thấy trong `add_idempotency` → trả response đã lưu, không cộng. Sau đó validate Product/SKU active và quantity `1..999`; SKU đã có → cộng dồn, cap `999`; vượt `CART_MAX_ITEMS` dòng → `409 CART_TOO_MANY_ITEMS`. Document tạo lần đầu ở thao tác thêm đầu tiên (upsert).
 5. Availability từ Inventory chỉ để hiển thị; không coi là reservation.
 
 ### 3.2 Checkout đọc giỏ và xoá item đã đặt
@@ -80,18 +80,18 @@ com.taca.cart
 checkout-service ──GET /internal/carts/{buyerUserId}?item_ids=──► cart-service
       (place checkout thành công)
 checkout-service ──POST /internal/carts/{buyerUserId}/checked-out {cart_id, item_ids, checkout_group_id}──► cart-service
-      → xoá các item đó khỏi giỏ, idempotent theo checkout_group_id
+      → xoá các item đó khỏi giỏ nếu còn (gọi lại an toàn)
 ```
 
 - Item không thuộc giỏ của buyer bị bỏ qua (trả trong `missing_item_ids`), không lỗi — Checkout quyết định `CHECKOUT_CART_EMPTY`.
-- `checked-out` gọi lại cùng `checkout_group_id` không xoá thêm gì và trả cùng kết quả.
+- `checked-out` gọi lại (kể cả sau một group khác) chỉ xoá item còn tồn tại, nên không xoá thừa; `removed_item_ids` có thể là `[]` và Checkout không dựa vào nó.
 - Nếu `checked-out` thất bại, đơn vẫn hợp lệ; `checkout-service` retry (outbox job). Item còn lại trong giỏ chỉ là trải nghiệm, không ảnh hưởng tiền.
 
 ## 4. Hằng số & cấu hình
 
 | Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
 |---|---:|---|---|
-| `CART_MAX_ITEMS` | 100 | — | Số dòng, không phải tổng quantity; khớp giới hạn batch ≤100 của Product. |
+| `CART_MAX_ITEMS` | 100 | — | Số dòng, không phải tổng quantity. |
 | `ITEM_QTY_MIN` | 1 | — | Integer. |
 | `ITEM_QTY_MAX` | 999 | — | Mỗi SKU. |
 | Cart TTL | Không có | — | Giỏ lưu lâu dài (quyết định 2026-11-01). |
@@ -109,7 +109,7 @@ Cart không phát và không lắng nghe event Kafka.
 
 | Gọi ra (REST) | Contract |
 |---|---|
-| Product Catalog `GET /products?product_ids=` | `product-catalog-docs/docs/api/product-catalog.md` (batch ≤100, hydrate thẻ sản phẩm). |
+| Product Catalog `GET /products/{productId}` | `product-catalog-docs/docs/api/product-catalog.md` §3.1. Map field giống `checkout-docs/docs/lld/checkout.md` §6.4: giá = `skus[].price.sale_price`, `sku_label_snapshot` từ `skus[].attributes`, SKU không có trong `skus[]` → `available=false`. |
 | Inventory `GET /internal/inventory/availability` | `inventory-docs/docs/api/inventory.md` #1, read-only. |
 
 ## 7. Mã lỗi
@@ -124,6 +124,7 @@ Cart không phát và không lắng nghe event Kafka.
 | `CART_PRODUCT_UNAVAILABLE` | 409 | Product/SKU không active khi thêm. |
 | `CART_TOO_MANY_ITEMS` | 409 | Vượt `CART_MAX_ITEMS` dòng. |
 | `CART_VERSION_CONFLICT` | 409 | Ghi đồng thời; client tải lại giỏ. |
+| `CART_IDEMPOTENCY_CONFLICT` | 409 | `POST /cart/items` dùng lại `Idempotency-Key` với body khác. |
 | `CART_DEPENDENCY_UNAVAILABLE` | 503 | Product down khi **thêm** item (không dùng cho GET). |
 | `CART_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |
 

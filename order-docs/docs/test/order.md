@@ -7,7 +7,7 @@
 | Case ID | ID cũ (Order-Commerce) |
 |---|---|
 | `ORD-API-01..12` | `O-API-11..17`, `O-API-22` + case mới cho tạo đơn/façade |
-| `ORD-INT-01..07` | `O-INT-01`, `O-INT-03..05` + case mới cho Payment/recalculate |
+| `ORD-INT-01..09` | `O-INT-01`, `O-INT-03..05` + case mới cho Payment/recalculate |
 | `ORD-COD-01..10` | `O-COD-01..10` |
 
 ## 1. Chuẩn bị
@@ -56,7 +56,9 @@
 | ORD-INT-04 | Kafka down | Transaction local + outbox; retry/DLQ. |
 | ORD-INT-05 | Payment-Wallet down khi tạo đơn VNPAY | Đơn vẫn tạo, `payment_next_action.type=RETRY_LATER`; job retry cùng key. |
 | ORD-INT-06 | `checkout-service` down khi recalculate | Huỷ đơn vẫn thành công; request `PENDING`, retry tới khi `DONE`. |
-| ORD-INT-07 | Recalculate trả số mới cho đơn đã thu tiền | `grand_total` giữ nguyên, `absorbed_amount` ghi nhận, history `AMOUNT_ADJUSTED`. |
+| ORD-INT-07 | Recalculate trả số mới cho đơn đã thu tiền | `grand_total` giữ nguyên, `absorbed_amount` lưu trên đơn, history `AMOUNT_ADJUSTED`; bất biến `grand_total = subtotal − discount + shipping_fee − freeship_discount − absorbed_amount` đúng. |
+| ORD-INT-08 | Group 2 shop, huỷ đơn shop A | Chỉ release `reservation_id` của đơn A; reservation đơn B vẫn `RESERVED`/`COMMITTED`. |
+| ORD-INT-09 | Recalculate trả `items[]` | `order_items.discount_allocated`/`tax_amount` cập nhật theo `order_item_id`; `Σ tax_amount = orders.tax`. |
 
 ### 3.2 Vòng đời COD xuyên service *(hồi quy — nhóm case này từng thiếu và đã để lọt lỗi deadlock)*
 

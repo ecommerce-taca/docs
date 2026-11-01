@@ -33,8 +33,7 @@ erDiagram
 | `_id` | string | Có | `cart_id`, UUIDv7. |
 | `buyer_user_id` | string | Có | Unique; một giỏ mỗi buyer. |
 | `items` | array | Có | ≤100 phần tử, xem §3.2. |
-| `last_checkout_group_id` | string | Không | Group gần nhất đã xử lý `checked-out` (idempotency). |
-| `last_checkout_removed_item_ids` | string[] | Không | Kết quả trả lại khi gọi lặp `checked-out`. |
+| `add_idempotency` | array | Không | Key gần đây của `POST /cart/items`: `{key, request_hash, response, expires_at}`; giữ 24h, tối đa 20 phần tử (bỏ phần tử cũ nhất). `checked-out` không cần lưu gì vì xoá theo `item_id` vốn an toàn khi gọi lại. |
 | `version` | int64 | Có | Tăng mỗi lần ghi. |
 | `created_at`, `updated_at` | Date | Có | UTC. |
 

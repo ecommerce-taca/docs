@@ -79,7 +79,7 @@ Tính lại toàn bộ tiền trước khi đặt. **Không reserve kho, không 
 | `cart_id` | string | Có | Thuộc buyer |
 | `selected_item_ids` | string[] | Có | 1–100 phần tử, thuộc cart |
 | `address_id` | string | Có | Thuộc buyer |
-| `voucher_codes` | string[] | Không | Tối đa 1 mã mỗi `scope`; giỏ nhiều shop được nhiều mã `SHOP`. Mã không áp được → `warning`, không lỗi |
+| `voucher_ids` | string[] | Không | `voucher_id` lấy từ `GET /vouchers` hoặc `GET /vouchers/validate` (`docs/api/voucher.md`). Tối đa 1 voucher mỗi `scope`; giỏ nhiều shop được nhiều voucher `SHOP`. Không áp được → `warning`, không lỗi |
 
 ```json
 {
@@ -137,11 +137,11 @@ Headers: `Idempotency-Key` bắt buộc. Request:
   "selected_item_ids":["item-1","item-2"],
   "address_id":"address-1",
   "payment_method":"VNPAY",
-  "voucher_codes":["TACA200K","APPLE300K","FREESHIPMAX"]
+  "voucher_ids":["vch-01912fc7","vch-01912fc3","vch-01912fc9"]
 }
 ```
 
-`voucher_codes` là mảng theo mô hình 3 slot ở `docs/lld/voucher.md` §3.2: tối đa 1 mã `PLATFORM`, tối đa 1 mã `FREESHIP`, và tối đa 1 mã `SHOP` **cho mỗi shop** trong `selected_item_ids`. Vì vậy độ dài tối đa là `2 + số shop được chọn` (giỏ 1 shop → tối đa 3; giỏ 3 shop → tối đa 5). Vượt giới hạn này luôn có hai mã cùng slot → `400 CHECKOUT_VOUCHER_SLOT_CONFLICT`.
+`voucher_ids` dùng **id**, không dùng mã: `code` chỉ unique trong `(scope, shop_id)` nên hai shop có thể cùng có `SAVE10`, và `PLATFORM`/`FREESHIP` có thể trùng mã nhau. Buyer nhập mã tay thì FE gọi `validate` để lấy `voucher_id` trước. `voucher_ids` là mảng theo mô hình 3 slot ở `docs/lld/voucher.md` §3.2: tối đa 1 mã `PLATFORM`, tối đa 1 mã `FREESHIP`, và tối đa 1 mã `SHOP` **cho mỗi shop** trong `selected_item_ids`. Vì vậy độ dài tối đa là `2 + số shop được chọn` (giỏ 1 shop → tối đa 3; giỏ 3 shop → tối đa 5). Vượt giới hạn này luôn có hai mã cùng slot → `400 CHECKOUT_VOUCHER_SLOT_CONFLICT`.
 
 | Lỗi | HTTP | Khi nào |
 |---|---:|---|
@@ -171,7 +171,7 @@ Response `201` — **COD** (đơn chốt ngay):
 | `payment_next_action.type` | `VNPAY_QR` | `NONE` |
 | `reservation_expires_at` | timestamp — hết hạn thì đơn bị huỷ | `null` — kho đã commit ngay, không có hạn |
 
-Checkout đọc lại Product/giá, giữ lượt voucher, reserve Inventory rồi gọi `order-service` `POST /internal/orders` (saga ở `docs/lld/checkout.md` §3.3). Reserve fail không tạo đơn và nhả voucher; retry cùng `Idempotency-Key` trả cùng response. `order_id`, `order_number`, `status`, `payment_status`, `payment_next_action` lấy nguyên từ response của `order-service`.
+Checkout đọc lại Product/giá, giữ lượt voucher, reserve Inventory rồi gọi `order-service` `POST /internal/orders` (saga ở `docs/lld/checkout.md` §3.3). Inventory được reserve **riêng cho từng đơn con** nên mỗi phần tử `orders[]` có `reservation_id` riêng. Reserve fail ở bất kỳ shop nào thì không tạo đơn, release các reservation đã giữ và nhả voucher; retry cùng `Idempotency-Key` trả cùng response. Retry trong lúc kết quả tạo đơn chưa rõ (group `RECONCILING`) → `409 CHECKOUT_IN_PROGRESS`. `order_id`, `order_number`, `status`, `payment_status`, `payment_next_action` lấy nguyên từ response của `order-service`.
 
 Với COD, `order-service` gọi Inventory `commit` ngay khi tạo đơn (không có bước chờ tiền), nên `reservation_expires_at` là `null` và đơn không bị job payment-timeout đụng tới. FE **không** được hiển thị đồng hồ đếm ngược thanh toán cho đơn COD.
 
@@ -206,9 +206,13 @@ Response `200`:
           "shipping_fee": 30000,
           "freeship_discount": 30000,
           "discount": 300000,
-          "tax": 45455,
+          "tax": 45454,
           "grand_total": 500000
         },
+        "items": [
+          { "order_item_id": "oi-01912f9a", "discount_allocated": 187500, "tax_amount": 28409 },
+          { "order_item_id": "oi-01912f9b", "discount_allocated": 112500, "tax_amount": 17045 }
+        ],
         "applied_vouchers": [
           { "scope": "SHOP", "code": "APPLE300K", "discount_amount": 300000 },
           { "scope": "FREESHIP", "code": "FREESHIPMAX", "discount_amount": 30000 }
@@ -225,15 +229,16 @@ Response `200`:
 }
 ```
 
-- `payment_captured=true` và voucher bị gỡ → `grand_total` giữ nguyên số cũ, phần chênh trả ở `absorbed_amount` (sàn chịu).
+- Checkout tính lại **theo từng dòng** từ snapshot `checkout_group_items` (`docs/db/checkout.md` §3.2a), không từ tổng đơn, nên thuế đúng cả khi giỏ có nhiều thuế suất. `items[]` trả đủ mọi dòng của đơn còn lại; `order-service` ghi đè `order_items.discount_allocated`/`tax_amount` theo `order_item_id`.
+- `payment_captured=true` và voucher bị gỡ → `amounts` vẫn trả discount mới, nhưng `grand_total` giữ nguyên số đã thu và phần chênh trả ở `absorbed_amount` (sàn chịu). Bất biến khi đó: `grand_total = subtotal − discount + shipping_fee − freeship_discount − absorbed_amount`.
 - `remaining_orders` rỗng (huỷ cả nhóm) → `orders=[]`, mọi voucher trong `released_vouchers`.
 - Group không tồn tại → `404 CHECKOUT_GROUP_NOT_FOUND`; gọi lặp cùng key trả cùng response; cùng key khác body → `409 CHECKOUT_IDEMPOTENCY_CONFLICT`.
 
-Quy tắc tính ở `docs/lld/voucher.md` §3.3; ví dụ trên là nhóm golden `CO-CALC-01` sau khi huỷ đơn Shop B, giả định `TACA200K` có `min_order` 900.000: base còn 500.000 nên voucher bị gỡ; `FREESHIPMAX` vẫn đủ điều kiện, giảm hết 30.000 phí ship còn lại.
+Quy tắc tính ở `docs/lld/voucher.md` §3.3; ví dụ trên là nhóm golden `CO-CALC-01` sau khi huỷ đơn Shop B, giả định `TACA200K` có `min_order` 900.000: base còn 500.000 nên voucher bị gỡ; `FREESHIPMAX` vẫn đủ điều kiện, giảm hết 30.000 phí ship còn lại. Hai dòng 500.000 + 300.000 thuế 10%: `APPLE300K` phân bổ 187.500/112.500, thuế `round_half_up(312.500 / 11) = 28.409` và `round_half_up(187.500 / 11) = 17.045`, tổng 45.454.
 
 ## 4. Mã lỗi chung
 
-Bảng đầy đủ ở `docs/lld/checkout.md` §7 (prefix `CHECKOUT_`, đổi từ `ORDER_` ngày 2026-11-01). Endpoint checkout trả: `CHECKOUT_FORBIDDEN`, `CHECKOUT_CART_EMPTY`, `CHECKOUT_PRODUCT_UNAVAILABLE`, `CHECKOUT_PRICE_CHANGED`, `CHECKOUT_STOCK_UNAVAILABLE`, `CHECKOUT_RESERVATION_EXPIRED`, `CHECKOUT_VOUCHER_INVALID`, `CHECKOUT_VOUCHER_SLOT_CONFLICT`, `CHECKOUT_VOUCHER_LIMIT_REACHED`, `CHECKOUT_ADDRESS_INVALID`, `CHECKOUT_IDEMPOTENCY_CONFLICT`, `CHECKOUT_DEPENDENCY_UNAVAILABLE`.
+Bảng đầy đủ ở `docs/lld/checkout.md` §7 (prefix `CHECKOUT_`, đổi từ `ORDER_` ngày 2026-11-01). Endpoint checkout trả: `CHECKOUT_FORBIDDEN`, `CHECKOUT_CART_EMPTY`, `CHECKOUT_PRODUCT_UNAVAILABLE`, `CHECKOUT_PRICE_CHANGED`, `CHECKOUT_STOCK_UNAVAILABLE`, `CHECKOUT_RESERVATION_EXPIRED`, `CHECKOUT_VOUCHER_INVALID`, `CHECKOUT_VOUCHER_SLOT_CONFLICT`, `CHECKOUT_VOUCHER_LIMIT_REACHED`, `CHECKOUT_ADDRESS_INVALID`, `CHECKOUT_IDEMPOTENCY_CONFLICT`, `CHECKOUT_IN_PROGRESS`, `CHECKOUT_DEPENDENCY_UNAVAILABLE`.
 
 ## 5. Giả định & câu hỏi mở
 

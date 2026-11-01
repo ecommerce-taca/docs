@@ -328,7 +328,6 @@ Headers: `X-Internal-Service-Token`, `Idempotency-Key` = `checkout_group_id`. G�
   "checkout_group_id": "group-01912f90",
   "buyer": { "user_id": "user-01912f10", "email": "buyer@example.com" },
   "payment_method": "VNPAY",
-  "reservation_id": "reservation-01912fa1",
   "reservation_expires_at": "2026-08-30T09:15:00Z",
   "address_snapshot": {
     "recipient_name": "Nguyễn Văn A",
@@ -339,9 +338,11 @@ Headers: `X-Internal-Service-Token`, `Idempotency-Key` = `checkout_group_id`. G�
   "orders": [
     {
       "order_id": "order-01912f91",
+      "reservation_id": "reservation-01912fa1",
       "shop": { "shop_id": "shop-01912f31", "shop_name": "Apple Store" },
       "items": [
         {
+          "order_item_id": "oi-01912f9a",
           "product_id": "product-01912f31", "sku_id": "sku-01912f33",
           "title_snapshot": "iPhone ốp lưng", "variant_label_snapshot": "Đen", "seller_sku_snapshot": "OP-01",
           "unit_price": 500000, "quantity": 1, "line_total": 500000,
@@ -364,6 +365,9 @@ Headers: `X-Internal-Service-Token`, `Idempotency-Key` = `checkout_group_id`. G�
 ```
 
 (Ví dụ rút gọn một đơn con và một item; số khớp golden `CO-CALC-01`, đơn Shop A.)
+
+- `orders[].reservation_id`: **mỗi đơn con một reservation** (Checkout reserve riêng từng đơn), để commit/release một đơn không đụng kho của đơn khác trong nhóm.
+- `items[].order_item_id`: Checkout sinh trước, `order-service` dùng làm `order_items.id`. Recalculate trả kết quả theo id này (`checkout-docs/docs/api/checkout.md` §3.4).
 
 Response `201` — VNPAY:
 
