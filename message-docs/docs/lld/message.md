@@ -167,7 +167,7 @@ Hai enum trên là **hai trục khác nhau** và không được gộp vào mộ
 | Nguồn | Event | Xử lý |
 |---|---|---|
 | Auth User | `user.status_changed`, `shop.status_changed` | Chặn/đóng participant khi suspended theo policy. |
-| Order-Commerce | `order.created/cancelled` | Update order context; không expose order payload raw. |
+| `order-service` | `order.created/cancelled` | Update order context; không expose order payload raw. |
 | Product Catalog | `product.archived` | Update context label; conversation history giữ nguyên. |
 
 ### 6.3 Mock contract — realtime message

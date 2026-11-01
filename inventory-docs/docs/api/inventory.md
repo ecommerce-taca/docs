@@ -24,10 +24,10 @@
 
 | # | Method + path | Quyền | Mục đích | Trạng thái |
 |---:|---|---|---|---|
-| 1 | `GET /internal/inventory/availability` | Order/internal | Đọc availability, không reserve. | ⏳ |
-| 2 | `POST /internal/inventory/reservations` | Order/internal | Atomic reserve nhiều SKU. | ⏳ |
-| 3 | `POST /internal/inventory/reservations/{reservationId}/commit` | Order internal | Commit reservation. | ⏳ |
-| 4 | `POST /internal/inventory/reservations/{reservationId}/release` | Order internal | Release reservation. | ⏳ |
+| 1 | `GET /internal/inventory/availability` | Internal (`cart-service`, `checkout-service`) | Đọc availability, không reserve. | ⏳ |
+| 2 | `POST /internal/inventory/reservations` | Internal (`checkout-service`) | Atomic reserve nhiều SKU. | ⏳ |
+| 3 | `POST /internal/inventory/reservations/{reservationId}/commit` | Internal (`order-service`) | Commit reservation. | ⏳ |
+| 4 | `POST /internal/inventory/reservations/{reservationId}/release` | Internal (`order-service`; `checkout-service` khi chưa tạo được đơn) | Release reservation. | ⏳ |
 | 5 | `GET /seller/inventory` | Seller/staff | Xem stock shop. | ⏳ |
 | 6 | `PATCH /seller/inventory/{skuId}/adjust` | Seller | Điều chỉnh available bằng delta. | ⏳ |
 | 7 | `GET /admin/inventory/reconciliation` | Admin | Reconcile balance/ledger. | ⏳ |
@@ -184,4 +184,4 @@ Các mã dưới đây (trừ mã gắn ⏳) đã khai báo trong `common/error/
 | 2 | Reserve TTL 15 phút, all-or-nothing nhiều SKU. | Ảnh hưởng checkout UX/abandoned stock. | Order owner |
 | 3 | Seller adjustment là signed delta; absolute target/cycle count chưa chốt. | Ảnh hưởng audit/reconciliation. | Seller owner |
 | 4 | Multi-warehouse chưa có trong v1. | Nếu thêm kho cần allocation/location API. | Architecture |
-| 5 | Đã chốt (2026-09-18): Order-Commerce là bên gọi commit/release qua API command; Inventory không consume payment event. | Ảnh hưởng duplicate commit/release. | Payment/Order owner |
+| 5 | Đã chốt (2026-09-18, cập nhật khi tách Order-Commerce 2026-11-01): `checkout-service` gọi reserve (và release nếu chưa tạo được đơn); `order-service` gọi commit/release qua API command; Inventory không consume payment event. | Ảnh hưởng duplicate commit/release. | Payment/Order owner |

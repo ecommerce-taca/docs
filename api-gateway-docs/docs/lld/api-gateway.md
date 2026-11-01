@@ -13,7 +13,7 @@
 |---|---|
 | Trách nhiệm chính | Làm entry point duy nhất cho client; route `/api/v1/**` (HTTP) và `/ws/messages` (WebSocket upgrade); kiểm tra CORS và request size; validate JWT (HTTP header và WS handshake); áp dụng route-level role gate; rate limit; timeout/retry/circuit breaker; chuẩn hóa request ID, lỗi và telemetry. |
 | Client | Micro-Frontends (MFE: `mfe-shell`, `mfe-catalog`, `mfe-buyer`, `mfe-seller`, `mfe-admin`) và các client tương lai dùng HTTPS. Các màn hình Penpot không gọi trực tiếp domain/IP của service. |
-| Upstream | `auth-user`, `product-catalog`, `search`, `order-commerce`, `inventory`, `payment-wallet`, `shipment`, `rating-comment`, `notification`, `message` qua REST và địa chỉ nội bộ cấu hình bằng environment. |
+| Upstream | `auth-user`, `product-catalog`, `search`, `cart-service`, `checkout-service`, `order-service`, `inventory`, `payment-wallet`, `shipment`, `rating-comment`, `notification`, `message` qua REST và địa chỉ nội bộ cấu hình bằng environment. |
 | Nguồn dữ liệu | Không có domain database. Redis chỉ lưu counter/rate-limit key có TTL; không lưu user, product, order, token hoặc business state. Chi tiết được ghi ở `docs/db/api-gateway.md` với trạng thái N/A. |
 | Xác thực | Auth-user ký access JWT bằng RS256. Gateway tải public key từ JWKS của auth-user và validate local; không gọi auth-user cho mỗi request. |
 | Phân quyền | Gateway kiểm tra token và role/permission tối thiểu theo route. Service đích vẫn kiểm tra ownership, scope, trạng thái nghiệp vụ và quyền cuối cùng. |
@@ -36,7 +36,7 @@ Kong Gateway (DB-less, kong.yml sinh bởi decK)
   └─ Kong proxy core      → Service/Upstream + timeout + retries + healthcheck
        ├─ auth-user
        ├─ product-catalog / search
-       ├─ order-commerce / inventory
+       ├─ cart-service / checkout-service / order-service / inventory
        ├─ payment-wallet / shipment
        └─ rating-comment / notification / message
 
@@ -226,10 +226,12 @@ So với bản NestJS, thứ tự nghiệp vụ giữ nguyên; khác biệt là 
 | `/api/v1/locations/vn/**` | `auth-user` | Public (danh mục tỉnh/phường cho form địa chỉ) | 5s | GET tối đa 1 lần |
 | `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/seller/products/**`, `/api/v1/admin/catalog/**`, `/api/v1/shops/{shopId}/products` | `product-catalog` | GET public; seller/admin mutation role-gated | GET 5s, mutation 5s | GET tối đa 1 lần |
 | `/api/v1/products/search` (exact — ưu tiên trước `/api/v1/products/**`), `/api/v1/search/**`, `/api/v1/admin/search/**` | `search` | GET public; admin role-gated | 5s | GET tối đa 1 lần |
-| `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**`, `/api/v1/seller/vouchers/**`, `/api/v1/seller/orders/**`, `/api/v1/admin/vouchers/**` | `order-commerce` | Authenticated; seller/admin route theo endpoint | 5s; checkout 10s | Chỉ GET; mutation dùng idempotency ở service |
+| `/api/v1/cart/**` | `cart-service` | Authenticated | 5s | Chỉ GET |
+| `/api/v1/checkout/**`, `/api/v1/vouchers/**`, `/api/v1/seller/vouchers/**`, `/api/v1/admin/vouchers/**` | `checkout-service` | Authenticated (`GET /vouchers` public, auth tuỳ chọn); seller/admin route theo endpoint | 5s; `POST /checkout` 10s | Chỉ GET; mutation dùng idempotency ở service |
+| `/api/v1/orders/**`, `/api/v1/seller/orders/**` (gồm façade `/seller/orders/{orderId}/shipment/carriers`) | `order-service` | Authenticated; seller route theo endpoint | 5s | Chỉ GET; mutation dùng idempotency ở service |
 | `/api/v1/inventory/**`, `/api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | `inventory` | Seller/admin role-gated; `/internal/**` không expose public | 5s | GET tối đa 1 lần |
 | `/api/v1/payments/**`, `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `/api/v1/seller/revenue`, `/api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | `payment-wallet` | Authenticated hoặc admin/seller role; `/payments/webhook` không JWT; `POST /payments` + `POST /payments/{paymentId}/refunds` là internal — service tự chặn caller ngoài Order-Commerce/Admin bằng actor scope | 10s | Không retry mutation |
-| `/api/v1/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment/carriers`, `/api/v1/webhooks/shipping/**` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
+| `/api/v1/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment` (regex exact, `regex_priority` cao hơn route `order-service`), `/api/v1/webhooks/shipping/**` | `shipment` | Buyer/seller theo endpoint; webhook carrier không JWT | 10s | GET tối đa 1 lần |
 | `/api/v1/products/{productId}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | `rating-comment` | GET public; create/update/reply authenticated | 5s | GET tối đa 1 lần |
 | `/api/v1/notifications/**` | `notification` | Authenticated | 5s | GET tối đa 1 lần |
 | `/api/v1/admin/notifications/**` | `notification` | Admin permission-gated | 5s | Không retry mutation |
@@ -240,7 +242,7 @@ Quy tắc route:
 
 - Các endpoint public cụ thể phải khai báo rõ trong route policy; không mặc định toàn bộ `GET` là public.
 - `/health/live`, `/health/ready` và `/metrics` là endpoint vận hành, không expose qua public API prefix nếu chưa có ingress policy riêng.
-- Internal service không được expose route quản trị database, actuator/debug hoặc endpoint bypass authorization. Các route `/internal/**` của Inventory/Shipment chỉ gọi service-to-service, không map ra public API prefix. Payment-Wallet **không dùng prefix `/internal/**`**: các endpoint nội bộ của nó (`POST /payments`, `POST /payments/{paymentId}/refunds`) được chặn bằng actor-scope check trong chính service (chỉ Order-Commerce/Admin), vì Gateway không phân biệt được chúng với call hợp lệ.
+- Internal service không được expose route quản trị database, actuator/debug hoặc endpoint bypass authorization. Các route `/internal/**` của Inventory/Shipment/Cart/Checkout/Order chỉ gọi service-to-service, không map ra public API prefix. Payment-Wallet **không dùng prefix `/internal/**`**: các endpoint nội bộ của nó (`POST /payments`, `POST /payments/{paymentId}/refunds`) được chặn bằng actor-scope check trong chính service (chỉ internal `ORDER_COMMERCE` = `order-service`/Admin), vì Gateway không phân biệt được chúng với call hợp lệ.
 - `POST /checkout`, `POST /payments`, `POST /orders` và action tương tự không được tự retry ở Gateway; idempotency key và duplicate protection thuộc service sở hữu nghiệp vụ.
 - `/ws/messages` là path WebSocket duy nhất được phép `Upgrade` trong v1; mọi path `/ws/**` khác trả `404`. Handshake bắt buộc JWT hợp lệ; token hết hạn giữa phiên xử lý theo `WS_IDLE_TIMEOUT`/policy, Gateway không tự refresh.
 - `/api/v1/admin/**`: Gateway chỉ **coarse-gate** theo role admin (có bất kỳ admin role nào); permission chi tiết (`VOUCHER_MANAGE`, `CATALOG_ADMIN`, `FINANCE_OPS`, `RISK_MANAGER`…) và step-up 2FA do **service sở hữu dữ liệu** enforce. V1 không có microservice admin riêng: mỗi nhánh `/admin/**` route thẳng tới service chủ tương ứng (xem §8 #9). Admin Dashboard là tầng đọc tổng hợp (`mfe-admin` compose read-API hoặc BFF mỏng), Gateway không có endpoint dashboard riêng.
@@ -307,7 +309,9 @@ Trong Kong, việc set/strip các header trên chia cho đúng hai plugin:
 | `AUTH_USER_BASE_URL` | `http://auth-user.internal:8080` | Có |
 | `PRODUCT_CATALOG_BASE_URL` | `http://product-catalog.internal:8080` | Có |
 | `SEARCH_BASE_URL` | `http://search.internal:8080` | Có |
-| `ORDER_COMMERCE_BASE_URL` | `http://order-commerce.internal:8080` | Có |
+| `CART_SERVICE_BASE_URL` | `http://cart-service.internal:8080` | Có |
+| `CHECKOUT_SERVICE_BASE_URL` | `http://checkout-service.internal:8080` | Có |
+| `ORDER_SERVICE_BASE_URL` | `http://order-service.internal:8080` | Có |
 | `INVENTORY_BASE_URL` | `http://inventory.internal:8080` | Có |
 | `PAYMENT_WALLET_BASE_URL` | `http://payment-wallet.internal:8080` | Có |
 | `SHIPMENT_BASE_URL` | `http://shipment.internal:8080` | Có |
@@ -587,7 +591,7 @@ Cấu hình tương ứng với baseline `5 lỗi / 30s`:
 
 ```yaml
 upstreams:
-  - name: up-order-commerce
+  - name: up-order-service
     healthchecks:
       passive:                       # đếm trên traffic thật, không tốn request thừa
         unhealthy:
@@ -605,13 +609,13 @@ upstreams:
           http_failures: 3
 ```
 
-> **Path probe thực tế theo upstream (kiểm code 2026-10-31, xem `CONTRACT-MATRIX.md`):** `/health/live` có ở product-catalog, search, inventory, shipment, notification, payment-wallet (Actuator group `live`). **auth-user chưa có** — chỉ có `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` (k8s probe dùng hai path sau). Cho tới khi auth-user thêm `/health/live`, `up-auth-user` phải override `http_path: /actuator/health/liveness`. Order-commerce, rating-comment, message chưa có code.
+> **Path probe thực tế theo upstream (kiểm code 2026-10-31, xem `CONTRACT-MATRIX.md`):** `/health/live` có ở product-catalog, search, inventory, shipment, notification, payment-wallet (Actuator group `live`). **auth-user chưa có** — chỉ có `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` (k8s probe dùng hai path sau). Cho tới khi auth-user thêm `/health/live`, `up-auth-user` phải override `http_path: /actuator/health/liveness`. Cart, checkout, order, rating-comment, message chưa có code.
 
 Ba khác biệt so với circuit breaker tự viết, **phải biết trước khi tin vào con số cũ**:
 
 1. Passive healthcheck của Kong đếm **lỗi liên tiếp**, không đếm theo cửa sổ trượt `30s`. Traffic xen kẽ thành công/thất bại có thể không bao giờ chạm ngưỡng. Nếu cần ngữ nghĩa cửa sổ, phải dựa vào active healthcheck với `interval` ngắn.
 2. Trạng thái healthcheck là **per-node**, không chia sẻ giữa các node Kong (§3.5).
-3. Active healthcheck gọi `/health/live` của service — nghĩa là **mọi service upstream bắt buộc phải có endpoint đó** và endpoint phải nhẹ, không phụ thuộc database. Điều này đã đúng với **cả 11 service** hiện tại (`/health/live` process-only — `auth-user` bổ sung 2026-09-19, DOCS-CONSISTENCY-02). Giờ là ràng buộc cứng, không còn là khuyến nghị.
+3. Active healthcheck gọi `/health/live` của service — nghĩa là **mọi service upstream bắt buộc phải có endpoint đó** và endpoint phải nhẹ, không phụ thuộc database. Ràng buộc cứng cho **mọi service upstream** (12 upstream sau khi tách Order-Commerce ngày 2026-11-01). Theo code 2026-10-31, mọi service đã triển khai đều có `/health/live` trừ auth-user (dùng override `http_path` ở trên; doc DOCS-CONSISTENCY-02 ngày 2026-09-19 từng ghi auth-user đã bổ sung nhưng code chưa có).
 
 ### 5.3 `JwksAvailability`
 
@@ -802,7 +806,7 @@ Readiness body không được chứa secret, internal IP công khai ra client h
 | 6 | CORS allowlist thật cho các ứng dụng Micro-Frontends (`mfe-shell`, `mfe-buyer`, `mfe-seller`, `mfe-admin`) chưa được cung cấp. | Nếu cấu hình sai, frontend bị chặn hoặc vô tình mở public origin. | Frontend/DevOps |
 | 7 | Internal service có được truy cập trực tiếp bằng IP hay bắt buộc mTLS/network policy chưa chốt. | Nếu header context bị tin tuyệt đối, client có thể bypass qua đường nội bộ. | Security/DevOps |
 | 8 | Message v1 dùng REST **và** WebSocket `/ws/messages`; Gateway validate JWT ở handshake, proxy TCP upgrade, không buffer/không retry/không tự reconnect. SSE không dùng trong v1. Subprotocol handshake (`Sec-WebSocket-Protocol`) cần Message Service xác nhận format token. | Nếu Message Service đổi handshake/subprotocol hoặc thêm SSE, phải cập nhật `ws-proxy` contract. | Product + frontend + Message owner |
-| 9 | Route ownership đã chốt: `/api/v1/shops/{shopId}` + `/api/v1/shops/{shopId}/follow` → `auth-user`; `/api/v1/shops/{shopId}/products` → `product-catalog`; `/api/v1/vouchers/**` (buyer validate) + `/api/v1/seller/vouchers/**` + `/api/v1/admin/vouchers/**` → `order-commerce`; `/api/v1/seller/wallet/**` + `/api/v1/seller/payouts/**` + `/api/v1/seller/revenue` + `/api/v1/admin/fees/**` + `/api/v1/admin/taxes/**` + `/api/v1/admin/settlements/**` + `/api/v1/admin/finance/**` → `payment-wallet`; `/api/v1/admin/catalog/**` → `product-catalog`; `/api/v1/admin/users/**` + `/api/v1/admin/shops/**` → `auth-user`; `/api/v1/notifications/**` + `/api/v1/admin/notifications/**` → `notification`. | Route nhầm upstream gây duplicate API hoặc sai source of truth. | Backend leads |
+| 9 | Route ownership đã chốt: `/api/v1/shops/{shopId}` + `/api/v1/shops/{shopId}/follow` → `auth-user`; `/api/v1/shops/{shopId}/products` → `product-catalog`; `/api/v1/vouchers/**` (buyer validate) + `/api/v1/seller/vouchers/**` + `/api/v1/admin/vouchers/**` + `/api/v1/checkout/**` → `checkout-service`; `/api/v1/cart/**` → `cart-service`; `/api/v1/orders/**` + `/api/v1/seller/orders/**` → `order-service` (tách từ `order-commerce` 2026-11-01); `/api/v1/seller/wallet/**` + `/api/v1/seller/payouts/**` + `/api/v1/seller/revenue` + `/api/v1/admin/fees/**` + `/api/v1/admin/taxes/**` + `/api/v1/admin/settlements/**` + `/api/v1/admin/finance/**` → `payment-wallet`; `/api/v1/admin/catalog/**` → `product-catalog`; `/api/v1/admin/users/**` + `/api/v1/admin/shops/**` → `auth-user`; `/api/v1/notifications/**` + `/api/v1/admin/notifications/**` → `notification`. | Route nhầm upstream gây duplicate API hoặc sai source of truth. | Backend leads |
 | 13 | Phạm vi Admin/back-office đã chốt (2026-09-18): v1 **không thêm microservice**; mỗi màn admin đi qua `/api/v1/admin/**` trên service sở hữu dữ liệu. `dispute` và `campaign` là service riêng ở v1.1 — khi có, Gateway thêm route family mới `/api/v1/admin/disputes/**` và `/api/v1/admin/campaigns/**`. | Nếu sau này tách service admin gộp, phải thiết kế lại route + auth model. | Architecture owner |
 | 10 | Observability backend/exporter và retention chưa được chỉ định; LLD chỉ chuẩn hóa adapter/field. | Ảnh hưởng dashboard, alert, trace sampling và chi phí lưu log. | Platform/DevOps |
 | 11 | V1 không cache business response và không tự phát business event. | Nếu cần CDN/cache hoặc audit event qua Kafka, cần thêm module và contract. | Architecture owner |

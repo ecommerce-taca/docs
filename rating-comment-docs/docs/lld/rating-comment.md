@@ -145,7 +145,7 @@ V1 create eligible → published; delete → deleted; review không chuyển qua
 
 | Nguồn | Event | Xử lý |
 |---|---|---|
-| Order-Commerce | `order.delivered` | Cache/eligibility projection; không tự mark review. |
+| `order-service` | `order.delivered` | Cache/eligibility projection; không tự mark review. |
 | Product Catalog | `product.archived`, `product.shop_snapshot_updated` | Cập nhật read metadata; review history vẫn giữ. |
 | Auth User | `user.status_changed` | Chặn mutation account suspended theo policy. |
 

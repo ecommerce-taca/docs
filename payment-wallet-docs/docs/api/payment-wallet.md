@@ -8,7 +8,7 @@
 
 | Mục | Quy định |
 |---|---|
-| Auth | Buyer/seller/admin JWT qua Gateway. Payment-Wallet đọc actor context do Gateway inject. Internal Order-Commerce được kiểm tra bằng `InternalCallerPolicy`; transport production để populate `InternalCallerContext` vẫn là contract mở, không tự suy diễn header service-auth mới. |
+| Auth | Buyer/seller/admin JWT qua Gateway. Payment-Wallet đọc actor context do Gateway inject. Internal caller `ORDER_COMMERCE` (enum `InternalService` trong code; từ 2026-11-01 là `order-service`, xem `order-docs/docs/lld/order.md` §1.1) được kiểm tra bằng `InternalCallerPolicy`; transport production để populate `InternalCallerContext` vẫn là contract mở, không tự suy diễn header service-auth mới. |
 | Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope` do Gateway inject. |
 | Seller scope | Seller Finance suy ra shop từ actor context. Một seller actor phải có đúng một shop trong `shopScope`; seller APIs không nhận `shop_id` từ query/body để chọn shop. |
 | Request ID | `X-Request-ID` bắt buộc ở các business/admin HTTP APIs hiện đã expose theo contract tương ứng. Gateway tạo/propagate. |
@@ -65,10 +65,10 @@ Phase 9 không tạo `/api/v1/admin/operations`.
 
 | # | Method + path | Quyền | Mục đích | Trạng thái |
 |---:|---|---|---|---|
-| 1 | `POST /payments` | Trusted Order-Commerce internal caller | Tạo payment intent VNPAY/COD | ✅ |
-| 2 | `GET /payments/{paymentId}` | Buyer owner, Order-Commerce internal, `FINANCE_OPS` | Xem payment detail | ✅ |
+| 1 | `POST /payments` | Trusted internal caller `ORDER_COMMERCE` (`order-service`) | Tạo payment intent VNPAY/COD | ✅ |
+| 2 | `GET /payments/{paymentId}` | Buyer owner, internal `ORDER_COMMERCE` (`order-service`), `FINANCE_OPS` | Xem payment detail | ✅ |
 | 3 | `POST /payments/webhook` | VNPAY provider, không JWT | Reconcile callback | ✅ |
-| 4 | `POST /payments/{paymentId}/refunds` | Order-Commerce internal hoặc `FINANCE_OPS` | Tạo refund intent | ✅ |
+| 4 | `POST /payments/{paymentId}/refunds` | Internal `ORDER_COMMERCE` (`order-service`) hoặc `FINANCE_OPS` | Tạo refund intent | ✅ |
 | 5 | `GET /seller/wallet` | Seller | Xem available/pending balance | ✅ |
 | 6 | `GET /seller/wallet/ledger` | Seller | Xem ledger | ✅ |
 | 7 | `GET /seller/revenue` | Seller | Báo cáo doanh thu | ✅ |
@@ -107,7 +107,7 @@ Header bắt buộc:
 
 Authorization:
 
-- chỉ trusted Order-Commerce internal caller.
+- chỉ trusted internal caller `ORDER_COMMERCE` (`order-service`).
 
 Request contract runtime hiện tại:
 
@@ -185,7 +185,7 @@ Header bắt buộc:
 
 Authorization hiện tại:
 
-- Order-Commerce internal caller: allow;
+- Internal caller `ORDER_COMMERCE` (`order-service`): allow;
 - `FINANCE_OPS`: allow;
 - buyer: chỉ buyer sở hữu payment;
 - seller/seller staff: generic payment detail bị từ chối.
@@ -314,7 +314,7 @@ Headers bắt buộc:
 
 Authorized callers:
 
-- trusted Order-Commerce internal caller;
+- trusted internal caller `ORDER_COMMERCE` (`order-service`);
 - authenticated actor có role `FINANCE_OPS`.
 
 Buyer và seller client không gọi trực tiếp endpoint refund này.
@@ -1003,7 +1003,7 @@ Các code ở mục này không đồng nghĩa endpoint tương ứng đã đư�
 | 1 | VNPAY sandbox v1; production merchant config chưa có. | Cần đổi provider/security contract. | Finance/Security |
 | 2 | COD success dựa Shipment/Order collection event (ADR-004). | Ảnh hưởng settlement. | Order/Shipment |
 | 3 | Payout provider chưa chốt; `POST /seller/payouts` chưa expose. | Seller chưa rút tiền được qua API. | Finance/DevOps |
-| 4 | Return/dispute workflow ngoài v1: refund chỉ khởi tạo bởi Order-Commerce hoặc `FINANCE_OPS`. | Cần thêm permission/state khi bật dispute. | Product/Finance |
+| 4 | Return/dispute workflow ngoài v1: refund chỉ khởi tạo bởi `order-service` hoặc `FINANCE_OPS`. | Cần thêm permission/state khi bật dispute. | Product/Finance |
 | 5 | Event payout (`payout.requested/succeeded/failed`) trong code **không** có `owner_user_id`/`owner_email` (xem LLD §6.1). Notification chưa gửi được mail payout cho seller. | Notification thiếu người nhận. | Payment-Wallet + Notification |
 | 6 | Admin back-office (Fees/Taxes, Finance, Settlement) nằm trên service này dưới `/api/v1/admin/**`, không tách microservice admin. | Đổi ownership phải đổi contract allocation. | Architecture + Finance |
 | 7 | `PUT /admin/fees`/`/admin/taxes` không chặn `effective_from` trong quá khứ; `FEE_CONFIG_INVALID` chưa được trả. | Có thể tạo version hồi tố. | Finance |

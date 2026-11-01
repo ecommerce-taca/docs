@@ -1,7 +1,7 @@
 # Docs template — chuẩn chung cho mọi service
 
 > Áp dụng cho `docs/<service>-docs/docs/{api,db,lld,test}/<service>.md`. Mỗi service có 4 file chính, tên file = tên service (kebab-case).
-> Service lớn có thể tách theo domain: giữ `<service>.md` làm file tổng quan (header + mục lục trỏ sang sub-doc) và thêm `<domain>.md` cùng thư mục (ví dụ `order-commerce-docs/docs/api/{cart,checkout,order,voucher}.md`). Mỗi sub-doc cũng theo header và danh sách section ở dưới.
+> Service lớn có thể tách theo domain: giữ `<service>.md` làm file tổng quan (header + mục lục trỏ sang sub-doc) và thêm `<domain>.md` cùng thư mục (ví dụ `checkout-docs/docs/api/{checkout,voucher}.md`). Mỗi sub-doc cũng theo header và danh sách section ở dưới.
 > Mục tiêu: mọi doc cùng cấu trúc, cùng thuật ngữ, và **khớp code đã triển khai**. Khi code và doc khác nhau, code là nguồn đúng; doc được sửa theo code, còn phần thiết kế chưa code thì giữ nhưng đánh dấu ⏳.
 
 ## 1. Header bắt buộc

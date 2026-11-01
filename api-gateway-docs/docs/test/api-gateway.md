@@ -14,7 +14,7 @@
 | Kong | Kong Gateway 3.x OSS, `database = off`; image có sẵn 5 custom plugin `taca-*` và `KONG_PLUGINS=bundled,taca-request-guard,taca-jwt,taca-rbac,taca-ws-guard,taca-error-envelope`. |
 | Config | `kong.yaml` sinh bằng decK; CI chạy `deck validate` và `deck gateway diff` trước mọi `sync`. Có fixture config sai (thiếu plugin trên route admin, `retries` khác 0 trên Service write, Route catch-all) để kiểm pipeline **fail đúng**. |
 | Custom plugin | Test đơn vị bằng `busted` cho từng plugin; chạy được độc lập không cần Kong đầy đủ. |
-| Upstream mock | Mock `auth-user`, `product-catalog`, `search`, `order-commerce`, `inventory`, `payment-wallet`, `shipment`, `rating-comment`, `notification`, `message`. |
+| Upstream mock | Mock `auth-user`, `product-catalog`, `search`, `cart-service`, `checkout-service`, `order-service`, `inventory`, `payment-wallet`, `shipment`, `rating-comment`, `notification`, `message`. |
 | Redis | Redis test riêng; có fixture allow, exhausted, timeout, unavailable; không dùng production key. |
 | JWKS | RSA test key `kid=key-01`, key rotation `key-02`, invalid/expired/no-key fixture. |
 | Config | Static route map qua internal domain mock; test route thiếu/sai URL/readiness fail. |

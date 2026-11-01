@@ -238,8 +238,8 @@ PROCESSING (lease hết hạn) ──reclaim──► PROCESSING
 | Auth User | `notification.commands.v1` | `AUTH_VERIFICATION_REQUESTED`, `PASSWORD_RESET_REQUESTED`, `PHONE_OTP_REQUESTED` | Template do command chỉ định; category `SECURITY`. | 🟡 `PHONE_OTP_REQUESTED` với `channel=SMS` vào DLQ (không có SMS). |
 | Message | `notification.commands.v1` | `MESSAGE_RECEIVED` | Template do command chỉ định; category `CONVERSATION`. | 🟡 Template `message-received-v1` chưa seed. |
 | Rating-Comment | `notification.commands.v1` | `REVIEW_REQUESTED` | Template do command chỉ định; category `REVIEW`. | ✅ |
-| Order-Commerce | `order.events.v1` | `order.confirmed`, `order.paid`, `order.cancelled` | Xem bảng §6.2. | ✅ |
-| Order-Commerce | `invoice.events.v1` | `invoice.issued` | Xem bảng §6.2. | ✅ |
+| `order-service` | `order.events.v1` | `order.confirmed`, `order.paid`, `order.cancelled` | Xem bảng §6.2. | ✅ |
+| `order-service` | `invoice.events.v1` | `invoice.issued` | Xem bảng §6.2. | ✅ |
 | Shipment | `shipment.events.v1` | `shipment.delivered`, `shipment.failed` | Xem bảng §6.2. | ✅ |
 | Payment-Wallet | `payment.events.v1` | `payment.succeeded`, `payment.failed` | Xem bảng §6.2. | ⏳ Phía Notification đã map, nhưng Payment-Wallet chưa route 2 event này ra Kafka; payload Payment-Wallet là record camelCase phẳng, không có `event_type`/`payload`/`buyer` nên sẽ fail `DomainEventSchema` → DLQ. |
 | Payment-Wallet | `wallet.events.v1` | `payout.succeeded`, `payout.failed` | Xem bảng §6.2. | ⏳ Payment-Wallet chưa phát `payout.*` ra Kafka (chỉ `wallet.allocated`); payload chưa có recipient, và Notification chỉ đọc `buyer.*` (không đọc `owner_*`). |
@@ -347,7 +347,7 @@ Category cho command: `AUTH_VERIFICATION_REQUESTED`/`PASSWORD_RESET_REQUESTED`/`
 
 Recipient trong domain event (`extractRecipient`):
 
-1. Field đã chốt: `payload.buyer.user_id` (bắt buộc) / `payload.buyer.email` (optional) — xem `order-commerce-docs/docs/lld/order.md` §6.1.
+1. Field đã chốt: `payload.buyer.user_id` (bắt buộc) / `payload.buyer.email` (optional) — xem `order-docs/docs/lld/order.md` §6.1.
 2. Fallback (log warning `consumer.recipient_fallback`): `payload.recipient.user_id/email`, rồi flat `user_id|buyer_id|recipient_user_id` và `email|buyer_email|recipient_email`.
 
 > Payout: theo `payment-wallet-docs/docs/lld/payment-wallet.md` §6.1, code Payment-Wallet hiện không publish `payout.*` ra Kafka và payload không có recipient (không có `owner_user_id`/`owner_email`). Thiết kế cũ dùng `owner_user_id`/`owner_email`, nhưng `extractRecipient` cũng chưa đọc hai field này, nên email payout chưa gửi được (xem §8).

@@ -84,7 +84,7 @@ Còn thiếu: MVC test cho envelope/validation/status code của từng endpoint
 ## 6. Tiêu chí pass/phát hành
 
 - `mvn test` xanh trên toolchain Java 25 + Docker.
-- Toàn bộ SH-API ở §3 chuyển sang ✅ trước khi tích hợp Order-Commerce.
+- Toàn bộ SH-API ở §3 chuyển sang ✅ trước khi tích hợp `order-service`/`checkout-service`.
 - Có adapter carrier thật (ít nhất GHN) + contract test trước production.
 - Không lỗi bảo mật mức cao ở SH-SEC.
 

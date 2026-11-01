@@ -132,7 +132,7 @@ Response `200`:
 
 Ràng buộc: `min_price/max_price` là integer VND; public không được query draft/blocked/archived; stock display có thể `UNKNOWN`/`STALE` và không phải purchase guarantee. Với `product_ids`, product không tồn tại/không visible bị bỏ khỏi kết quả (không lỗi) — caller tự phát hiện ID nào biến mất.
 
-`tax_rate_bps` là **thuế suất VAT của sản phẩm**, đơn vị basis point (10% = `1000`). Product Catalog đã giải quyết xong việc thừa kế theo cây danh mục và trả ra giá trị cuối cùng — caller không phải leo cây. Order-Commerce snapshot giá trị này vào `order_items` tại lúc checkout để tách thuế ghi hoá đơn (`order-commerce-docs/docs/lld/checkout.md` §6.2). Giá trong `price` **đã bao gồm** VAT.
+`tax_rate_bps` là **thuế suất VAT của sản phẩm**, đơn vị basis point (10% = `1000`). Product Catalog đã giải quyết xong việc thừa kế theo cây danh mục và trả ra giá trị cuối cùng — caller không phải leo cây. `checkout-service` snapshot giá trị này tại lúc checkout (lưu ở `order_items` của `order-service`) để tách thuế ghi hoá đơn (`checkout-docs/docs/lld/checkout.md` §6.3). Giá trong `price` **đã bao gồm** VAT.
 
 `rating_summary` là cache **read-only** từ event `rating.aggregate.updated` (sở hữu bởi `rating-comment`); `avg: null, count: 0` nếu sản phẩm chưa có review nào.
 
@@ -649,7 +649,7 @@ Request: `{ "version": 1, "parent_id": "category-...", "name": "Điện tử gia
 
 Move subtree phải cập nhật `path/depth` atomically; không vượt depth 5; collision trả `PRODUCT_SLUG_CONFLICT` hoặc `PRODUCT_CATEGORY_INVALID`.
 
-`tax_rate_bps` bỏ trống trong PATCH giữ nguyên giá trị cũ (không set về `null`). Đổi `tax_rate_bps` **không hồi tố** đơn đã checkout — Order-Commerce đã snapshot thuế suất vào `order_items` tại thời điểm đặt hàng (`order-commerce-docs/docs/lld/checkout.md` §6.2). Đổi thuế suất của category có category con **không** tự đổi giá trị con đã set riêng — chỉ ảnh hưởng con đang thừa kế (con để `tax_rate_bps=null`).
+`tax_rate_bps` bỏ trống trong PATCH giữ nguyên giá trị cũ (không set về `null`). Đổi `tax_rate_bps` **không hồi tố** đơn đã checkout — `checkout-service` đã snapshot thuế suất (lưu ở `order_items` của `order-service`) tại thời điểm đặt hàng (`checkout-docs/docs/lld/checkout.md` §6.3). Đổi thuế suất của category có category con **không** tự đổi giá trị con đã set riêng — chỉ ảnh hưởng con đang thừa kế (con để `tax_rate_bps=null`).
 
 #### `POST /admin/catalog/categories/{categoryId}/archive`
 
@@ -731,5 +731,5 @@ Rate limit, trace ID, JWT invalid/expired và generic 401/403 có thể được
 | 6 | Media complete có thể trả `SCANNING` nếu virus scan async. | Ảnh hưởng publish readiness và frontend polling. | Security/DevOps |
 | 7 | Admin unblock baseline luôn về `INACTIVE`. | Nếu cần restore active một bước, phải thêm permission/endpoint explicit. | Product owner |
 | 8 | Payload event `shop.kyc.*` thật của Auth User **không có** field `kyc_status`/`source_version`/`logo_url` sẵn (khớp `auth-user-docs/docs/lld/auth-user.md` §6.2) — Product tự suy `kyc_status` từ `event_type` (`submitted`→`PENDING`, `approved`→`APPROVED`, `needs_info`→`NEEDS_INFO`, `rejected`→`REJECTED`, `expired`→`EXPIRED`) và dedupe bằng `event_id`+`occurred_at`. | Nếu Auth User đổi payload, `ShopProjectionService` suy sai `kyc_status`. | Auth User owner |
-| 9 | `GET /products?product_ids=` (batch ≤100) dùng để hydrate thẻ sản phẩm cho Favorites (`auth-user`) và Cart (`order-commerce`); public shop **profile** `GET /shops/{shopId}` thuộc `auth-user`, Product Catalog chỉ giữ `GET /shops/{shopId}/products` — cả hai khoá bằng `shop_id` UUID, không phải slug. | Nếu Shop hero cần một endpoint hợp nhất, cần BFF hoặc chuyển ownership. | Product + Auth User owner |
+| 9 | `GET /products?product_ids=` (batch ≤100) dùng để hydrate thẻ sản phẩm cho Favorites (`auth-user`) và Cart (`cart-service`); public shop **profile** `GET /shops/{shopId}` thuộc `auth-user`, Product Catalog chỉ giữ `GET /shops/{shopId}/products` — cả hai khoá bằng `shop_id` UUID, không phải slug. | Nếu Shop hero cần một endpoint hợp nhất, cần BFF hoặc chuyển ownership. | Product + Auth User owner |
 | 10 | `display_as`/`value_meta` chỉ là hint render, không đổi `variant_key`; khớp chip "Attribute type Image/Color/Text" trong Penpot mà không thêm `AttributeType` mới. | Nếu cần ràng buộc swatch bắt buộc, thêm validate. | Product + Frontend |

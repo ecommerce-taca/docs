@@ -1,13 +1,13 @@
 # Contract Matrix — giữa các service
 
-> Nguồn · Code đối chiếu: `user-auth-service@develop` (`7c268a0`), `Product-Catalog-Service@develop` (`6572ece`), `search-service@develop` (`13d36e3`), `inventory-service@develop` (`92c1454`), `shipment-service@develop` (`a375a41`), `payment-wallet-service@main` (`859b7b1`), `notification-service@main` (`6c6d9a2`). Order-Commerce, Message, Rating-Comment chỉ có README nên dùng doc làm spec. · Cập nhật: 2026-11-01
+> Nguồn · Code đối chiếu: `user-auth-service@develop` (`7c268a0`), `Product-Catalog-Service@develop` (`6572ece`), `search-service@develop` (`13d36e3`), `inventory-service@develop` (`92c1454`), `shipment-service@develop` (`a375a41`), `payment-wallet-service@main` (`859b7b1`), `notification-service@main` (`6c6d9a2`). Cart, Checkout, Order (tách từ Order-Commerce ngày 2026-11-01), Message, Rating-Comment chưa có code nên dùng doc làm spec. · Cập nhật: 2026-11-01
 > Ký hiệu: ✅ khớp · ❌ đang hỏng luồng dữ liệu · ℹ️ khác hình thức hoặc phần chưa triển khai, giữ nguyên (nhóm B §1) · ⏳ một phía chưa có code, chưa kiểm được end-to-end. · Recheck ngoài 2026-11-01: xem §9.
 
 File này liệt kê mọi contract **giữa** các service: Kafka topic/event, envelope, payload, header, REST gọi chéo, route Gateway, health path, error envelope và tên biến môi trường. Doc từng service vẫn là nguồn chi tiết; khi code đổi, cập nhật dòng tương ứng ở đây.
 
 ## 1. Kết luận nhanh
 
-**Nguyên tắc (chốt với team 2026-10-31):** contract mà service **đã triển khai** là chuẩn — doc và consumer theo code, không sửa lại producer đã chạy chỉ để đồng bộ hình thức. Service **chưa có code** (Order-Commerce, Message, Rating-Comment, phần Kafka của Inventory) phải theo convention đã có ở §8.
+**Nguyên tắc (chốt với team 2026-10-31):** contract mà service **đã triển khai** là chuẩn — doc và consumer theo code, không sửa lại producer đã chạy chỉ để đồng bộ hình thức. Service **chưa có code** (Cart, Checkout, Order — tách từ Order-Commerce ngày 2026-11-01 —, Message, Rating-Comment, phần Kafka của Inventory) phải theo convention đã có ở §8.
 
 Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 
@@ -52,7 +52,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | Product Catalog (qua Debezium) | `payload` + envelope `version`, `actor_user_id`, `event_type`, `schema_version`, `occurred_at`, `aggregate_type`; key = `aggregate_id`; `event_id` ở header `id` | snake | `id`, `traceparent` | ✅ C1 (đã sửa) |
 | Payment-Wallet | record domain, ví dụ `eventId`, `occurredAt`, `paymentId`, `checkoutGroupId`, `orderIds`, `amount`, `method`, `status` | camel | `event_id`, `request_id`, `traceparent`, `tracestate` | ℹ️ C2 |
 | Notification (delivered/failed) | `eventId`, `outcome`, `dedupeKey`, `notificationId`, `channel`, `templateKey`, `errorCode`, `occurredAt` | camel | `event_id`, `event_type` | ℹ️ C9 |
-| Order, Inventory, Rating, Message | theo doc: envelope snake như auth-user | snake | — | ⏳ chưa có code |
+| Order, Checkout, Inventory, Rating, Message | theo doc: envelope snake như auth-user | snake | — | ⏳ chưa có code |
 
 ## 3. Kafka topic / event
 
@@ -84,9 +84,12 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | `order.events.v1` | `order.confirmed/paid/cancelled` | Order ⏳ | Notification ✅ | `buyer.user_id`, `buyer.email`, `order_id` + placeholder top-level `order_code`, `display_name` (confirmed), `amount` (paid) | ⏳ (doc Order đã thêm field template, 2026-11-01) |
 | `order.events.v1` | `order.cancelled` | Order ⏳ | Shipment ✅ | `event_id`, `payload.order_id`, `reason`, `correlation_id?` | ⏳ (doc khớp consumer) |
 | `order.events.v1` | `order.delivered` | Order ⏳ | Rating ⏳ | `buyer`, `items[]` | ⏳ |
+| `order.events.v1` | `order.cancelled` | Order ⏳ | Inventory ⏳ (reconcile) | `payload.order_id` | ⏳ |
+| `order.events.v1` | `order.created`, `order.cancelled` | Order ⏳ | Message ⏳, Payment (doc, chưa có listener) | order context | ⏳ |
+| `voucher.events.v1` | `voucher.redeemed/released` | Checkout ⏳ | chưa có (analytics) | — | ⏳ (mới 2026-11-01, trước là Order-Commerce) |
 | `invoice.events.v1` | `invoice.issued` | Order ⏳ | Notification ✅ | `buyer.*`, `invoice_id`, `order_code`, `invoice_url` | ⏳ (doc Order đổi `pdf_url` → `invoice_url`, 2026-11-01) |
 | `shipment.commands.v1` | `shipment.create` | Order ⏳ (doc Order chưa mô tả; Order gọi REST `POST /api/v1/internal/shipments`) | Shipment ✅ | envelope `message_*`, `payload.command_id`, `shop_order_id`, `buyer`, `from/to_address_snapshot`, `items[]` | ⏳ |
-| `shipment.events.v1` | `shipment.delivered`, `shipment.failed` | Shipment ✅ | Notification ✅, Payment ✅, Order ⏳ | `shipment_id`, `order_id`, `delivered_at`, `reason`, `buyer.user_id`, `buyer.email`; template còn cần `order_code` | ⚠️ C15 (thiếu `order_code`) |
+| `shipment.events.v1` | `shipment.delivered`, `shipment.failed` | Shipment ✅ | Notification ✅, Payment ✅, Order ⏳ | `shipment_id`, `order_id`, `order_code`, `delivered_at`, `reason`, `buyer.user_id`, `buyer.email` | ✅ C15 đã sửa (shipment-service#12, `ShipmentCommandService` phát `payload.order_code`); `order-service` phải gửi `order_code` khi tạo shipment |
 | `shipment.events.v1` | `shipment.created/status_changed/cancelled/creation_pending/creation_failed` | Shipment ✅ | Order ⏳ | — | ⏳ |
 | `payment.events.v1` | `payment.created` | Payment ✅ | không ai | — | ✅ |
 | `payment.events.v1` | `payment.succeeded/failed/expired/refunded` | Payment ✗ (chỉ outbox) | Order ⏳, Notification ✅ | `event_type`, `payload.buyer`, `payment_id` | ℹ️ C2, C3, C4 |
@@ -99,10 +102,16 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 
 | Caller → Callee | Path | Doc caller | Code callee | Trạng thái |
 |---|---|---|---|---|
-| Order → Shipment | `POST /api/v1/internal/shipping/quote` | Đã sửa (trước ghi `GET /internal/shipping/quote`) | `QuoteController` POST | ✅ |
-| Order → Shipment | `POST /api/v1/internal/shipments` | Đã sửa prefix + link §3.4 | `ShipmentController` | ✅ |
-| Order → Inventory | `POST /internal/inventory/reservations[/{id}/commit|release]` | khớp doc Inventory | chưa có code | ⏳ |
-| Order → Payment | `POST /api/v1/payments`, `POST /api/v1/payments/{id}/refunds` | khớp | `PaymentController` | ✅ |
+| Checkout → Shipment | `POST /api/v1/internal/shipping/quote` | khớp (`checkout-docs` api §3.1) | `QuoteController` POST | ✅ |
+| Order → Shipment | `POST /api/v1/internal/shipping/carrier-quotes` (façade `GET /seller/orders/{id}/shipment/carriers`) | khớp shape `QuoteService.compare` (`order-docs` api §3.6) | `QuoteController` | ✅ |
+| Order → Shipment | `POST /api/v1/internal/shipments` | body đủ field `CreateShipmentRequest` (`buyer_email` bắt buộc, `cod_amount`, `order_code`) — `order-docs` api §3.4 | `ShipmentController` | ✅ |
+| Checkout → Inventory | `POST /internal/inventory/reservations`, `…/{id}/release` (chỉ khi chưa có đơn) | khớp doc Inventory | chưa có code | ⏳ |
+| Order → Inventory | `POST /internal/inventory/reservations/{id}/commit|release` | khớp doc Inventory | chưa có code | ⏳ |
+| Order → Payment | `POST /api/v1/payments`, `POST /api/v1/payments/{id}/refunds` | khớp `CreatePaymentRequest`; `order-service` là caller `InternalService.ORDER_COMMERCE` duy nhất | `PaymentController` | ✅ |
+| Checkout → Cart | `GET /internal/carts/{buyerUserId}`, `POST /internal/carts/{buyerUserId}/checked-out` | `cart-docs` api §3.5–3.6 | chưa có code | ⏳ |
+| Checkout → Order | `POST /internal/orders`, `GET /internal/orders?checkout_group_id=` | `order-docs` api §3.7–3.8 | chưa có code | ⏳ |
+| Order → Checkout | `POST /internal/checkout-groups/{id}/recalculate` | `checkout-docs` api §3.4 | chưa có code | ⏳ |
+| Cart → Product | `GET /products?product_ids=` (≤100) | khớp | Catalog ✅ | ✅ |
 | Gateway → Auth-user | `/api/v1/locations/vn/**` | Đã thêm vào route table | `VietnamLocationController` (permitAll) | ✅ |
 | Gateway → mọi upstream | `/api/v1/...` | route table | Catalog (`GLOBAL_PREFIX=api/v1`), Search, Notification, Auth, Payment, Shipment đều có prefix `/api/v1` | ✅ |
 | Notification → Auth-user | JWKS `/.well-known/jwks.json` (`JWT_JWKS_URL`) | khớp | `SecurityConfig` permitAll | ✅ |
@@ -148,7 +157,7 @@ Prefix theo service là thống nhất. Hình dạng `error` gần khớp; Payme
 
 ## 8. Convention cho phần chưa triển khai
 
-Áp dụng cho Order-Commerce, Message, Rating-Comment, Kafka của Inventory và event mới của service đang có. Không dùng để sửa lại code đã chạy.
+Áp dụng cho Cart, Checkout, Order, Message, Rating-Comment, Kafka của Inventory và event mới của service đang có. Không dùng để sửa lại code đã chạy.
 
 1. **Event mới:** dùng envelope như auth-user/shipment: `event_id`, `event_type`, `schema_version`, `occurred_at` (ISO-8601 UTC), `aggregate_type`, `aggregate_id`, `payload`, field snake_case. Riêng Payment-Wallet giữ format record đang dùng cho event của nó.
 2. **Command tới Notification:** đúng `NotificationCommandSchema` (auth-user đang dùng). **Command tới Shipment:** đúng envelope `message_id`/`message_type=shipment.create` của Shipment.
@@ -177,3 +186,23 @@ Prefix theo service là thống nhất. Hình dạng `error` gần khớp; Payme
 | A04 | Đúng. | Đã viết lại: tối đa 1 mã mỗi slot, độ dài tối đa `2 + số shop`. |
 | A05 | Đúng. Payment (đã code) bắt `amount > 0` và `shipping_fee < amount` cho mỗi đơn con. | Đã sửa checkout LLD: giữ tối thiểu 1 VND tiền hàng mỗi đơn con, `orders[].shipping_fee` = phí ship sau freeship. |
 | A06 | Đúng. Code `SigninService` cho login phone chưa verify. | Đã sửa doc API/test theo code; mã lỗi giữ ⏳. |
+
+## 10. Tách Order-Commerce thành Cart / Checkout / Order (2026-11-01)
+
+Order-Commerce (chưa có code) được tách thành `cart-service` (`cart-docs`), `checkout-service` gồm voucher (`checkout-docs`) và `order-service` gồm invoice (`order-docs`). Đối chiếu lại với code: `payment-wallet-service@main` (`859b7b1`), `shipment-service@develop` (`7103c0a`), `inventory-service@develop`, `notification-service@main` (`6c6d9a2`). Không service đã có code nào phải sửa.
+
+| # | Điểm kiểm | Kết luận | Xử lý trong doc |
+|---|---|---|---|
+| S01 | Payment-Wallet chỉ cho một internal caller `InternalService.ORDER_COMMERCE` gọi `POST /payments` và refund (`InternalCallerPolicy`). | Nếu Checkout gọi Payment thì Payment phải sửa code. | Mọi lời gọi Payment đặt ở `order-service` (tạo payment ngay khi nhận `POST /internal/orders`); `order-service` mang identity `ORDER_COMMERCE`. |
+| S02 | Topic `order.events.v1`, `invoice.events.v1`, tên event, field top-level cho Notification. | Notification/Shipment không ràng buộc tên producer. | Giữ nguyên, `order-service` là producer. |
+| S03 | Shipment `CreateShipmentRequest` bắt buộc `buyer_email` (`@Email`), `cod_amount`, `shipping_fee`, `currency`… — doc Order cũ chỉ nhắc `carrier`, `order_code`. | Order thiếu field sẽ bị `400`. | `order-docs` api §3.4 thêm bảng map đủ field; `orders.buyer_email` NOT NULL. |
+| S04 | Gateway route `GET /seller/orders/{id}/shipment/carriers` → `shipment`, nhưng Shipment ghi đây là façade của Order và không có route này; doc Order cũ cũng thiếu endpoint. | Seller gọi carrier list sẽ `404`. | Gateway route sang `order-service`; thêm endpoint #9 vào `order-docs` api §3.6 (shape theo `QuoteService.compare`). |
+| S05 | Shipment ghi Order chỉ cho xem carrier khi đơn `CONFIRMED`, nhưng `SHIP` yêu cầu `PROCESSING`. | Seller đã accept không xem được carrier. | Façade nhận `CONFIRMED` hoặc `PROCESSING`; sửa câu ở Shipment doc. |
+| S06 | C15 (`order_code`) đã có trong code Shipment (`ShipmentCommandService` phát `payload.order_code`). | Bảng §3 còn ghi ⚠️. | Cập nhật ✅. |
+| S07 | Doc DB Order cũ: `orders.discount = Σ order_vouchers.discount_amount`, nhưng API định nghĩa `discount` không gồm freeship. | Bất biến sai với đơn có freeship. | Chốt hai bất biến riêng (`order-docs` db §3.3). |
+| S08 | Voucher validate thiếu lý do `ALREADY_USED` mà list voucher dùng. | UI phải map hai bộ mã. | Thêm vào validate. |
+| S09 | `voucher_redemptions` có hai unique mâu thuẫn. | — | Chốt unique `(voucher_id, checkout_group_id)` + giới hạn mỗi buyer ở service. |
+| S10 | Gateway LLD ghi auth-user đã có `/health/live`; code chưa có (C10). | Mâu thuẫn trong cùng file. | Sửa câu. |
+| S11 | Payment-Wallet chưa có API đổi `amount` của payment COD sau khi huỷ một phần làm đổi `grand_total`. | Shipper thu đúng số mới (qua `cod_amount`), nhưng đối soát Payment lệch. | **Mở** — `order-docs` lld §8 mục 6, cần Payment owner quyết định. |
+| S12 | Địa chỉ lấy hàng của shop (`from_address_snapshot`) chưa có contract đọc từ auth-user. | Không tạo được shipment/carrier quote thật. | **Mở** — `order-docs` api §5 mục 3. |
+| S13 | Error code: `ORDER_CART_*`/`ORDER_VOUCHER_*`… đổi sang `CART_*`/`CHECKOUT_*`. Không service có code nào đọc các mã này; Gateway doc cập nhật `CHECKOUT_DEPENDENCY_UNAVAILABLE`. | — | Đã đổi. |

@@ -20,7 +20,8 @@
 ### 1.2 Boundary
 
 ```text
-Order-Commerce ──reserve/commit/release──► Inventory
+checkout-service ──reserve / release (chưa có đơn)──► Inventory
+order-service ────commit / release──────────────► Inventory
 Seller/Admin ──stock adjustment/read──► Inventory
 Inventory ──Kafka outbox──► Product projection, Order reconciliation
 Product Catalog ──SKU lifecycle event──► Inventory SKU registration/disable
@@ -133,7 +134,7 @@ Ràng buộc:
 
 | Operation | Atomic change | Trigger |
 |---|---|---|
-| `COMMIT` | `qty_reserved -= q`; reservation `COMMITTED`; movement commit | Order-Commerce gọi khi đơn được chốt: với VNPAY là lúc nhận `payment.succeeded`, với **COD là ngay trong luồng checkout** (không chờ tiền). Inventory không tự suy ra thời điểm này. |
+| `COMMIT` | `qty_reserved -= q`; reservation `COMMITTED`; movement commit | `order-service` gọi khi đơn được chốt: với VNPAY là lúc nhận `payment.succeeded`, với **COD là ngay khi tạo đơn từ checkout** (không chờ tiền). Inventory không tự suy ra thời điểm này. |
 | `RELEASE` | `qty_reserved -= q`, `qty_available += q`; status `RELEASED`; movement release | Order cancel/payment fail. |
 | `RELEASE_FROM_COMMITTED` | `qty_available += q`; status `RELEASED`; movement `release_committed` | Order huỷ sau commit (VNPAY) — không chạm `qty_reserved` vì COMMIT đã trừ. |
 | `EXPIRE` | Tương tự RELEASE; status `EXPIRED` | TTL job sau `expires_at`. |
@@ -211,12 +212,12 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 | Nguồn | Event | Xử lý |
 |---|---|---|
 | Product Catalog | `sku.created`, `sku.updated`, `sku.status_changed` | Register/update/disable SKU projection; không lấy giá/product content. |
-| Order-Commerce | `order.cancelled` (reconciliation) | Release reservation nếu command callback bị mất; idempotent. |
-| Payment-Wallet | *(không consume)* | Commit/release do **Order-Commerce** gọi qua API command (`POST /internal/inventory/reservations/{reservationId}/commit|release`); Payment-Wallet không mutate stock. |
+| `order-service` | `order.cancelled` (reconciliation) | Release reservation nếu command callback bị mất; idempotent. |
+| Payment-Wallet | *(không consume)* | Commit/release do **`order-service`** gọi qua API command (`POST /internal/inventory/reservations/{reservationId}/commit|release`); Payment-Wallet không mutate stock. |
 
 ### 6.3 Mock contract — reserve response
 
-Response `201` dùng envelope chung `{data, meta:{request_id}}` của Inventory (`ApiResponse`, đã có code) — giống `docs/api/inventory.md` §3.2 và cách Order đọc (`order-commerce-docs/docs/lld/checkout.md` §6.1). `trace_id` không nằm trong body thành công (chỉ có trong error envelope và header `traceparent`); `Idempotency-Key` là header request, không echo trong body.
+Response `201` dùng envelope chung `{data, meta:{request_id}}` của Inventory (`ApiResponse`, đã có code) — giống `docs/api/inventory.md` §3.2 và cách `checkout-service` đọc (`checkout-docs/docs/lld/checkout.md` §6.1). `trace_id` không nằm trong body thành công (chỉ có trong error envelope và header `traceparent`); `Idempotency-Key` là header request, không echo trong body.
 
 ```json
 {
@@ -259,6 +260,6 @@ Response `201` dùng envelope chung `{data, meta:{request_id}}` của Inventory 
 | 2 | Backend Spring Boot/Java 25 + MySQL 8.4 theo HLD baseline. | Ảnh hưởng lock/migration/deployment. | Tech lead |
 | 3 | Reservation TTL 15 phút align Order; exact timeout/payment flow chưa có HLD contract. | Ảnh hưởng abandoned checkout và stock availability. | Order/Payment owner |
 | 4 | Seller adjustment dùng signed delta; chưa có cycle count/import UX chi tiết trong Penpot. | Có thể cần bulk import, approval hoặc absolute target flow. | Seller/Product owner |
-| 5 | Commit/release do **Order-Commerce gọi trực tiếp qua API command** (đã chốt 2026-09-18, NC28) — Payment-Wallet không mutate stock và không có saga Payment/Order cho commit; event `inventory.reservation.*` chỉ dùng để reconcile khi mất response. | Ảnh hưởng duplicate commit/release và reconciliation job. | Order owner |
+| 5 | Commit/release do **`order-service` gọi trực tiếp qua API command** (đã chốt 2026-09-18, NC28; reserve do `checkout-service` từ khi tách Order-Commerce 2026-11-01) — Payment-Wallet không mutate stock và không có saga Payment/Order cho commit; event `inventory.reservation.*` chỉ dùng để reconcile khi mất response. | Ảnh hưởng duplicate commit/release và reconciliation job. | Order owner |
 | 6 | `inventory.stock_snapshot.updated` là mock contract đã bổ sung để Product hiển thị. | Cần chốt topic/schema registry/source version ở platform. | Platform owner |
 | 7 | MySQL optimistic lock + idempotency đủ baseline exactness; multi-region active-active chưa thuộc v1. | Nếu cần multi-region, phải có single-writer/partition strategy. | Architecture |

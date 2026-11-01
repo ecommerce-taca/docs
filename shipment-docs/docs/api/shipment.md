@@ -26,10 +26,10 @@
 |---:|---|---|---|---|
 | 1 | `GET /api/v1/orders/{orderId}/shipment` | Buyer (chủ đơn) | Tracking shipment của đơn mình. | ✅ |
 | 2 | `GET /api/v1/seller/orders/{orderId}/shipment` | Seller/Shop staff/Admin | Tracking theo shop scope. | ✅ |
-| 3 | `POST /api/v1/internal/shipping/quote` | Order (internal) | Ước tính phí ship cho checkout, carrier mặc định `GHN`. | ✅ |
-| 4 | `POST /api/v1/internal/shipping/carrier-quotes` | Order (internal) | So sánh phí/ETA `GHN`/`SPX`/`J&T` cho seller. | ✅ |
-| 5 | `POST /api/v1/internal/shipments` | Order (internal) | Tạo shipment. | ✅ |
-| 6 | `POST /api/v1/internal/shipments/{shipmentId}/cancel` | Order (internal) | Huỷ trước pickup. | ✅ |
+| 3 | `POST /api/v1/internal/shipping/quote` | Checkout (internal, `checkout-service`) | Ước tính phí ship cho checkout, carrier mặc định `GHN`. | ✅ |
+| 4 | `POST /api/v1/internal/shipping/carrier-quotes` | Order (internal, `order-service`) | So sánh phí/ETA `GHN`/`SPX`/`J&T` cho seller. | ✅ |
+| 5 | `POST /api/v1/internal/shipments` | Order (internal, `order-service`) | Tạo shipment. | ✅ |
+| 6 | `POST /api/v1/internal/shipments/{shipmentId}/cancel` | Order (internal, `order-service`) | Huỷ trước pickup. | ✅ |
 | 7 | `POST /api/v1/webhooks/shipping/{carrier}` | Carrier | Nhận status webhook. | ✅ (chữ ký HMAC chung, chưa theo spec carrier thật) |
 | 8 | `POST /api/v1/internal/ops/shipment-create-commands/{commandId}/replay` | Operator | Replay command Kafka ở trạng thái `DEAD`. | ✅ |
 | 9 | `POST /api/v1/internal/ops/order-cancellations/{orderId}/replay` | Operator | Replay cancellation ở trạng thái `NEEDS_OPERATOR`. | ✅ |
@@ -38,7 +38,7 @@
 
 Ngoài ra Spring Actuator expose `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus` (có probes).
 
-`GET /seller/orders/{orderId}/shipment/carriers` **không** thuộc Shipment: đó là façade của Order-Commerce (Order kiểm order `CONFIRMED`, chưa có shipment, đúng seller) rồi gọi endpoint #4. Shipment không tự đọc order context từ ID.
+`GET /seller/orders/{orderId}/shipment/carriers` **không** thuộc Shipment: đó là façade của `order-service` (kiểm đơn `CONFIRMED`/`PROCESSING`, chưa có shipment, đúng seller — `order-docs/docs/api/order.md` §3.6) rồi gọi endpoint #4. Shipment không tự đọc order context từ ID.
 
 ## 3. Chi tiết endpoint
 
@@ -128,7 +128,7 @@ Response `200`:
 
 ### 3.3 `POST /internal/shipping/carrier-quotes` (#4)
 
-Order-Commerce kiểm order `CONFIRMED`, chưa có shipment và thuộc seller, rồi gọi endpoint này.
+`order-service` kiểm đơn `CONFIRMED`/`PROCESSING`, chưa có shipment và thuộc seller, rồi gọi endpoint này.
 
 ```json
 {
@@ -161,7 +161,7 @@ Carrier khả dụng trả `{ "carrier", "available": true, "fee", "currency", "
 
 ### 3.4 `POST /internal/shipments` (#5)
 
-Headers: `Idempotency-Key` bắt buộc (≤128). REST create là hướng tích hợp đã chọn với Order-Commerce; Kafka `shipment.commands.v1` chỉ là đề xuất opt-in (xem LLD §6).
+Headers: `Idempotency-Key` bắt buộc (≤128). REST create là hướng tích hợp đã chọn với `order-service`; Kafka `shipment.commands.v1` chỉ là đề xuất opt-in (xem LLD §6).
 
 ```json
 {
@@ -186,7 +186,7 @@ Headers: `Idempotency-Key` bắt buộc (≤128). REST create là hướng tích
 |---|---|
 | `order_id`, `shop_id`, `buyer_user_id` | Bắt buộc, ≤80. |
 | `checkout_group_id` | Tuỳ chọn, ≤80. |
-| `order_code` | Tuỳ chọn, ≤32 — mã đơn hiển thị (`orders.order_number`). Shipment lưu và phát lại ở `payload.order_code` của mọi event để Notification render `{{order_code}}`. Order-Commerce **phải** gửi. (shipment-service#12) |
+| `order_code` | Tuỳ chọn, ≤32 — mã đơn hiển thị (`orders.order_number`). Shipment lưu và phát lại ở `payload.order_code` của mọi event để Notification render `{{order_code}}`. `order-service` **phải** gửi. (shipment-service#12) |
 | `buyer_email` | Bắt buộc, email hợp lệ, ≤254 (Notification cần cho email `shipment.delivered`/`shipment.failed`). |
 | `carrier` | Bắt buộc; giá trị như §3.2. Carrier lạ → `400 SHIPMENT_INVALID_INPUT`. |
 | `from_address_snapshot`, `to_address_snapshot` | Bắt buộc, JSON object ≤16 KiB. |
