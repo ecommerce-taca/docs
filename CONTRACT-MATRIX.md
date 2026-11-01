@@ -31,7 +31,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | C10 | Auth-user chỉ có `/actuator/health`; `/actuator/health/{liveness,readiness}` có khi chạy trên Kubernetes (Spring Boot tự bật probe, manifest `deploy/k8s/dev` dùng hai path này). | Gateway (chưa có code) cấu hình `http_path` riêng cho `up-auth-user`. |
 | C11 | Notification chưa seed `message-received-v1`; SMS chưa có provider. | Message chưa có code; SMS là gap đã chấp nhận (2026-09-18). |
 | C12 | Tên env Kafka khác nhau giữa service. | Mỗi service tự đọc env của mình; deploy theo bảng §7. |
-| C13 | Auth-user `shop.updated` gửi logo dạng `snapshot.logo_object_key`; Catalog chỉ đọc `logo_url` phẳng. | Không làm hỏng luồng tên shop (C6 đã sửa); chỉ logo shop trong projection Catalog không đổi. Cần chốt cách resolve object key → URL trước khi sửa consumer (Catalog LLD §8 #27). |
+| C13 | Auth-user `shop.updated` gửi logo dạng `snapshot.logo_object_key`; Catalog chỉ đọc `logo_url` phẳng. | Không làm hỏng luồng tên shop (C6 đã sửa); chỉ logo shop trong projection Catalog không đổi. Auth-user chỉ trả logo dạng presigned URL hết hạn sau 10 phút (`ShopAssetUrlAdapter`), nên Catalog không lưu được URL bền. Giữ nguyên: `shop.logo_url` trong response Catalog là `null`, FE lấy logo qua `GET /api/v1/shops/{shopId}` của auth-user (Catalog LLD §8 #27). |
 
 ## 2. Envelope Kafka theo producer
 
