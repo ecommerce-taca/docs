@@ -11,7 +11,7 @@
 | Public auth | Anonymous được search; vẫn qua Gateway CORS/rate-limit. |
 | Request ID | `X-Request-ID` tối đa 64 ký tự; Gateway tạo/propagate. |
 | Trace | W3C `traceparent`/`tracestate` qua REST; Kafka headers với event (do Gateway/service propagate, client không gửi). |
-| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope`, `X-MFA-Step-Up` do Gateway inject (client không gửi được — Gateway strip). Admin route yêu cầu `X-User-Roles` chứa `SEARCH_ADMIN` (`RolesGuard`); step-up yêu cầu `X-MFA-Step-Up` = `true` hoặc `1` (`StepUpGuard`); thiếu → `403 SEARCH_ADMIN_FORBIDDEN`. Service echo `X-Request-ID` ở response header. |
+| Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope`, `X-MFA-Step-Up` do Gateway inject (client không gửi được — Gateway strip). Admin route yêu cầu `SEARCH_ADMIN` trong `X-User-Permissions` (dạng auth-user cấp) hoặc `X-User-Roles`, hoặc role `SUPER_ADMIN` (`RolesGuard`, search-service#28); step-up yêu cầu `X-MFA-Step-Up` = `true` hoặc `1` (`StepUpGuard`); thiếu → `403 SEARCH_ADMIN_FORBIDDEN`. Service echo `X-Request-ID` ở response header. |
 | Timestamp | ISO-8601 UTC. |
 | Pagination | `page=1`, `size=20`, max 100. |
 | Query | Keyword max 200; suggest prefix max 100; field/sort/facet allowlist. |

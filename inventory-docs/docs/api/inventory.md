@@ -8,7 +8,7 @@
 
 | Mục | Quy định |
 |---|---|
-| Auth | Internal: header `X-Internal-Service-Token` so constant-time với property `inventory.security.internal-token` (✅ `ActorContextFilter`); mTLS chưa có. Seller/admin: actor header + shop scope qua Gateway. `AuthorizationPolicy` (✅) có `requireAuthenticated`, `requireInternalService`, `requireSellerShopScope` (role `SELLER` + `X-User-Shop-Scope` bằng đúng shop), `requireAdminStepUp(permission)` (role `ADMIN` + permission); vi phạm → `401 INVENTORY_UNAUTHENTICATED` / `403 INVENTORY_FORBIDDEN`. |
+| Auth | Internal: header `X-Internal-Service-Token` so constant-time với property `inventory.security.internal-token` (✅ `ActorContextFilter`); mTLS chưa có. Seller/admin: actor header + shop scope qua Gateway. `AuthorizationPolicy` (✅) có `requireAuthenticated`, `requireInternalService`, `requireSellerShopScope` (role `SELLER` + `X-User-Shop-Scope` bằng đúng shop), `requireAdminStepUp(permission)` (role `SUPER_ADMIN` hoặc `ADMIN` + permission — inventory-service#15); vi phạm → `401 INVENTORY_UNAUTHENTICATED` / `403 INVENTORY_FORBIDDEN`. |
 | Request ID | `X-Request-ID` tối đa 64; Gateway/service tạo nếu internal job. |
 | Trace | W3C `traceparent`/`tracestate` REST/Kafka; response/error có `trace_id` (do Gateway/service propagate, client không gửi). |
 | Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions` (CSV), `X-User-Shop-Scope` (một giá trị) do Gateway inject (client không gửi được — Gateway strip). ✅ |

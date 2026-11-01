@@ -8,8 +8,8 @@
 
 | Mục | Quy định |
 |---|---|
-| Auth nội bộ | Mọi path chứa `/internal/` bắt buộc `X-Internal-Service-Token` khớp `SHIPMENT_INTERNAL_TOKEN` (so sánh constant-time); sai/thiếu → `401 SHIPMENT_UNAUTHENTICATED`. Path `/internal/ops/**` thêm `X-Operator-Token` (khớp `SHIPMENT_OPS_TOKEN`), `X-Operator-ID` (≤128 ký tự) và `X-Operator-Roles` chứa `ADMIN` hoặc `SHIPMENT_COMMAND_REPLAY`; sai → `403 SHIPMENT_FORBIDDEN`. |
-| Actor context | Path `/orders/**` và `/seller/**` bắt buộc `X-User-ID` + `X-User-Roles` do Gateway inject (khi `SHIPMENT_ENFORCE_GATEWAY_HEADERS=true`, mặc định). Buyer route cần role `BUYER` hoặc `ADMIN`; seller route cần `SELLER`, `SHOP_STAFF` hoặc `ADMIN`. Role so khớp không phân biệt hoa thường, chấp nhận tiền tố `ROLE_`. |
+| Auth nội bộ | Mọi path chứa `/internal/` bắt buộc `X-Internal-Service-Token` khớp `SHIPMENT_INTERNAL_TOKEN` (so sánh constant-time); sai/thiếu → `401 SHIPMENT_UNAUTHENTICATED`. Path `/internal/ops/**` thêm `X-Operator-Token` (khớp `SHIPMENT_OPS_TOKEN`), `X-Operator-ID` (≤128 ký tự) và `X-Operator-Roles` chứa `SUPER_ADMIN`, `ADMIN` hoặc `SHIPMENT_COMMAND_REPLAY`; sai → `403 SHIPMENT_FORBIDDEN`. |
+| Actor context | Path `/orders/**` và `/seller/**` bắt buộc `X-User-ID` + `X-User-Roles` do Gateway inject (khi `SHIPMENT_ENFORCE_GATEWAY_HEADERS=true`, mặc định). Buyer route cần role `BUYER`, `SUPER_ADMIN` hoặc `ADMIN`; seller route cần `SELLER`, `SELLER_STAFF`, `SHOP_STAFF`, `SUPER_ADMIN` hoặc `ADMIN` (`SELLER_STAFF`/`SUPER_ADMIN` là tên role auth-user — shipment-service#12; `SHOP_STAFF`/`ADMIN` giữ để tương thích). Role so khớp không phân biệt hoa thường, chấp nhận tiền tố `ROLE_`. |
 | Webhook | `/webhooks/shipping/**` không JWT, không token nội bộ; xác thực bằng IP allowlist + HMAC (§3.7). |
 | Request ID/trace | Đọc `X-Request-ID`; thiếu thì service sinh UUID. `trace_id` trong lỗi lấy từ `X-Trace-ID` (≤128, `[A-Za-z0-9._-]`), nếu không có thì `X-Request-ID` (≤64), nếu không có thì UUID mới. |
 | Timestamp | ISO-8601 UTC (Jackson `time-zone: UTC`). |
@@ -166,6 +166,7 @@ Headers: `Idempotency-Key` bắt buộc (≤128). REST create là hướng tích
 ```json
 {
   "order_id": "order-01912f91",
+  "order_code": "TC-20260830-0001",
   "checkout_group_id": "checkout-01912f90",
   "shop_id": "shop-01912f31",
   "buyer_user_id": "usr-01912f10",
@@ -185,6 +186,7 @@ Headers: `Idempotency-Key` bắt buộc (≤128). REST create là hướng tích
 |---|---|
 | `order_id`, `shop_id`, `buyer_user_id` | Bắt buộc, ≤80. |
 | `checkout_group_id` | Tuỳ chọn, ≤80. |
+| `order_code` | Tuỳ chọn, ≤32 — mã đơn hiển thị (`orders.order_number`). Shipment lưu và phát lại ở `payload.order_code` của mọi event để Notification render `{{order_code}}`. Order-Commerce **phải** gửi. (shipment-service#12) |
 | `buyer_email` | Bắt buộc, email hợp lệ, ≤254 (Notification cần cho email `shipment.delivered`/`shipment.failed`). |
 | `carrier` | Bắt buộc; giá trị như §3.2. Carrier lạ → `400 SHIPMENT_INVALID_INPUT`. |
 | `from_address_snapshot`, `to_address_snapshot` | Bắt buộc, JSON object ≤16 KiB. |
