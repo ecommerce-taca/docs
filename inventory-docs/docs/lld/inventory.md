@@ -216,15 +216,17 @@ Invariant: `qty_available ≥ 0`, `qty_reserved ≥ 0`; reservation quantity kh�
 
 ### 6.3 Mock contract — reserve response
 
+Response `201` dùng envelope chung `{data, meta:{request_id}}` của Inventory (`ApiResponse`, đã có code) — giống `docs/api/inventory.md` §3.2 và cách Order đọc (`order-commerce-docs/docs/lld/checkout.md` §6.1). `trace_id` không nằm trong body thành công (chỉ có trong error envelope và header `traceparent`); `Idempotency-Key` là header request, không echo trong body.
+
 ```json
 {
-  "request_id": "01912f80-7a1b-7c12-9c55-8b1c34a6d921",
-  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "idempotency_key": "checkout-intent-01912f81",
-  "reservation_id": "reservation-01912f82",
-  "status": "RESERVED",
-  "expires_at": "2026-08-30T09:15:00Z",
-  "items": [{"sku_id": "sku-01912f33", "quantity": 2, "available_after": 5}]
+  "data": {
+    "reservation_id": "reservation-01912f82",
+    "status": "RESERVED",
+    "expires_at": "2026-08-30T09:15:00Z",
+    "items": [{"sku_id": "sku-01912f33", "quantity": 2, "available_after": 5}]
+  },
+  "meta": { "request_id": "01912f80-7a1b-7c12-9c55-8b1c34a6d921" }
 }
 ```
 

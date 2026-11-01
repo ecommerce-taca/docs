@@ -289,7 +289,7 @@ Lỗi:
 |---:|---|---|
 | 401 | `AUTH_INVALID_CREDENTIALS` | Identifier/password sai; không tiết lộ account. |
 | 401 | `AUTH_MFA_REQUIRED` | Admin cần TOTP/recovery code. |
-| 403 | `AUTH_PHONE_NOT_VERIFIED` | Dùng phone chưa verified làm identifier. |
+| 403 | `AUTH_PHONE_NOT_VERIFIED` ⏳ | **Chưa triển khai.** Code hiện tại (`SigninService`) cho đăng nhập bằng phone kể cả khi phone chưa verify và trả `user.phone_verified=false`; mã này chưa được trả (xem §4). |
 | 403 | `AUTH_ACCOUNT_SUSPENDED` | Account suspended/deleted. |
 | 423 | `AUTH_ACCOUNT_LOCKED` | 5 lần fail trong 15 phút, lock còn hiệu lực. |
 | 429 | `RATE_LIMITED` | Vượt rate limit. |

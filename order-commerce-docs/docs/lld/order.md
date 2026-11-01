@@ -87,13 +87,13 @@ Order state là source of truth của Order-Commerce; payment/shipment/inventory
 | Topic | Event | Payload chính |
 |---|---|---|
 | `order.events.v1` | `order.created` | order/group, buyer, shop, items snapshot, total, payment method |
-| `order.events.v1` | `order.confirmed` | order/group, `buyer` (`user_id`, `email`), shop, payment method, confirmed_at |
-| `order.events.v1` | `order.paid` | order, `buyer` (`user_id`, `email` có thể `null`), payment reference, paid_at |
+| `order.events.v1` | `order.confirmed` | order/group, `order_code`, `display_name`, `buyer` (`user_id`, `email`), shop, payment method, confirmed_at |
+| `order.events.v1` | `order.paid` | order, `order_code`, `amount`, `buyer` (`user_id`, `email` có thể `null`), payment reference, paid_at |
 | `order.events.v1` | `order.processing` | order, shop |
 | `order.events.v1` | `order.shipped` | order, shipment reference |
 | `order.events.v1` | `order.delivered` | order snapshot + `buyer` (`user_id`, `email`) + `items[]` (`product_id`, `sku_id`) + `delivered_at` — `buyer`/`items[]` là bắt buộc để Rating-Comment dựng eligibility |
-| `order.events.v1` | `order.cancelled` | order, `buyer` (`user_id`, `email`), reason, cancelled_at, compensation action |
-| `invoice.events.v1` | `invoice.issued` | invoice/order/number, `buyer` (`user_id`, `email`), total/pdf reference |
+| `order.events.v1` | `order.cancelled` | order, `order_code`, `buyer` (`user_id`, `email`), reason, cancelled_at, compensation action |
+| `invoice.events.v1` | `invoice.issued` | invoice/order/number, `order_code`, `buyer` (`user_id`, `email`), total, `invoice_url` |
 
 Phân biệt bắt buộc giữa hai event dễ nhầm:
 
@@ -111,12 +111,28 @@ xem `notification-docs/docs/lld/notification.md` §6.2) — **gồm** `order.del
 optional (`null` cho phép ở event chỉ phát `IN_APP`, ví dụ `order.paid`). Field khác trong `payload`
 lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3.1) và bảng `invoices` (`docs/db/order.md` §3.3).
 
+**Field cho template Notification (bắt buộc, top-level trong `payload`).** Notification chỉ lấy key
+**top-level** của `payload` có trong placeholder template (`TemplateService.pickAllowedFields`,
+template seed ở `notification-service/src/infrastructure/persistence/seed.ts`), không đổi tên hay đọc
+field lồng. Order chưa có code nên phát đúng tên placeholder mà Notification đang dùng:
+
+| Event | Template | Field top-level bắt buộc | Lấy từ |
+|---|---|---|---|
+| `order.confirmed` | `order-success-v1` | `order_code`, `display_name` | `order_code` = `orders.order_number`; `display_name` = `recipient_name` trong `address_snapshot` |
+| `order.paid` | `payment-received-v1` | `order_code`, `amount` | `amount` = số tiền đã thu cho đơn này (VND, integer) = `orders.grand_total` |
+| `order.cancelled` | `order-cancelled-v1` | `order_code` | `orders.order_number` |
+| `invoice.issued` | `invoice-issued-v1` | `order_code`, `invoice_url` | `invoice_url` = `invoices.pdf_url` (tên field trong event là `invoice_url`, không phải `pdf_url`) |
+
+`order_number` vẫn giữ trong payload cho consumer khác; `order_code` mang **cùng giá trị**, chỉ để khớp template.
+
 `order.confirmed`:
 
 ```json
 {
   "order_id": "order-01912f91",
   "order_number": "TC-20260830-0001",
+  "order_code": "TC-20260830-0001",
+  "display_name": "Nguyễn Văn A",
   "checkout_group_id": "group-01912f90",
   "buyer": { "user_id": "user-01912f10", "email": "buyer@example.com" },
   "shop": { "shop_id": "shop-01912f31", "shop_name": "Anker Official" },
@@ -130,6 +146,9 @@ lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3
 ```json
 {
   "order_id": "order-01912f91",
+  "order_number": "TC-20260830-0001",
+  "order_code": "TC-20260830-0001",
+  "amount": 1094000,
   "buyer": { "user_id": "user-01912f10", "email": null },
   "payment_reference": "payment-01912f95",
   "paid_at": "2026-08-30T09:05:00Z"
@@ -141,6 +160,8 @@ lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3
 ```json
 {
   "order_id": "order-01912f91",
+  "order_number": "TC-20260830-0001",
+  "order_code": "TC-20260830-0001",
   "buyer": { "user_id": "user-01912f10", "email": "buyer@example.com" },
   "reason": "Hết hàng",
   "cancelled_at": "2026-08-30T10:00:00Z"
@@ -157,10 +178,11 @@ lấy tên đúng theo response `GET /orders/{orderId}` (`docs/api/order.md` §3
 {
   "invoice_id": "invoice-01912fb0",
   "order_id": "order-01912f91",
+  "order_code": "TC-20260830-0001",
   "invoice_number": "INV-20260830-0001",
   "buyer": { "user_id": "user-01912f10", "email": "buyer@example.com" },
   "total_amount": 1094000,
-  "pdf_url": "https://cdn.taca.vn/invoices/invoice-01912fb0.pdf",
+  "invoice_url": "https://cdn.taca.vn/invoices/invoice-01912fb0.pdf",
   "issued_at": "2026-08-30T09:10:00Z"
 }
 ```

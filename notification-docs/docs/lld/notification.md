@@ -330,6 +330,19 @@ Envelope domain event (`DomainEventSchema`):
 
 `reference_id` fallback về `aggregate_id` khi payload thiếu key.
 
+Placeholder của template seed (`seed.ts`) — producer phải gửi đúng tên này ở top-level `payload`, Notification không đổi tên field:
+
+| Template | Placeholder | Producer |
+|---|---|---|
+| `order-success-v1` | `display_name`, `order_code` | Order (`order.confirmed`) |
+| `payment-received-v1` | `amount`, `order_code` | Order (`order.paid`) |
+| `order-cancelled-v1` | `order_code` | Order (`order.cancelled`) |
+| `invoice-issued-v1` | `order_code`, `invoice_url` | Order (`invoice.issued`) |
+| `shipment-delivered-v1` | `order_code` | Shipment — payload hiện **không có** `order_code` (CONTRACT-MATRIX C15) |
+| `shipment-failed-v1` | `order_code`, `reason` | Shipment — có `reason`, **thiếu** `order_code` (C15) |
+| `payment-result-v1` | `amount`, `order_code`, `result` | Payment-Wallet (chưa phát, C3) |
+| `payout-result-v1` | `amount`, `result` | Payment-Wallet (chưa phát, C3) |
+
 Category cho command: `AUTH_VERIFICATION_REQUESTED`/`PASSWORD_RESET_REQUESTED`/`PHONE_OTP_REQUESTED` → `SECURITY`; `MESSAGE_RECEIVED` → `CONVERSATION`; `REVIEW_REQUESTED` → `REVIEW`. Command không có `reference`.
 
 Recipient trong domain event (`extractRecipient`):

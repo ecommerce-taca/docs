@@ -593,8 +593,8 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | KYC permission | `KYC_READ`, `KYC_DECIDE`, `KYC_REQUEST_INFO` |
 | User permission | `USER_READ`, `USER_SUSPEND`, `ROLE_READ`, `ROLE_ASSIGN` |
 | Seller scope permission | `SHOP_READ`, `SHOP_UPDATE`, `SELLER_STAFF_MANAGE` |
-| Search admin permission | `SEARCH_ADMIN` (search reindex/diagnostics) |
-| Commerce admin permission | `VOUCHER_MANAGE` (order-commerce platform voucher CRUD) |
+| Search admin permission | `SEARCH_ADMIN` (search reindex/diagnostics) — ⏳ **chưa seed** trong `V012__seed_rbac_baseline.sql`/`RbacKeys`; Search hiện kiểm `SEARCH_ADMIN` trong `X-User-Roles` (role), không phải permission — xem CONTRACT-MATRIX C14 |
+| Commerce admin permission | `VOUCHER_MANAGE` (order-commerce platform voucher CRUD) — ⏳ **chưa seed** |
 | Finance admin scope | Role `FINANCE_OPS` (đã có ở §5.3 bảng Admin role) là scope cho payment-wallet `/admin/**`: fee/tax config, settlement, finance summary, reconciliation |
 | Step-up marker | `MFA_REQUIRED`, `MFA_VERIFIED` |
 

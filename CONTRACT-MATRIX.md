@@ -1,7 +1,7 @@
 # Contract Matrix — giữa các service
 
-> Nguồn · Code đối chiếu: `user-auth-service@develop` (`7c268a0`), `Product-Catalog-Service@develop` (`6572ece`), `search-service@develop` (`13d36e3`), `inventory-service@develop` (`92c1454`), `shipment-service@develop` (`a375a41`), `payment-wallet-service@main` (`859b7b1`), `notification-service@main` (`6c6d9a2`). Order-Commerce, Message, Rating-Comment chỉ có README nên dùng doc làm spec. · Cập nhật: 2026-10-31
-> Ký hiệu: ✅ khớp · ❌ đang hỏng luồng dữ liệu · ℹ️ khác hình thức hoặc phần chưa triển khai, giữ nguyên (nhóm B §1) · ⏳ một phía chưa có code, chưa kiểm được end-to-end.
+> Nguồn · Code đối chiếu: `user-auth-service@develop` (`7c268a0`), `Product-Catalog-Service@develop` (`6572ece`), `search-service@develop` (`13d36e3`), `inventory-service@develop` (`92c1454`), `shipment-service@develop` (`a375a41`), `payment-wallet-service@main` (`859b7b1`), `notification-service@main` (`6c6d9a2`). Order-Commerce, Message, Rating-Comment chỉ có README nên dùng doc làm spec. · Cập nhật: 2026-11-01
+> Ký hiệu: ✅ khớp · ❌ đang hỏng luồng dữ liệu · ℹ️ khác hình thức hoặc phần chưa triển khai, giữ nguyên (nhóm B §1) · ⏳ một phía chưa có code, chưa kiểm được end-to-end. · Recheck ngoài 2026-11-01: xem §9.
 
 File này liệt kê mọi contract **giữa** các service: Kafka topic/event, envelope, payload, header, REST gọi chéo, route Gateway, health path, error envelope và tên biến môi trường. Doc từng service vẫn là nguồn chi tiết; khi code đổi, cập nhật dòng tương ứng ở đây.
 
@@ -32,6 +32,14 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | C11 | Notification chưa seed `message-received-v1`; SMS chưa có provider. | Message chưa có code; SMS là gap đã chấp nhận (2026-09-18). |
 | C12 | Tên env Kafka khác nhau giữa service. | Mỗi service tự đọc env của mình; deploy theo bảng §7. |
 | C13 | Auth-user `shop.updated` gửi logo dạng `snapshot.logo_object_key`; Catalog chỉ đọc `logo_url` phẳng. | Không làm hỏng luồng tên shop (C6 đã sửa); chỉ logo shop trong projection Catalog không đổi. Auth-user chỉ trả logo dạng presigned URL hết hạn sau 10 phút (`ShopAssetUrlAdapter`), nên Catalog không lưu được URL bền. Giữ nguyên: `shop.logo_url` trong response Catalog là `null`, FE lấy logo qua `GET /api/v1/shops/{shopId}` của auth-user (Catalog LLD §8 #27). |
+
+**C. Lệch giữa hai phía đều đã có code — cần team chốt trước khi sửa code (recheck 2026-11-01, §9):**
+
+| # | Lệch | Ảnh hưởng hiện tại | Hướng đề xuất (chưa làm) |
+|---|---|---|---|
+| C14 | Tên role/permission. Auth-user chỉ cấp role `BUYER`, `SELLER`, `SELLER_STAFF`, `SUPER_ADMIN`, `RISK_MANAGER`, `CATALOG_ADMIN`, `FINANCE_OPS`, `SUPPORT_VIEWER` và chưa seed permission `SEARCH_ADMIN`/`VOUCHER_MANAGE`. Shipment nhận `SHOP_STAFF` (không phải `SELLER_STAFF`) và `ADMIN`; Inventory `requireAdminStepUp` kiểm role `ADMIN` (scaffold, chưa endpoint nào gọi); Search kiểm `SEARCH_ADMIN` trong **role**. | Khi Gateway chạy thật: nhân viên shop (`SELLER_STAFF`) bị Shipment trả 403; không admin nào của auth-user qua được admin route Search/Inventory hay `/internal/ops` Shipment bằng role `ADMIN`. | Lấy role của auth-user làm chuẩn: Shipment nhận thêm `SELLER_STAFF`, Inventory/Shipment map admin sang role auth-user (`SUPER_ADMIN`…), auth-user seed `SEARCH_ADMIN` và Search đọc nó từ `X-User-Permissions` (hoặc seed thành role). Cần sửa code nhiều service. |
+| C15 | Template `shipment-delivered-v1`/`shipment-failed-v1` dùng `{{order_code}}`; payload `shipment.delivered/failed` của Shipment (`ShipmentCommandService.eventPayload`) không có `order_code`, và request tạo shipment cũng không mang mã đơn hiển thị. | Event qua được validate nhưng thông báo giao hàng hiển thị mã đơn rỗng. | Order (chưa code) gửi `order_code` khi tạo shipment, Shipment lưu và phát `order_code` trong event. Cần sửa code Shipment. |
+| C16 | `X-MFA-Step-Up`: auth-user nhận **token opaque** và tự verify; Gateway doc forward token đó; Search chỉ chấp nhận `true`/`1`; Payment chấp nhận mọi giá trị khác rỗng. | Qua Gateway, admin Search luôn bị `403 SEARCH_ADMIN_FORBIDDEN` ở reindex/cancel; Payment chỉ kiểm header khác rỗng nên an toàn phụ thuộc hoàn toàn vào việc Gateway đã verify token — mà auth-user chưa có endpoint cho Gateway verify. | Gateway (chưa code) verify token với auth-user rồi gửi upstream `X-MFA-Step-Up: true`; riêng route auth-user giữ token gốc. Auth-user cần thêm endpoint verify step-up token cho Gateway. |
 
 ## 2. Envelope Kafka theo producer
 
@@ -73,12 +81,12 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | `inventory.events.v1` | `inventory.stock_snapshot.updated` | Inventory ⏳ (scaffold) | Catalog ✅ | `sku_id`, `product_id`, `available_qty`, `reserved_qty`, `committed_qty`, `source_version`, `as_of` | ⏳ (doc inventory đã chốt đúng tên field) |
 | `inventory.events.v1` | `inventory.reservation.*`, `inventory.adjusted` | Inventory ⏳ | Order ⏳ | — | ⏳ |
 | `rating.events.v1` | `rating.aggregate.updated` | Rating ⏳ | Catalog ✅, Search ✅ | `product_id`, `avg`, `count` | ⏳ (doc khớp consumer) |
-| `order.events.v1` | `order.confirmed/paid/cancelled` | Order ⏳ | Notification ✅ | `buyer.user_id`, `buyer.email`, `order_id` | ⏳ (doc khớp consumer) |
+| `order.events.v1` | `order.confirmed/paid/cancelled` | Order ⏳ | Notification ✅ | `buyer.user_id`, `buyer.email`, `order_id` + placeholder top-level `order_code`, `display_name` (confirmed), `amount` (paid) | ⏳ (doc Order đã thêm field template, 2026-11-01) |
 | `order.events.v1` | `order.cancelled` | Order ⏳ | Shipment ✅ | `event_id`, `payload.order_id`, `reason`, `correlation_id?` | ⏳ (doc khớp consumer) |
 | `order.events.v1` | `order.delivered` | Order ⏳ | Rating ⏳ | `buyer`, `items[]` | ⏳ |
-| `invoice.events.v1` | `invoice.issued` | Order ⏳ | Notification ✅ | `buyer.*`, `invoice_id` | ⏳ |
+| `invoice.events.v1` | `invoice.issued` | Order ⏳ | Notification ✅ | `buyer.*`, `invoice_id`, `order_code`, `invoice_url` | ⏳ (doc Order đổi `pdf_url` → `invoice_url`, 2026-11-01) |
 | `shipment.commands.v1` | `shipment.create` | Order ⏳ (doc Order chưa mô tả; Order gọi REST `POST /api/v1/internal/shipments`) | Shipment ✅ | envelope `message_*`, `payload.command_id`, `shop_order_id`, `buyer`, `from/to_address_snapshot`, `items[]` | ⏳ |
-| `shipment.events.v1` | `shipment.delivered`, `shipment.failed` | Shipment ✅ | Notification ✅, Payment ✅, Order ⏳ | `shipment_id`, `order_id`, `delivered_at`, `buyer.user_id`, `buyer.email` | ✅ |
+| `shipment.events.v1` | `shipment.delivered`, `shipment.failed` | Shipment ✅ | Notification ✅, Payment ✅, Order ⏳ | `shipment_id`, `order_id`, `delivered_at`, `reason`, `buyer.user_id`, `buyer.email`; template còn cần `order_code` | ⚠️ C15 (thiếu `order_code`) |
 | `shipment.events.v1` | `shipment.created/status_changed/cancelled/creation_pending/creation_failed` | Shipment ✅ | Order ⏳ | — | ⏳ |
 | `payment.events.v1` | `payment.created` | Payment ✅ | không ai | — | ✅ |
 | `payment.events.v1` | `payment.succeeded/failed/expired/refunded` | Payment ✗ (chỉ outbox) | Order ⏳, Notification ✅ | `event_type`, `payload.buyer`, `payment_id` | ℹ️ C2, C3, C4 |
@@ -99,7 +107,7 @@ Các điểm khác nhau giữa service đã triển khai chia làm hai loại:
 | Gateway → mọi upstream | `/api/v1/...` | route table | Catalog (`GLOBAL_PREFIX=api/v1`), Search, Notification, Auth, Payment, Shipment đều có prefix `/api/v1` | ✅ |
 | Notification → Auth-user | JWKS `/.well-known/jwks.json` (`JWT_JWKS_URL`) | khớp | `SecurityConfig` permitAll | ✅ |
 
-Header HTTP nội bộ: `X-Request-ID`, `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope`, `X-MFA-Step-Up`, `X-Internal-Service-Token` dùng cùng tên ở mọi service có code (HTTP header không phân biệt hoa thường). ✅
+Header HTTP nội bộ: `X-Request-ID`, `X-User-ID`, `X-User-Roles`, `X-User-Permissions`, `X-User-Shop-Scope`, `X-MFA-Step-Up`, `X-Internal-Service-Token` dùng cùng tên ở mọi service có code (HTTP header không phân biệt hoa thường). ✅ về tên; ⚠️ giá trị `X-User-Roles` lệch giữa service (C14) và `X-MFA-Step-Up` lệch ngữ nghĩa (C16).
 
 ## 5. Health path
 
@@ -149,3 +157,23 @@ Prefix theo service là thống nhất. Hình dạng `error` gần khớp; Payme
 5. **Health:** service mới expose `/health/live` và `/health/ready` ở root.
 6. **Env:** service mới (Node) theo Search/Notification: `KAFKA_BROKERS`, `KAFKA_CLIENT_ID`; service mới (Java) theo Shipment/Payment: `KAFKA_BOOTSTRAP_SERVERS`.
 7. **DLQ:** `<service>.<source>.dlq.v1`.
+
+## 9. Recheck ngoài 2026-11-01 (16 mục trên docs@873b0a7)
+
+Đối chiếu lại với code: `user-auth-service@develop` (`c031391`), `search-service@develop` (`13d36e3`), `inventory-service@develop` (`92c1454`), `shipment-service@develop` (`a375a41`), `payment-wallet-service@main` (`859b7b1`), `notification-service@main` (`6c6d9a2`). Phía chưa có code (Order, Message, Gateway) sửa doc theo phía đã có code.
+
+| ID | Kết luận | Xử lý |
+|---|---|---|
+| V01 | Đúng. Shipment `SHOP_STAFF` ≠ auth-user `SELLER_STAFF`. | C14 — chờ chốt, cần sửa code. |
+| V02 | Đúng, nhưng chỉ ở scaffold: `AuthorizationPolicy.requireAdminStepUp` chưa được endpoint nào gọi. | C14 — chờ chốt. Doc Inventory mô tả đúng code. |
+| V03 | Đúng. Thêm: auth-user **chưa seed** `SEARCH_ADMIN` dưới dạng nào. | Doc auth-user đánh dấu ⏳ chưa seed; C14 chờ chốt. |
+| V04 | Đúng. | C16 — chờ chốt (Gateway chưa code nên có thể chốt ở doc Gateway, nhưng cần endpoint verify ở auth-user). |
+| V05 | Đúng (Message chưa code). | Đã sửa: thêm `messages.version` (optimistic lock), trả `version` trong history/send, lỗi `409 MESSAGE_VERSION_CONFLICT` theo mẫu `PRODUCT_VERSION_CONFLICT`. |
+| K01–K04 | Đúng (Order chưa code). Notification chỉ lấy key top-level có trong placeholder. | Đã sửa doc Order: thêm `order_code`, `display_name`, `amount`, `invoice_url` top-level theo template Notification; bảng placeholder ở Notification LLD §6.2. |
+| K05 | Đúng. Shipment đã code, không có `order_code`. | C15 — chờ chốt, cần sửa code Shipment. |
+| A01 | Đúng. Code Inventory dùng `ApiResponse {data, meta}`. | Đã sửa mock LLD và ví dụ API về envelope. |
+| A02 | Đúng. | Đã sửa golden example: `FREESHIPMAX` dùng `discount_type=FREESHIP`; công thức Bước 3 đổi nhãn `FIXED` → `FREESHIP`. |
+| A03 | Đúng. | Đã thêm `FREESHIP` vào filter `scope` của `GET /vouchers`. |
+| A04 | Đúng. | Đã viết lại: tối đa 1 mã mỗi slot, độ dài tối đa `2 + số shop`. |
+| A05 | Đúng. Payment (đã code) bắt `amount > 0` và `shipping_fee < amount` cho mỗi đơn con. | Đã sửa checkout LLD: giữ tối thiểu 1 VND tiền hàng mỗi đơn con, `orders[].shipping_fee` = phí ship sau freeship. |
+| A06 | Đúng. Code `SigninService` cho login phone chưa verify. | Đã sửa doc API/test theo code; mã lỗi giữ ⏳. |

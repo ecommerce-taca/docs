@@ -56,7 +56,13 @@ Headers: `Idempotency-Key` bắt buộc. Request:
 {"order_intent_id":"intent-1","expires_at":"2026-08-30T09:15:00Z","items":[{"sku_id":"sku-1","quantity":2}]}
 ```
 
-Response `201` gồm `reservation_id`, status `RESERVED`, expires_at và items. Transaction update từng SKU theo thứ tự tăng dần kèm version; thiếu một SKU rollback toàn request. Không gọi Payment/Product trong transaction.
+Response `201`:
+
+```json
+{"data":{"reservation_id":"reservation-1","status":"RESERVED","expires_at":"2026-08-30T09:15:00Z","items":[{"sku_id":"sku-1","quantity":2,"available_after":5}]},"meta":{"request_id":"01912f80"}}
+```
+
+`available_after` chỉ cho caller internal. Transaction update từng SKU theo thứ tự tăng dần kèm version; thiếu một SKU rollback toàn request. Không gọi Payment/Product trong transaction.
 
 ### 3.3 Commit/release
 

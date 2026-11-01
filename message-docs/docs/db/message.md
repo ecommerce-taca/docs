@@ -45,6 +45,7 @@ erDiagram
 | `sender_id` | string | Must be participant. |
 | `body` | string/null | Max 5.000, sanitize; one of body/attachment required. |
 | `status` | enum | `ACCEPTED`, `EDITED`, `DELETED`, `BLOCKED`. |
+| `version` | long | Optimistic lock: `1` khi tạo, `+1` mỗi lần edit/delete. `PATCH`/`DELETE` gửi `version` hiện tại; lệch → `409 MESSAGE_VERSION_CONFLICT`. |
 | `idempotency_key` | string | Unique sender/conversation scope. |
 | `created_at`/`updated_at` | Date | UTC. |
 
