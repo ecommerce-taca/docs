@@ -13,22 +13,23 @@
 | Trách nhiệm chính | Shipment mỗi Shop Order, quote phí ship, create/cancel shipment, tracking timeline, carrier webhook, đối soát create mơ hồ, phát lifecycle event. |
 | Database | MySQL `shipmentdb` (xem `docs/db/shipment.md`). |
 | Carrier | Interface `CarrierAdapter`; có `MockCarrierAdapter` (chạy thật, tắt bằng `SHIPMENT_MOCK_ENABLED=false`) và `GhnCarrierAdapter` (fail-closed). `SPX`, `J&T` chưa có adapter. |
-| Order | Order-Commerce sở hữu order state, seller authorization, address/item, quyết định bắt đầu fulfill. Shipment không đọc `orderdb`. |
+| Order | `order-service` sở hữu order state, seller authorization, address/item, quyết định bắt đầu fulfill. Shipment không đọc `orderdb`. |
 | Payment | Shipment không capture/refund. |
 | Không thuộc service | Giá sản phẩm/cart/order, inventory, payment, nguồn address, review. |
 
 ### 1.2 Boundary
 
 ```text
-Order-Commerce ──REST quote / carrier-quotes / create / cancel──► Shipment
-Order-Commerce ──Kafka order.cancelled (opt-in)──────────────────► Shipment
+checkout-service ──REST quote──────────────────────────────► Shipment
+order-service ────REST carrier-quotes / create / cancel─────► Shipment
+order-service ────Kafka order.cancelled (opt-in)───────────► Shipment
 Shipment ──CarrierAdapter (MOCK; GHN fail-closed)────────────────► Carrier
 Carrier ──POST /webhooks/shipping/{carrier} (IP + HMAC)──────────► Shipment
 Shipment ──outbox → shipment.events.v1 (publisher opt-in)───────► Order / Notification
 Buyer/Seller ──Gateway (actor headers)──► tracking read
 ```
 
-`GET /seller/orders/{orderId}/shipment/carriers` là façade của Order-Commerce, gọi `POST /internal/shipping/carrier-quotes`.
+`GET /seller/orders/{orderId}/shipment/carriers` là façade của `order-service`, gọi `POST /internal/shipping/carrier-quotes`.
 
 ## 2. Cấu trúc bên trong
 
@@ -185,7 +186,7 @@ Transition cho phép (`ShipmentStateMachine`; cùng state luôn hợp lệ):
 | `FAILED` | `IN_TRANSIT` (carrier giao lại) |
 | `DELIVERED`, `CANCELLED` | — (terminal) |
 
-Cancel qua API chỉ khi `CREATED`. `NOT_CREATED` là giá trị ảo phía Order-Commerce, không thuộc enum này.
+Cancel qua API chỉ khi `CREATED`. `NOT_CREATED` là giá trị ảo phía `order-service`, không thuộc enum này.
 
 ## 6. Event phát ra / lắng nghe
 
@@ -210,8 +211,8 @@ Delivery at-least-once; consumer dedupe theo `event_id`.
 
 | Nguồn | Topic / event | Xử lý | Trạng thái |
 |---|---|---|---|
-| Order-Commerce | `order.events.v1` / `order.cancelled` | Huỷ shipment nếu còn `CREATED`; tombstone nếu chưa có shipment. Không tạo shipment từ `order.created`. | 🟡 opt-in |
-| Order-Commerce (đề xuất) | `shipment.commands.v1` / `shipment.create` | Tạo shipment qua inbox. Không phải contract đã chọn: create chính thức là REST `POST /internal/shipments`, Order gọi khi seller xác nhận chuẩn bị hàng (`order-commerce-docs/docs/api/order.md` §3.4). | 🟡 opt-in |
+| `order-service` | `order.events.v1` / `order.cancelled` | Huỷ shipment nếu còn `CREATED`; tombstone nếu chưa có shipment. Không tạo shipment từ `order.created`. | 🟡 opt-in |
+| `order-service` (đề xuất) | `shipment.commands.v1` / `shipment.create` | Tạo shipment qua inbox. Không phải contract đã chọn: create chính thức là REST `POST /internal/shipments`, Order gọi khi seller xác nhận chuẩn bị hàng (`order-docs/docs/api/order.md` §3.4). | 🟡 opt-in |
 
 ## 7. Mã lỗi
 
@@ -224,6 +225,6 @@ Xem bảng đầy đủ ở `docs/api/shipment.md` §4. Tóm tắt nhóm: input 
 | 1 | GHN adapter chưa code contract thật; SPX/J&T chưa có adapter. | Không ship thật được. | Shipment/DevOps |
 | 2 | Event `shipment.created` từ đối soát thiếu field phí. | Consumer đọc phí bị null. | Shipment (cần fix code) |
 | 3 | Đối soát chỉ xử lý trường hợp carrier tìm thấy; không có timeout chuyển `FAILED`/`CANCELLED`. | Shipment kẹt `PENDING_RECONCILIATION`. | Shipment |
-| 4 | Kafka command create và result event chỉ là đề xuất. | Không được coi là contract. | Order-Commerce/Platform |
+| 4 | Kafka command create và result event chỉ là đề xuất. | Không được coi là contract. | Order/Platform |
 | 5 | W3C trace chưa propagate qua Kafka. | Mất trace xuyên service. | Platform |
 | 6 | Chữ ký webhook/IP thật của carrier chưa chốt. | Bảo mật webhook. | Security |

@@ -1,30 +1,32 @@
-# API Spec — Order-Commerce Service · Voucher
+# API Spec — Checkout Service · Voucher
 
-> Nguồn: `docs/lld/voucher.md` · `docs/db/voucher.md` · `docs/test/voucher.md` · Code: `ecommerce-taca/order-commerce-service` @ `main` (`bf512b5`) · Cập nhật: `2026-10-31`
-> Trạng thái triển khai: ⏳ Chưa triển khai — repo code mới chỉ có `README.md`; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
+> Nguồn: `docs/lld/voucher.md` · `docs/db/voucher.md` · `docs/test/voucher.md` · Code: chưa có repo (`ecommerce-taca/checkout-service`) · Cập nhật: `2026-11-01`
+> Trạng thái triển khai: ⏳ Chưa triển khai — tách từ Order-Commerce ngày 2026-11-01; toàn bộ nội dung là thiết kế, dùng làm spec cho lần triển khai đầu.
 > Base path: `/api/v1` · Spring Boot/Java 25 · Auth qua Gateway · `X-Request-ID`/W3C trace dùng chuẩn chung
 
-Phần **Voucher** của Order-Commerce (một service, tài liệu tách theo nghiệp vụ). Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/api/order-commerce.md`.
+Phần **Voucher** của Checkout Service. Quy ước chung, mã lỗi đầy đủ và giả định nằm ở `docs/api/checkout.md`.
 
 ## 1. Quy ước API chung
 
-Theo `docs/api/order-commerce.md` §1 (base path `/api/v1`, auth qua Gateway, envelope `{data,meta}`, error `{error:{code,message,details,trace_id}}`, `Idempotency-Key` cho mutation, tiền integer VND).
+Theo `docs/api/checkout.md` §1 (base path `/api/v1`, auth qua Gateway, envelope `{data,meta}`, error `{error:{code,message,details,trace_id}}`, `Idempotency-Key` cho mutation, tiền integer VND).
 
 ## 2. Danh sách endpoint
 
+Số thứ tự theo bảng tổng ở `docs/api/checkout.md` §2.
+
 | # | Method + path | Quyền | Mục đích | Trạng thái |
 |---:|---|---|---|---|
-| 5 | `GET /vouchers/validate` | Buyer | Preview voucher trên cart (buyer đã biết mã). | ⏳ |
-| 5a | `GET /vouchers` | **Public (auth tuỳ chọn)** | Danh sách voucher khả dụng (PDP/Shop voucher strip cho khách chưa đăng nhập); có JWT thì service tính thêm `eligible`. | ⏳ |
-| 5b | `GET /vouchers/redemptions` | Buyer | Lịch sử voucher đã dùng + tổng tiền đã tiết kiệm. | ⏳ |
-| 19 | `POST /seller/vouchers` | Seller | Tạo shop voucher. | ⏳ |
-| 20 | `GET /seller/vouchers` | Seller | List voucher. | ⏳ |
-| 21 | `PUT /seller/vouchers/{voucherId}` | Seller | Update voucher. | ⏳ |
-| 22 | `DELETE /seller/vouchers/{voucherId}` | Seller | Soft archive/inactivate. | ⏳ |
-| 23 | `POST /admin/vouchers` | Admin (`VOUCHER_MANAGE`) | Tạo platform voucher (`scope=PLATFORM`). | ⏳ |
-| 24 | `GET /admin/vouchers` | Admin | List platform voucher + usage metric. | ⏳ |
-| 25 | `PUT /admin/vouchers/{voucherId}` | Admin | Update platform voucher. | ⏳ |
-| 26 | `DELETE /admin/vouchers/{voucherId}` | Admin | Soft archive/inactivate. | ⏳ |
+| 4 | `GET /vouchers/validate` | Buyer | Preview voucher trên giỏ (buyer đã biết mã). | ⏳ |
+| 5 | `GET /vouchers` | **Public (auth tuỳ chọn)** | Danh sách voucher khả dụng; có JWT thì tính thêm `eligible`. | ⏳ |
+| 6 | `GET /vouchers/redemptions` | Buyer | Lịch sử voucher đã dùng + tổng tiền đã tiết kiệm. | ⏳ |
+| 7 | `POST /seller/vouchers` | Seller | Tạo shop voucher. | ⏳ |
+| 8 | `GET /seller/vouchers` | Seller | List voucher. | ⏳ |
+| 9 | `PUT /seller/vouchers/{voucherId}` | Seller | Update voucher. | ⏳ |
+| 10 | `DELETE /seller/vouchers/{voucherId}` | Seller | Soft inactivate. | ⏳ |
+| 11 | `POST /admin/vouchers` | Admin (`VOUCHER_MANAGE`) | Tạo platform/freeship voucher. | ⏳ |
+| 12 | `GET /admin/vouchers` | Admin | List + usage metric. | ⏳ |
+| 13 | `PUT /admin/vouchers/{voucherId}` | Admin | Update voucher. | ⏳ |
+| 14 | `DELETE /admin/vouchers/{voucherId}` | Admin | Soft inactivate/archive. | ⏳ |
 
 ## 3. Chi tiết endpoint
 
@@ -56,7 +58,7 @@ Preview áp mã trên cart hiện tại. **Không** giữ chỗ voucher; `usage_
 }
 ```
 
-Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOUND`/`EXPIRED`/`MIN_ORDER_NOT_MET`/`USAGE_LIMIT_REACHED`/`SCOPE_MISMATCH`) để UI hiển thị — **không** dùng `404` cho mã sai (tránh dò mã).
+Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOUND`/`EXPIRED`/`MIN_ORDER_NOT_MET`/`USAGE_LIMIT_REACHED`/`SCOPE_MISMATCH`/`ALREADY_USED`) để UI hiển thị — **không** dùng `404` cho mã sai (tránh dò mã).
 
 ### 3.2 `GET /vouchers` — danh sách voucher khả dụng
 
@@ -147,7 +149,7 @@ Query: `page`, `size` (max 100), `from?`, `to?` (ISO-8601).
 }
 ```
 
-`total_saved` là tổng `discount_amount` của **toàn bộ** redemption khớp filter, không phải chỉ trang hiện tại. Redemption của order đã huỷ/hoàn không tính vào `total_saved`.
+`total_saved` là tổng `discount_amount` của **toàn bộ** redemption khớp filter, không phải chỉ trang hiện tại. Redemption đã `RELEASED` (đơn huỷ hoặc voucher bị gỡ khi huỷ một phần) không tính vào `total_saved`.
 
 ### 3.4 Seller voucher CRUD (`/seller/vouchers`)
 
@@ -190,7 +192,7 @@ Response `201`:
 }
 ```
 
-`scope` luôn `SHOP` (cố định, không nhận từ request) và `shop_id` lấy từ token — seller không tạo `PLATFORM`/`FREESHIP` voucher. `max_discount_amount` chỉ dùng với `PERCENT`, `null` = không trần. **Không có** field audience/targeting/segment trong v1 — các màn Penpot Seller "Voucher audience / Selected users / Import user IDs / Tab followers/VIP" ngoài phạm vi v1. Trùng `code` trong cùng shop → `409 ORDER_VOUCHER_CODE_EXISTS`.
+`scope` luôn `SHOP` (cố định, không nhận từ request) và `shop_id` lấy từ token — seller không tạo `PLATFORM`/`FREESHIP` voucher. `max_discount_amount` chỉ dùng với `PERCENT`, `null` = không trần. **Không có** field audience/targeting/segment trong v1 — các màn Penpot Seller "Voucher audience / Selected users / Import user IDs / Tab followers/VIP" ngoài phạm vi v1. Trùng `code` trong cùng shop → `409 CHECKOUT_VOUCHER_CODE_EXISTS`.
 
 `GET /seller/vouchers` — query `status?`, `code?`, `page`, `size`:
 
@@ -203,7 +205,7 @@ Response `201`:
 }
 ```
 
-`PUT /seller/vouchers/{voucherId}` request cùng field với create cộng `version`; response `200` cùng shape với create. Không đổi `code` sau khi đã có redemption (tránh sai lệch lịch sử) — đổi `code` khi `used_count > 0` → `409 ORDER_VOUCHER_CODE_LOCKED`.
+`PUT /seller/vouchers/{voucherId}` request cùng field với create cộng `version`; response `200` cùng shape với create. Không đổi `code` sau khi đã có redemption (tránh sai lệch lịch sử) — đổi `code` khi `used_count > 0` → `409 CHECKOUT_VOUCHER_CODE_LOCKED`.
 
 `DELETE /seller/vouchers/{voucherId}` body `{version}`. Response `200`:
 
@@ -215,7 +217,7 @@ Soft `INACTIVE`, không xóa redemption history.
 
 ### 3.5 Admin platform voucher (`/admin/vouchers`)
 
-Quyền: `VOUCHER_MANAGE` (do Auth User RBAC cấp) + step-up 2FA cho mutation; Gateway coarse-gate role admin, `order-commerce` enforce permission. v1 không có microservice admin riêng — admin console gọi trực tiếp route này (quyết định admin-scope đã chốt 2026-09-18).
+Quyền: `VOUCHER_MANAGE` (do Auth User RBAC cấp) + step-up 2FA cho mutation; Gateway coarse-gate role admin, `checkout-service` enforce permission. v1 không có microservice admin riêng — admin console gọi trực tiếp route này (quyết định admin-scope đã chốt 2026-09-18).
 
 `POST /admin/vouchers` request:
 
@@ -249,8 +251,11 @@ Response `201` cùng shape với `POST /seller/vouchers` nhưng `shop_id: null`.
 
 ## 4. Mã lỗi chung
 
-`ORDER_INVALID_INPUT`, `ORDER_FORBIDDEN`, `ORDER_VOUCHER_INVALID`, `ORDER_VOUCHER_CODE_EXISTS`, `ORDER_VOUCHER_CODE_LOCKED`, `ORDER_VOUCHER_LIMIT_REACHED` — định nghĩa ở `docs/api/order-commerce.md` §4.
+`CHECKOUT_INVALID_INPUT`, `CHECKOUT_FORBIDDEN`, `CHECKOUT_VOUCHER_INVALID`, `CHECKOUT_VOUCHER_CODE_EXISTS`, `CHECKOUT_VOUCHER_CODE_LOCKED`, `CHECKOUT_VOUCHER_LIMIT_REACHED`, `CHECKOUT_IDEMPOTENCY_CONFLICT` — định nghĩa ở `docs/lld/checkout.md` §7.
 
 ## 5. Giả định & câu hỏi mở
 
-Xem `docs/api/order-commerce.md` §5.
+| # | Nội dung | Ảnh hưởng nếu sai | Cần ai xác nhận |
+|---|---|---|---|
+| 1 | Voucher v1 chỉ theo mã, không audience/targeting. | Bật targeting cần schema `voucher_audiences` + follow shop. | Product owner |
+| 2 | Platform voucher CRUD ở `checkout-service` (`/admin/vouchers`, `VOUCHER_MANAGE`, seed ở auth-user `V025`). | Nếu Admin tách service riêng, service đó gọi vào contract này chứ không sở hữu voucher. | Architecture |

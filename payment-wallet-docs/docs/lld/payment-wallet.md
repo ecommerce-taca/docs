@@ -12,7 +12,7 @@
 |---|---|
 | Trách nhiệm chính | Payment intent/transaction, VNPAY QR callback, COD payment state, marketplace allocation, commission/tax, seller wallet, payout và refund orchestration. |
 | Source of truth | Payment, wallet balance và double-entry ledger thuộc service này. |
-| Order | Order-Commerce sở hữu order lifecycle; Payment chỉ nhận order/payment intent và phát payment result. |
+| Order | `order-service` (tách từ Order-Commerce 2026-11-01; caller `ORDER_COMMERCE` trong code) sở hữu order lifecycle; Payment chỉ nhận order/payment intent và phát payment result. |
 | Inventory | Inventory sở hữu reserve/commit/release; Payment không mutate stock. |
 | Shipment | Shipment sở hữu delivery state; payment không tự đánh dấu delivered. |
 | Không thuộc service | User/KYC decision, product price source, cart/order content, inventory ledger, carrier tracking. |
@@ -21,7 +21,7 @@
 ### 1.2 Boundary
 
 ```text
-Order-Commerce ──create/confirm/refund──► Payment-Wallet
+order-service ──create/confirm/refund──► Payment-Wallet
 Payment-Wallet ──VNPAY adapter──► VNPAY sandbox
 VNPAY webhook ──signature/idempotency──► Payment-Wallet
 Payment-Wallet ──Kafka outbox──► Order/Inventory/Notification
@@ -111,7 +111,7 @@ Callback duplicate trả ACK an toàn; callback sai signature/amount không đ�
 ### 3.3 COD
 
 - Create payment với method `COD` tạo `PENDING_COD`; không gọi VNPAY.
-- **`PENDING_COD` không chặn fulfillment.** Order-Commerce cho đơn COD vào `CONFIRMED` ngay tại checkout và không chờ event nào từ Payment-Wallet để giao hàng (xem `order-commerce-docs/docs/lld/order.md` §3.1). Payment-Wallet **không** phát `payment.succeeded` tại thời điểm đặt đơn COD, và Order-Commerce **không** chờ event đó.
+- **`PENDING_COD` không chặn fulfillment.** `order-service` cho đơn COD vào `CONFIRMED` ngay khi tạo đơn và không chờ event nào từ Payment-Wallet để giao hàng (xem `order-docs/docs/lld/order.md` §3.1). Payment-Wallet **không** phát `payment.succeeded` tại thời điểm đặt đơn COD, và `order-service` **không** chờ event đó.
 - Capture: khi nhận `shipment.delivered` (hoặc collection event tương đương từ carrier adapter), Payment transition `PENDING_COD → SUCCESS`, post ledger và phát `payment.succeeded`. Đây là **sau** khi order đã `DELIVERED`, nên event này chỉ phục vụ đối soát/settlement, không mở luồng giao hàng. **Amount capture = `grand_total` của order (gồm `shipping_fee`)**: carrier thu hộ cả tiền hàng lẫn phí ship; Payment hạch toán phần phí ship vào shipment payable (xem §3.4), không credit seller phần phí.
 - `shipment.failed` hoặc order cancelled trước khi giao: `PENDING_COD → FAILED` (enum PaymentStatus **không có** `CANCELLED` — chốt dùng `FAILED`), không post ledger, không tạo allocation.
 - COD failure/cancel không tạo seller payout; exact cash collection event cần Shipment/Finance contract.
@@ -192,7 +192,7 @@ Mọi domain event được ghi vào `outbox_events` trong cùng transaction. Pa
 |---|---|---|---|---|
 | Shipment | `shipment.events.v1` | `shipment.delivered` | `PENDING_COD → SUCCESS`, allocation + ledger + `wallet.allocated` | ✅ (`ShipmentEventListener`, inbox dedupe) |
 | Shipment | `shipment.events.v1` | `shipment.failed` | `PENDING_COD → FAILED`, không post ledger | ✅ |
-| Order-Commerce | — | `order.created`, `order.cancelled` | Thiết kế: release/refund policy. Payment hiện được tạo qua `POST /payments`. | ⏳ Không có listener |
+| `order-service` | — | `order.created`, `order.cancelled` | Thiết kế: release/refund policy. Payment hiện được tạo qua `POST /payments`. | ⏳ Không có listener |
 | Auth User | — | `shop.kyc.approved`, `shop.kyc.expired`, `shop.status_changed` | Thiết kế: gate payout. | ⏳ Không có listener |
 
 ### 6.3 Contract VNPAY webhook (code)
@@ -213,7 +213,7 @@ Danh sách đầy đủ mã code đang trả và mã dự phòng: xem `docs/api/
 | 4 | Payout bank provider và SLA chưa có HLD contract. | Cần mock adapter và retry/reconciliation job. | Finance/DevOps |
 | 5 | Refund initiation do Order/Admin gọi Payment; **return/dispute workflow ngoài v1** — sẽ do service `dispute` (v1.1) điều phối, gọi cùng contract `POST /payments/{paymentId}/refunds`. Trong v1 refund chỉ khởi tạo thủ công qua `/admin/payments` hoặc Order. | Ảnh hưởng API/permission. | Product/Finance |
 | 6 | Phạm vi Admin/back-office đã chốt (2026-09-18): Fees/Taxes, Finance, Seller settlement, Settlement batches phục vụ qua `/api/v1/admin/**` **trên service này**, không tách microservice. `dispute`/`campaign` là service v1.1. | Nếu tách service admin gộp phải chuyển ownership fee/tax/settlement. | Architecture + Finance |
-| 7 | Cơ chế kích hoạt settlement batch (scheduled job theo cửa sổ hoàn tiền vs. event `order.completed` — **ghi chú: `order.completed` hiện không tồn tại**, order-commerce không phát event này; nếu chọn hướng event phải mở rộng contract order trước) và độ dài cửa sổ chưa chốt. Admin screen chỉ giám sát + `retry` batch `FAILED`. | Ảnh hưởng thời điểm `pending → available` và SLA payout. | Finance + Order owner |
+| 7 | Cơ chế kích hoạt settlement batch (scheduled job theo cửa sổ hoàn tiền vs. event `order.completed` — **ghi chú: `order.completed` hiện không tồn tại**, `order-service` không phát event này; nếu chọn hướng event phải mở rộng contract order trước) và độ dài cửa sổ chưa chốt. Admin screen chỉ giám sát + `retry` batch `FAILED`. | Ảnh hưởng thời điểm `pending → available` và SLA payout. | Finance + Order owner |
 | 8 | Chỉ `payment.created` và `wallet.allocated` được publish ra Kafka; `payment.succeeded/failed/expired/refunded`, `refund.*`, `payout.*`, `settlement.batch.completed` chỉ nằm trong outbox. | Notification/Order không nhận được kết quả thanh toán qua Kafka. | Payment-Wallet |
 | 9 | Payload event không có recipient (`buyer.email`, `owner_user_id`, `owner_email`). | Notification không gửi được email payment/payout. | Payment-Wallet + Auth User (ADR-003) |
 | 10 | Không có scheduled job tự expire payment VNPAY sau 15 phút. | Payment `PENDING` treo; Inventory reservation không được giải phóng theo payment. | Payment-Wallet |

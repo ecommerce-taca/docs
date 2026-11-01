@@ -510,6 +510,8 @@ Fed by CDC from Product (product.* -> Kafka)
 
 **Order Service  →  orderdb  (MySQL) + Cart in Redis**
 
+> Cập nhật 2026-11-01: khối này đã tách thành 3 service — `cart-service` (MongoDB `cartdb`, giỏ không hết hạn), `checkout-service` (MySQL `checkoutdb`, gồm voucher) và `order-service` (MySQL `orderdb`, gồm invoice). Schema dưới đây là bản vẽ gốc; schema hiện hành ở `cart-docs`, `checkout-docs`, `order-docs`.
+
 **Clients**
 
 ```

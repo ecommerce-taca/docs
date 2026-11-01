@@ -117,7 +117,7 @@ Vi phạm `uk_shipments_order_shop` → `409 SHIPMENT_ALREADY_EXISTS`; `uk_shipm
 | `ShipmentStatus` | `CREATED`, `PICKED_UP`, `IN_TRANSIT`, `DELIVERED`, `FAILED`, `CANCELLED`, `PENDING_RECONCILIATION`. |
 | `Carrier` | `GHN`, `SPX`, `J_AND_T`, `MOCK`. |
 
-`NOT_CREATED` **không** phải giá trị của Shipment: nó là giá trị ảo do Order-Commerce hiển thị khi chưa có shipment; Shipment API trả `404 SHIPMENT_NOT_FOUND`.
+`NOT_CREATED` **không** phải giá trị của Shipment: nó là giá trị ảo do `order-service` hiển thị khi chưa có shipment; Shipment API trả `404 SHIPMENT_NOT_FOUND`.
 
 Rules: một dòng `shipments` mỗi `(order_id, shop_id)`; tracking code unique theo carrier; `DELIVERED` chỉ do webhook carrier; state machine xem LLD §5.
 
