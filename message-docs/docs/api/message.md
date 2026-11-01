@@ -86,6 +86,7 @@ WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event nam
       "attachments": [],
       "moderation_status": "ACCEPTED",
       "delivery_status": "READ",
+      "version": 1,
       "edited_at": null,
       "deleted": false,
       "created_at": "2026-08-31T03:00:00Z"
@@ -95,7 +96,7 @@ WebSocket path `/ws/messages` (qua API Gateway, `Upgrade: websocket`); event nam
 }
 ```
 
-Nguồn field (đối chiếu `docs/db/message.md` §3.3): `sender_user_id` = `sender_id`; `edited_at` = `updated_at` khi `status=EDITED`; `deleted` suy ra từ `status=DELETED`; `moderation_status` = `status` (`ACCEPTED`/`EDITED`/`DELETED`/`BLOCKED`).
+Nguồn field (đối chiếu `docs/db/message.md` §3.3): `sender_user_id` = `sender_id`; `edited_at` = `updated_at` khi `status=EDITED`; `deleted` suy ra từ `status=DELETED`; `moderation_status` = `status` (`ACCEPTED`/`EDITED`/`DELETED`/`BLOCKED`). `version` = `version` (optimistic lock, client giữ lại để gửi kèm `PATCH`/`DELETE`).
 
 `POST /conversations/{conversationId}/messages` — header `Idempotency-Key` bắt buộc.
 
@@ -117,6 +118,7 @@ Nguồn field (đối chiếu `docs/db/message.md` §3.3): `sender_user_id` = `s
     "attachments": [],
     "moderation_status": "ACCEPTED",
     "delivery_status": "SENT",
+    "version": 1,
     "created_at": "2026-08-31T03:05:00Z"
   },
   "meta": { "request_id": "01912fc3-7a1b-7c12-9c55-8b1c34a6d921" }
@@ -151,8 +153,8 @@ client:  QUEUED → SENDING →┬─ (201/ws ack) → server delivery_status: S
 
 Message do chính actor gửi mới có `delivery_status`; message nhận về từ người khác trả `null` (không có ý nghĩa).
 
-- `PATCH /messages/{messageId}` body `{version, body, attachment_ids[]}` — chỉ sender, trong cửa sổ sửa 15 phút; hết hạn → `409 MESSAGE_EDIT_EXPIRED`.
-- `DELETE /messages/{messageId}` body `{version}` — soft delete, giữ `sequence`, trả placeholder `deleted:true` và `body:null` cho mọi participant.
+- `PATCH /messages/{messageId}` body `{version, body, attachment_ids[]}` — chỉ sender, trong cửa sổ sửa 15 phút; hết hạn → `409 MESSAGE_EDIT_EXPIRED`. `version` lấy từ message trong history/send response; lệch → `409 MESSAGE_VERSION_CONFLICT`. Response `200` trả message đã sửa (cùng shape history) với `version` mới.
+- `DELETE /messages/{messageId}` body `{version}` (lệch → `409 MESSAGE_VERSION_CONFLICT`) — soft delete, giữ `sequence`, trả placeholder `deleted:true` và `body:null` cho mọi participant.
 
 ### 3.3 Read/realtime
 
@@ -220,6 +222,7 @@ Cả hai cursor chỉ tăng, idempotent. `delivered_sequence` báo "đã nhận 
 | `MESSAGE_NOT_FOUND` | 404 | Không tồn tại. |
 | `MESSAGE_EDIT_EXPIRED` | 409 | Hết edit window. |
 | `MESSAGE_IDEMPOTENCY_CONFLICT` | 409 | Key khác payload. |
+| `MESSAGE_VERSION_CONFLICT` | 409 | `version` trong `PATCH`/`DELETE` khác bản hiện tại. |
 | `MESSAGE_ATTACHMENT_INVALID` | 400 | Media/checksum/type sai. |
 | `MESSAGE_ATTACHMENT_LIMIT_EXCEEDED` | 409 | Vượt 6 file. |
 | `MESSAGE_RATE_LIMITED` | 429 | Vượt socket/message rate. |

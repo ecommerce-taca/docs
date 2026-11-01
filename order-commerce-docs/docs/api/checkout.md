@@ -113,7 +113,7 @@ Headers: `Idempotency-Key` bắt buộc. Request:
 }
 ```
 
-`voucher_codes` là mảng, tối đa **3 phần tử**, mỗi phần tử thuộc một `scope` khác nhau (`PLATFORM` / `SHOP` / `FREESHIP`) — xem mô hình 3 slot ở `docs/lld/voucher.md` §3.2. Giỏ nhiều shop được gửi nhiều mã `SHOP` (mỗi shop một mã), khi đó mảng dài hơn 3.
+`voucher_codes` là mảng theo mô hình 3 slot ở `docs/lld/voucher.md` §3.2: tối đa 1 mã `PLATFORM`, tối đa 1 mã `FREESHIP`, và tối đa 1 mã `SHOP` **cho mỗi shop** trong `selected_item_ids`. Vì vậy độ dài tối đa là `2 + số shop được chọn` (giỏ 1 shop → tối đa 3; giỏ 3 shop → tối đa 5). Vượt giới hạn này luôn có hai mã cùng slot → `400 ORDER_VOUCHER_SLOT_CONFLICT`.
 
 | Lỗi | HTTP | Khi nào |
 |---|---:|---|

@@ -202,7 +202,7 @@ Envelope (`EventEnvelopeFactory`): `event_id`, `schema_version` = 1, `event_type
 | `shipment.cancelled` | Cancel API hoặc webhook → `CANCELLED`. Chưa có consumer nào khai báo dùng. | ✅ |
 | `shipment.creation_pending`, `shipment.creation_failed` | Chỉ từ create-command worker (đề xuất); `creation_failed` có `aggregate_type=SHIPMENT_COMMAND`, key = `command_id`. | 🟡 opt-in |
 
-Payload chung: `shipment_id`, `order_id`, `shop_id`, `carrier`, `tracking_code`, `status`, `old_status`, `new_status`, `source`, `occurred_at`, `shipping_fee` (deprecated), `checkout_shipping_fee`, `carrier_quoted_fee`, `carrier_quote_delta`?, `carrier_actual_fee`?, `currency`, `reason`?. `shipment.delivered` thêm `delivered_at`; `shipment.delivered` và `shipment.failed` thêm `buyer: { user_id, email }` cho Notification. Ngoại lệ: `shipment.created` từ đối soát chỉ có `shipment_id, order_id, shop_id, carrier, tracking_code, status, new_status, reconciled` — consumer phải chịu được việc thiếu field phí.
+Payload chung: `shipment_id`, `order_id`, `order_code`? (khi create request có — shipment-service#12), `shop_id`, `carrier`, `tracking_code`, `status`, `old_status`, `new_status`, `source`, `occurred_at`, `shipping_fee` (deprecated), `checkout_shipping_fee`, `carrier_quoted_fee`, `carrier_quote_delta`?, `carrier_actual_fee`?, `currency`, `reason`?. `shipment.delivered` thêm `delivered_at`; `shipment.delivered` và `shipment.failed` thêm `buyer: { user_id, email }` cho Notification. Ngoại lệ: `shipment.created` từ đối soát chỉ có `shipment_id, order_id, shop_id, carrier, tracking_code, status, new_status, reconciled` — consumer phải chịu được việc thiếu field phí.
 
 Delivery at-least-once; consumer dedupe theo `event_id`.
 

@@ -201,6 +201,7 @@ Không publish raw message/attachment URL vào event Notification nếu template
 | `CONVERSATION_CLOSED` | 409 | Không gửi vào conversation closed. |
 | `MESSAGE_NOT_FOUND` | 404 | Message không tồn tại. |
 | `MESSAGE_EDIT_EXPIRED` | 409 | Quá edit window. |
+| `MESSAGE_VERSION_CONFLICT` | 409 | `version` của `PATCH`/`DELETE` lệch bản hiện tại. |
 | `MESSAGE_IDEMPOTENCY_CONFLICT` | 409 | Key khác payload. |
 | `MESSAGE_ATTACHMENT_INVALID` | 400 | Type/checksum/object sai. |
 | `MESSAGE_ATTACHMENT_LIMIT_EXCEEDED` | 409 | Vượt 6 file/message. |

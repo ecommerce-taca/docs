@@ -43,7 +43,7 @@ Mọi case dưới đây là **số cụ thể**, không phải mô tả. Cài �
 
 | ID | Giỏ hàng + voucher | Kỳ vọng |
 |---|---|---|
-| O-CALC-01 | Shop A 800k, Shop B 400k, ship 30k/shop · `APPLE300K` (SHOP A, FIXED 300k) + `TACA200K` (PLATFORM, FIXED 200k) + `FREESHIPMAX` (FREESHIP, FIXED 60k) | A: `grand_total=388.889` · B: `311.111` · tổng `700.000`. Phân bổ platform A=111.111, B=88.889 |
+| O-CALC-01 | Shop A 800k, Shop B 400k, ship 30k/shop · `APPLE300K` (SHOP A, FIXED 300k) + `TACA200K` (PLATFORM, FIXED 200k) + `FREESHIPMAX` (scope `FREESHIP`, `discount_type=FREESHIP` 60k) | A: `grand_total=388.889` · B: `311.111` · tổng `700.000`. Phân bổ platform A=111.111, B=88.889 |
 | O-CALC-02 | Kiểm bất biến phân bổ | `Σ platform_alloc_s == platform_discount` **tuyệt đối**, không sai 1 VND, với 100 tổ hợp giỏ ngẫu nhiên |
 | O-CALC-03 | Phần dư chia không hết (3 shop, platform 100k, base chia lẻ) | Phần dư 1–2 VND rơi vào shop có phần thập phân lớn nhất; bằng nhau thì `shop_id` nhỏ hơn. Chạy 2 lần ra **cùng** kết quả |
 | O-CALC-04 | `PERCENT` 8% có `max_discount_amount=1.000.000`, đơn 50 triệu | Giảm đúng `1.000.000`, **không** phải 4.000.000 |

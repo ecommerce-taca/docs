@@ -8,7 +8,7 @@
 
 | Mục | Quy định |
 |---|---|
-| Auth | Internal: header `X-Internal-Service-Token` so constant-time với property `inventory.security.internal-token` (✅ `ActorContextFilter`); mTLS chưa có. Seller/admin: actor header + shop scope qua Gateway. `AuthorizationPolicy` (✅) có `requireAuthenticated`, `requireInternalService`, `requireSellerShopScope` (role `SELLER` + `X-User-Shop-Scope` bằng đúng shop), `requireAdminStepUp(permission)` (role `ADMIN` + permission); vi phạm → `401 INVENTORY_UNAUTHENTICATED` / `403 INVENTORY_FORBIDDEN`. |
+| Auth | Internal: header `X-Internal-Service-Token` so constant-time với property `inventory.security.internal-token` (✅ `ActorContextFilter`); mTLS chưa có. Seller/admin: actor header + shop scope qua Gateway. `AuthorizationPolicy` (✅) có `requireAuthenticated`, `requireInternalService`, `requireSellerShopScope` (role `SELLER` + `X-User-Shop-Scope` bằng đúng shop), `requireAdminStepUp(permission)` (role `SUPER_ADMIN` hoặc `ADMIN` + permission — inventory-service#15); vi phạm → `401 INVENTORY_UNAUTHENTICATED` / `403 INVENTORY_FORBIDDEN`. |
 | Request ID | `X-Request-ID` tối đa 64; Gateway/service tạo nếu internal job. |
 | Trace | W3C `traceparent`/`tracestate` REST/Kafka; response/error có `trace_id` (do Gateway/service propagate, client không gửi). |
 | Actor context | Đọc `X-User-ID`, `X-User-Roles`, `X-User-Permissions` (CSV), `X-User-Shop-Scope` (một giá trị) do Gateway inject (client không gửi được — Gateway strip). ✅ |
@@ -56,7 +56,13 @@ Headers: `Idempotency-Key` bắt buộc. Request:
 {"order_intent_id":"intent-1","expires_at":"2026-08-30T09:15:00Z","items":[{"sku_id":"sku-1","quantity":2}]}
 ```
 
-Response `201` gồm `reservation_id`, status `RESERVED`, expires_at và items. Transaction update từng SKU theo thứ tự tăng dần kèm version; thiếu một SKU rollback toàn request. Không gọi Payment/Product trong transaction.
+Response `201`:
+
+```json
+{"data":{"reservation_id":"reservation-1","status":"RESERVED","expires_at":"2026-08-30T09:15:00Z","items":[{"sku_id":"sku-1","quantity":2,"available_after":5}]},"meta":{"request_id":"01912f80"}}
+```
+
+`available_after` chỉ cho caller internal. Transaction update từng SKU theo thứ tự tăng dần kèm version; thiếu một SKU rollback toàn request. Không gọi Payment/Product trong transaction.
 
 ### 3.3 Commit/release
 

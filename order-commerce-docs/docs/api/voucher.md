@@ -64,7 +64,7 @@ Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOU
 
 | Query | Kiểu | Bắt buộc | Ràng buộc |
 |---|---|---|---|
-| `scope` | enum | Không | `PLATFORM` \| `SHOP`; bỏ trống trả cả hai |
+| `scope` | enum | Không | `PLATFORM` \| `SHOP` \| `FREESHIP` (cùng enum `VoucherScope` mà checkout nhận); bỏ trống trả cả ba |
 | `shop_id` | string (UUIDv7) | Không | Lọc voucher của một shop — dùng cho `Shop / Voucher strip` |
 | `product_id` | string (UUIDv7) | Không | Voucher áp được cho sản phẩm — dùng cho `PDP / Voucher strip` |
 | `cart_id` | string (UUIDv7) | Không | Có thì server tính `eligible` + `discount_amount` theo giỏ hiện tại |

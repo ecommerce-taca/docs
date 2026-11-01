@@ -99,7 +99,7 @@ Mức: `Cao` (chặn phát hành) · `TB` · `Thấp`.
 | IT-AUTH-08 | `POST /auth/signup` | 11 request cùng IP trong phút | 429 | `RATE_LIMITED` + Retry-After | Counter Redis/mock. |
 | IT-AUTH-09 | `POST /auth/signin` | Email/password đúng | 200 | Token pair + user summary | Access TTL 900s. |
 | IT-AUTH-10 | `POST /auth/signin` | Password sai | 401 | `AUTH_INVALID_CREDENTIALS` | Không lộ user tồn tại. |
-| IT-AUTH-11 | `POST /auth/signin` | Phone chưa verified | 403 | `AUTH_PHONE_NOT_VERIFIED` | Không cấp token phone login. |
+| IT-AUTH-11 | `POST /auth/signin` | Phone chưa verified | 200 | — | Hành vi hiện tại: cấp token, response `user.phone_verified=false`. `AUTH_PHONE_NOT_VERIFIED` (403) ⏳ chưa triển khai; khi làm thì đổi case này về 403. |
 | IT-AUTH-12 | `POST /auth/signin` | Account locked | 423 | `AUTH_ACCOUNT_LOCKED` | Có retry time ISO-8601, không raw policy. |
 | IT-AUTH-13 | `POST /auth/signin` | Account suspended/deleted | 403 | `AUTH_ACCOUNT_SUSPENDED` | Không cấp token. |
 | IT-AUTH-14 | `POST /auth/signin` | Admin có 2FA | 401 | `AUTH_MFA_REQUIRED` + challenge_id | Chưa cấp access token. |

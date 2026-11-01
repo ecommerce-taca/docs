@@ -56,11 +56,11 @@ shipping_s  = phí ship của shop s, lấy từ Shipment quote
 Chỉ áp cho đúng shop sở hữu mã. Điều kiện: `subtotal_s >= voucher.min_order`.
 
 ```
-PERCENT:  shop_discount_s = min( floor(subtotal_s × value / 100), max_discount_amount )
-FIXED:    shop_discount_s = min( value, subtotal_s )
+PERCENT:  shop_discount_s = min( floor(subtotal_s × value / 100), max_discount_amount, subtotal_s − 1 )
+FIXED:    shop_discount_s = min( value, subtotal_s − 1 )
 ```
 
-`max_discount_amount` là `null` thì không có trần. `shop_discount_s` không bao giờ vượt `subtotal_s`.
+`max_discount_amount` là `null` thì không có trần. `shop_discount_s` không bao giờ vượt `subtotal_s − 1` (giữ tối thiểu 1 VND tiền hàng cho Payment, xem Bước 5).
 
 #### Bước 2 — Voucher PLATFORM (toàn giỏ, tối đa 1 mã)
 
@@ -98,7 +98,7 @@ Chỉ áp lên phí ship, **không** đụng tới tiền hàng:
 ```
 base_ship = Σ shipping_s
 PERCENT:  freeship_discount = min( floor(base_ship × value / 100), max_discount_amount )
-FIXED:    freeship_discount = min( value, base_ship )
+FREESHIP: freeship_discount = min( value, base_ship )   # discount_type=FREESHIP, value VND
 ```
 
 Phân bổ về từng shop theo tỉ lệ `shipping_s / base_ship`, cùng phương pháp phần dư lớn nhất. `freeship_discount` không bao giờ vượt `base_ship` — không có chuyện ship âm.
@@ -125,10 +125,27 @@ grand_total_s = subtotal_s − shop_discount_s − alloc_s + shipping_s − free
 
 Bất biến: `grand_total_s >= 0`. Nếu công thức ra số âm thì có voucher cấu hình sai — chặn ở bước validate, không được ghi đơn âm.
 
+**Ràng buộc từ Payment-Wallet (đã có code, `CreatePaymentOrderRequest`).** `POST /api/v1/payments` bắt buộc `amount > 0`, mỗi `orders[].amount > 0` và `0 <= orders[].shipping_fee < orders[].amount` (tức tiền hàng của mỗi đơn con `>= 1` VND). Order chưa có code nên tự đảm bảo điều này, không đổi Payment:
+
+```
+goods_s    = subtotal_s − shop_discount_s − alloc_s        # tiền hàng sau giảm của đơn con
+ship_net_s = shipping_s − freeship_alloc_s
+grand_total_s = goods_s + ship_net_s
+
+Gửi Payment: orders[].amount = grand_total_s, orders[].shipping_fee = ship_net_s, amount = Σ grand_total_s
+```
+
+- Bước 1 trần `shop_discount_s` ở `subtotal_s − 1` (không phải `subtotal_s`).
+- Sau phân bổ Bước 2, nếu `alloc_s > subtotal_s − shop_discount_s − 1` thì hạ `alloc_s` về đúng mức đó và giảm `platform_discount` tương ứng (phần bị cắt không phân bổ lại). Kết quả: `goods_s >= 1` với mọi đơn con, nên `grand_total_s >= 1` và `ship_net_s < grand_total_s` luôn đúng.
+- Voucher FREESHIP không cần trần thêm: `ship_net_s >= 0` và tiền hàng đã `>= 1`.
+- Không có đơn con 0 đồng; checkout không bao giờ gửi `amount = 0` sang Payment.
+
+Ví dụ chuẩn bên dưới không chạm trần nên số không đổi.
+
 #### Ví dụ chuẩn *(dùng làm golden test)*
 
 Giỏ: Shop A 800.000 (2 item: 500.000 + 300.000), Shop B 400.000. Ship 30.000/shop.
-Voucher: `APPLE300K` (SHOP A, FIXED 300.000) · `TACA200K` (PLATFORM, FIXED 200.000) · `FREESHIPMAX` (FREESHIP, FIXED 60.000).
+Voucher: `APPLE300K` (SHOP A, FIXED 300.000) · `TACA200K` (PLATFORM, FIXED 200.000) · `FREESHIPMAX` (scope `FREESHIP`, `discount_type=FREESHIP`, value 60.000).
 
 | Bước | Shop A | Shop B | Tổng |
 |---|---:|---:|---:|
