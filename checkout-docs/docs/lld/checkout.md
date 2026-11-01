@@ -34,7 +34,7 @@ Order-Commerce cũ được tách làm 3 service ngày 2026-11-01: `cart-service
 mfe-buyer/mfe-seller/admin ──Gateway──► checkout-service
                                    ├─ MySQL checkoutdb: checkout groups, vouchers, redemptions, outbox
                                    ├─ REST cart-service: đọc giỏ / checked-out
-                                   ├─ REST Product Catalog: giá, SKU active, tax_rate_bps
+                                   ├─ REST Product Catalog: GET /products/{id} (giá SKU, SKU active, tax_rate_bps)
                                    ├─ REST Auth User: địa chỉ buyer
                                    ├─ REST Shipment: shipping quote
                                    ├─ REST Inventory: availability / reserve / release (trước khi có đơn)
@@ -240,16 +240,18 @@ Kiểm tra bước 2: `raw_A = 200000 × 500000/900000 = 111111,11` → `floor` 
 ```text
 1. Validate JWT, Idempotency-Key, payment_method, address (Auth User), slot voucher.
 2. cart-service: đọc item đã chọn (thiếu hết → CHECKOUT_CART_EMPTY).
-3. Product: đọc lại giá, SKU active, tax_rate_bps → snapshot.
+3. Product: GET /products/{productId} cho từng product (§6.4) → giá SKU, SKU active, tax_rate_bps → snapshot.
 4. Shipment quote theo shop → CheckoutCalculator (§3.2).
 5. MySQL tx: tạo checkout_groups(PENDING) + checkout_group_orders (order_id sinh trước, UUIDv7)
             + giữ lượt voucher (voucher_redemptions HELD, used_count += 1).
-6. Inventory reserve (Idempotency-Key = checkout_group_id).
-      fail → nhả voucher (RELEASED), group FAILED, trả CHECKOUT_STOCK_UNAVAILABLE.
+6. Inventory reserve MỖI ĐƠN CON một lần (order_intent_id = order_id,
+      Idempotency-Key = reserve-{order_id}), lưu reservation_id vào checkout_group_orders.
+      một đơn fail → release các reservation đã giữ, nhả voucher (RELEASED),
+      group FAILED, trả CHECKOUT_STOCK_UNAVAILABLE.
 7. order-service POST /internal/orders (Idempotency-Key = checkout_group_id):
-      gửi snapshot đầy đủ + reservation_id + payment_method.
+      gửi snapshot đầy đủ + reservation_id của từng đơn con + payment_method.
       order-service tạo đơn, invoice PENDING, gọi Payment-Wallet, COD thì commit kho.
-      lỗi 4xx → release reservation + nhả voucher, group FAILED.
+      lỗi 4xx → release mọi reservation của group + nhả voucher, group FAILED.
       timeout/5xx → retry cùng key; vẫn không rõ → group RECONCILING (§3.5).
 8. MySQL tx: group ORDERS_CREATED, redemption HELD → REDEEMED (gắn order_id), outbox voucher.redeemed.
 9. cart-service checked-out (async qua outbox job, retry; lỗi không ảnh hưởng đơn).
@@ -278,10 +280,13 @@ Idempotent theo header `Idempotency-Key` (`order-service` dùng `cancel-{order_i
 
 ### 3.5 Reconcile group không rõ kết quả
 
-Job quét `checkout_groups` ở `RECONCILING` quá 1 phút: gọi `GET /internal/orders?checkout_group_id=` của `order-service`.
+Job quét `checkout_groups` ở `RECONCILING` quá 1 phút và **gọi lại `POST /internal/orders` với cùng `Idempotency-Key` và cùng body** (body dựng lại từ `checkout_group_orders` + `checkout_group_items`). `order-service` idempotent theo key nên:
 
-- Có đơn → hoàn tất bước 8–9 của §3.3.
-- Không có đơn và đã quá `INVENTORY_RESERVATION_TTL` → release reservation (idempotent), nhả voucher, group `FAILED`.
+- Đơn đã tạo → trả lại đúng response đã lưu (đủ `payment_next_action`, `payment_id`, `reservation_expires_at`). Checkout lưu response này vào `idempotency_keys.response_snapshot` của `PLACE_CHECKOUT` rồi hoàn tất bước 8–9 của §3.3. Buyer retry `POST /checkout` sau đó nhận đúng response này.
+- Đơn chưa tạo → `order-service` tạo bình thường (vẫn còn trong TTL reservation).
+- Vẫn timeout/5xx và đã quá `INVENTORY_RESERVATION_TTL` → hỏi `GET /internal/orders?checkout_group_id=`; `orders=[]` thì release mọi reservation của group (idempotent), nhả voucher, group `FAILED`.
+
+Trong lúc group còn `RECONCILING`, buyer retry `POST /checkout` cùng key nhận `409 CHECKOUT_IN_PROGRESS` (FE chờ vài giây rồi hỏi lại).
 
 ## 4. Hằng số & cấu hình
 
@@ -291,6 +296,7 @@ Job quét `checkout_groups` ở `RECONCILING` quá 1 phút: gọi `GET /internal
 | `INVENTORY_RESERVATION_TTL` | 15 phút | ⏳ chưa có | Phải khớp Inventory. |
 | `VND_MIN/MAX` | 1/999999999999 | — | Integer; không float. |
 | `INTEGRATION_TIMEOUT` | 5s | ⏳ chưa có | Baseline cho Cart/Product/Inventory/Shipment/Auth. |
+| `PRODUCT_DETAIL_CONCURRENCY` | 10 | ⏳ chưa có | Số lời gọi `GET /products/{productId}` song song (§6.4). |
 | `ORDER_CREATE_TIMEOUT` | 8s | ⏳ chưa có | `order-service` gọi tiếp Payment; Gateway timeout route checkout là 10s. |
 | `PAGE_SIZE_DEFAULT` | 20 | — | Max 100. |
 | `OUTBOX_RETRY_COUNT` | 3 | — | Backoff 2s rồi DLQ `checkout-service.outbox.dlq.v1`. |
@@ -321,6 +327,7 @@ Hằng số voucher ở `voucher.md` §4.
 | Order (REST, đồng bộ) | Gọi ra | §6.2 |
 | Inventory reserve/release (REST) | Gọi ra | §6.1 |
 | Thuế suất Product Catalog (REST) | Gọi ra | §6.3 |
+| Giá/trạng thái SKU từ Product Catalog (REST) | Gọi ra | §6.4 |
 | Shipment quote (REST) | Gọi ra | `shipment-docs/docs/api/shipment.md` §3.2 |
 
 Checkout không consume Kafka. Mọi event đi qua transactional outbox.
@@ -331,7 +338,7 @@ Contract do Inventory sở hữu (`inventory-docs/docs/api/inventory.md` §3.2).
 
 ```http
 POST /internal/inventory/reservations
-Idempotency-Key: group-01912f90
+Idempotency-Key: reserve-order-01912f91
 X-Internal-Service-Token: <token>
 X-Request-ID: 01912f80-7a1b-7c12-9c55-8b1c34a6d921
 traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
@@ -340,23 +347,23 @@ Content-Type: application/json
 
 ```json
 {
-  "order_intent_id": "group-01912f90",
+  "order_intent_id": "order-01912f91",
   "expires_at": "2026-08-30T09:15:00Z",
   "items": [{ "sku_id": "sku-01912f33", "quantity": 2 }]
 }
 ```
 
-Response `201`: `{ "data": { "reservation_id", "status": "RESERVED", "expires_at", "items": [...] } }`. `order_intent_id` là `checkout_group_id`. Checkout chỉ gọi `release` khi saga thất bại **trước** khi có đơn; sau đó `reservation_id` đi theo đơn và `order-service` gọi commit/release.
+Response `201`: `{ "data": { "reservation_id", "status": "RESERVED", "expires_at", "items": [...] } }`. `order_intent_id` là `order_id` của đơn con: **mỗi đơn con một reservation**, vì `release` của Inventory nhả cả reservation chứ không chọn được item, và `commit` gắn đúng một `order_id`. Nhờ vậy huỷ đơn shop A không nhả kho của shop B. Checkout chỉ gọi `release` khi saga thất bại **trước** khi có đơn; sau đó `reservation_id` đi theo từng đơn và `order-service` gọi commit/release.
 
 ### 6.2 Contract — tạo đơn ở order-service
 
-`POST /internal/orders` (`order-docs/docs/api/order.md` §3.7). Checkout gửi toàn bộ snapshot đã tính: `checkout_group_id`, `buyer`, `payment_method`, `reservation_id`, `address_snapshot`, và mỗi đơn con: `order_id`, `shop`, `items[]` (giá, quantity, `tax_rate_bps`, `tax_amount`, `discount_allocated`), `amounts` (subtotal, shop/platform/freeship discount, shipping, tax, grand_total), `applied_vouchers[]`. `order-service` **không** tính lại tiền; nó lưu đúng số Checkout gửi.
+`POST /internal/orders` (`order-docs/docs/api/order.md` §3.7). Checkout gửi toàn bộ snapshot đã tính: `checkout_group_id`, `buyer`, `payment_method`, `address_snapshot`, và mỗi đơn con: `order_id`, `reservation_id`, `shop`, `items[]` (`order_item_id` do Checkout sinh trước, giá, quantity, `tax_rate_bps`, `tax_amount`, `discount_allocated`), `amounts` (subtotal, shop/platform/freeship discount, shipping, tax, grand_total), `applied_vouchers[]`. `order-service` **không** tính lại tiền; nó lưu đúng số Checkout gửi.
 
 ### 6.3 Contract — thuế suất từ Product Catalog
 
 Thuế tính **theo danh mục**, mà danh mục do Product Catalog sở hữu. checkout-service không tự suy ra thuế suất và không lưu bảng thuế riêng.
 
-Thuế suất đi kèm ngay trong response `GET /products?product_ids=` / `GET /products/{productId}` mà Checkout **đã gọi sẵn** để re-read giá — không thêm lượt gọi mạng nào:
+Thuế suất đi kèm ngay trong response `GET /products/{productId}` mà Checkout **đã gọi sẵn** để re-read giá SKU (§6.4) — không thêm lượt gọi mạng nào:
 
 ```json
 {
@@ -375,6 +382,23 @@ Quy tắc:
 - Checkout **snapshot** `tax_rate_bps` vào từng item gửi sang `order-service` (lưu ở `order_items`) tại thời điểm đặt hàng. Admin đổi thuế suất danh mục về sau **không** hồi tố đơn cũ — hoá đơn đã phát hành phải bất biến.
 - Thiếu `tax_rate_bps` trong response (product cũ chưa migrate) → coi như `0`, ghi log cảnh báo, **không** chặn checkout. Chặn đặt hàng vì thiếu cấu hình thuế là đánh đổi sai.
 - Giá đã gồm VAT nên thuế **không** cộng thêm vào `grand_total`; xem §3.2 bước 4.
+
+### 6.4 Contract — giá và trạng thái SKU từ Product Catalog
+
+Batch `GET /products?product_ids=` của Catalog chỉ trả **thẻ sản phẩm**, không có `skus[]` (đã kiểm code `ProductCardDto`, `Product-Catalog-Service@develop` `6572ece`). Giá ở thẻ là giá của product, không phải giá riêng từng SKU, nên **không dùng để chốt tiền**.
+
+Checkout gọi `GET /products/{productId}` (`product-catalog-docs/docs/api/product-catalog.md` §3.1, đã có code) cho **mỗi `product_id` khác nhau** trong các item được chọn, song song tối đa `PRODUCT_DETAIL_CONCURRENCY`, không cache ở bước place. Không đổi contract Catalog.
+
+| Field Checkout cần | Lấy từ `ProductDetail` | Ghi chú |
+|---|---|---|
+| Product còn bán | `status = ACTIVE`; `404 PRODUCT_NOT_FOUND` = không còn public | Không đạt → `409 CHECKOUT_PRODUCT_UNAVAILABLE`. |
+| SKU còn bán | `skus[]` có `sku_id` của item | Catalog chỉ trả SKU active; thiếu SKU → `409 CHECKOUT_PRODUCT_UNAVAILABLE`. |
+| Đơn giá | `skus[].price.sale_price` | Catalog đã áp `price_override` của SKU (code `CatalogQueryService`); `≤ 0` → coi như SKU không bán được. Khác `unit_price_snapshot` của cart → warning/`409 CHECKOUT_PRICE_CHANGED` như hiện tại. |
+| Nhãn biến thể | `skus[].attributes` (ghép `label` từ `attributes[]` của product) | Thành `variant_label_snapshot`. |
+| Mã SKU seller | `skus[].seller_sku` | Thành `seller_sku_snapshot`. |
+| Thuế suất | `tax_rate_bps` | §6.3. |
+
+Endpoint batch theo SKU ở Catalog là tối ưu để sau, không chặn v1.
 
 
 ## 7. Mã lỗi
@@ -398,6 +422,7 @@ Quy tắc:
 | `CHECKOUT_VOUCHER_LIMIT_REACHED` | 409 | Hết lượt dùng. |
 | `CHECKOUT_ADDRESS_INVALID` | 400 | Địa chỉ không thuộc buyer/sai. |
 | `CHECKOUT_GROUP_NOT_FOUND` | 404 | Recalculate với group không tồn tại. |
+| `CHECKOUT_IN_PROGRESS` | 409 | Retry `POST /checkout` khi group còn `RECONCILING` (§3.5). |
 | `CHECKOUT_IDEMPOTENCY_CONFLICT` | 409 | Key dùng lại với payload khác. |
 | `CHECKOUT_DEPENDENCY_UNAVAILABLE` | 503 | Cart/Product/Inventory/Shipment/Order/Auth timeout hoặc down. |
 | `CHECKOUT_INTERNAL_ERROR` | 500 | Lỗi chưa phân loại. |

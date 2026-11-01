@@ -8,8 +8,8 @@ Tài liệu này là **tổng quan** test của Checkout Service và case checko
 
 | Tài liệu | Case ID | ID cũ (Order-Commerce) |
 |---|---|---|
-| `checkout.md` | `CO-API-01..09`, `CO-INT-01..04`, `CO-CALC-01..15` | `O-API-05..10`, `O-API-21`, `O-INT-02`, `O-INT-06`, `O-CALC-01..15` |
-| `voucher.md` | `VCH-API-01..09`, `VCH-RECALC-01..06`, `VCH-HOLD-01..02` | `O-API-04..04e`, `O-API-18..20`, `O-VCAN-01..05` |
+| `checkout.md` | `CO-API-01..09`, `CO-INT-01..06`, `CO-CALC-01..15` | `O-API-05..10`, `O-API-21`, `O-INT-02`, `O-INT-06`, `O-CALC-01..15` |
+| `voucher.md` | `VCH-API-01..12`, `VCH-RECALC-01..08`, `VCH-HOLD-01..02` | `O-API-04..04e`, `O-API-18..20`, `O-VCAN-01..05` |
 
 ## 1. Chuẩn bị
 
@@ -49,10 +49,12 @@ Tài liệu này là **tổng quan** test của Checkout Service và case checko
 
 | ID | Case | Expected |
 |---|---|---|
-| CO-INT-01 | Reserve thành công, `order-service` trả 4xx | Release reservation, nhả voucher, group `FAILED`, không đơn mồ côi. |
-| CO-INT-02 | `order-service` timeout, đơn thực ra đã tạo | Group `RECONCILING`; job thấy đơn qua `GET /internal/orders?checkout_group_id=` → `ORDERS_CREATED`, redemption `REDEEMED`. |
-| CO-INT-03 | `order-service` timeout, đơn không tạo, quá TTL | Release reservation + voucher, group `FAILED`. |
+| CO-INT-01 | Reserve thành công, `order-service` trả 4xx | Release mọi reservation của group, nhả voucher, group `FAILED`, không đơn mồ côi. |
+| CO-INT-02 | `order-service` timeout, đơn thực ra đã tạo | Group `RECONCILING`; job gọi lại `POST /internal/orders` cùng key → nhận response đã lưu (có `payment_next_action`) → `ORDERS_CREATED`, redemption `REDEEMED`; buyer retry `POST /checkout` nhận đúng response đó. |
+| CO-INT-03 | `order-service` timeout, đơn không tạo, quá TTL | `GET /internal/orders?checkout_group_id=` trả `orders=[]` → release mọi reservation + voucher, group `FAILED`. |
 | CO-INT-04 | `cart-service` down sau khi tạo đơn | Response `201` bình thường; job `checked-out` retry tới khi xong. |
+| CO-INT-05 | Giỏ 2 shop, reserve shop A thành công, shop B hết hàng | Mỗi shop một lời gọi reserve (`order_intent_id = order_id`); release reservation shop A, nhả voucher, `409 CHECKOUT_STOCK_UNAVAILABLE`. Thành công thì `orders[].reservation_id` khác nhau. |
+| CO-INT-06 | Buyer retry `POST /checkout` cùng key khi group `RECONCILING` | `409 CHECKOUT_IN_PROGRESS`; không tạo group/reservation mới. |
 
 ### 3.2 Golden test phép tính tiền *(bắt buộc — đây là nghiệp vụ lõi)*
 
@@ -65,7 +67,7 @@ Mọi case dưới đây là **số cụ thể**, không phải mô tả. Cài �
 | CO-CALC-03 | Phần dư chia không hết (3 shop, platform 100k, base chia lẻ) | Phần dư 1–2 VND rơi vào shop có phần thập phân lớn nhất; bằng nhau thì `shop_id` nhỏ hơn. Chạy 2 lần ra **cùng** kết quả |
 | CO-CALC-04 | `PERCENT` 8% có `max_discount_amount=1.000.000`, đơn 50 triệu | Giảm đúng `1.000.000`, **không** phải 4.000.000 |
 | CO-CALC-05 | `PERCENT` 8% không trần (`max_discount_amount=null`), đơn 50 triệu | Giảm `4.000.000` |
-| CO-CALC-06 | `FIXED` 300k áp lên shop có subtotal 200k | Giảm `200.000`, không âm; `grand_total_s >= 0` |
+| CO-CALC-06 | `FIXED` 300k áp lên shop có subtotal 200k | Giảm `199.999` (trần `subtotal_s − 1`), tiền hàng còn `1`; `grand_total_s >= 1` |
 | CO-CALC-07 | `FREESHIP` 100k, tổng ship 60k | Giảm `60.000`, không phải 100k; ship không âm |
 | CO-CALC-08 | Thứ tự áp dụng | Platform `min_order` kiểm trên `Σ(subtotal_s − shop_discount_s)`, **không** trên subtotal gốc. Voucher platform `min_order=1tr` + giỏ 1.2tr + shop voucher 300k → base 900k → **không** đủ điều kiện |
 | CO-CALC-09 | Thuế 10%, tiền hàng sau giảm 1.062.000 | `tax = 96.545` (làm tròn nửa lên); `grand_total` **không đổi** khi thuế thay đổi |

@@ -26,7 +26,7 @@ Package `com.taca.checkout.voucher` trong cây module ở `checkout.md` §2. ⏳
 
 - Voucher scope `PLATFORM`, `SHOP` hoặc `FREESHIP`; kiểm scope trước khi split đơn.
 - **Discovery vs validate là hai đường khác nhau.** `GET /vouchers` liệt kê voucher buyer đang dùng được (HLD #23 "choose ... voucher"), `GET /vouchers/validate` kiểm một mã cụ thể. Cả hai chỉ **đọc**, không giữ lượt, không tăng `used_count`; cùng bộ mã lý do không hợp lệ.
-- `GET /vouchers` gọi được **không cần đăng nhập** (PDP/Shop voucher strip); không có JWT thì `eligible` trả `null`. Có JWT + `cart_id` mới tính `eligible`/`discount_amount` (Checkout đọc giỏ qua `cart-service`).
+- `GET /vouchers` gọi được **không cần đăng nhập** (PDP/Shop voucher strip); không có JWT thì `eligible` trả `null`. Có JWT + `cart_id` mới tính `eligible`/`discount_amount` (Checkout đọc giỏ qua `cart-service` `GET /internal/carts/{buyerUserId}`, truyền `item_ids` nếu buyer gửi, bỏ trống thì đọc cả giỏ). `validate` cũng đọc giỏ như vậy.
 - `GET /vouchers/redemptions` đọc `voucher_redemptions` của buyer với `status = REDEEMED`; redemption đã `RELEASED` (đơn huỷ/voucher bị gỡ) không tính vào `total_saved`. Không cần đọc dữ liệu của `order-service`.
 - Voucher v1 chỉ áp theo **mã** + `min_order`/thời gian/`usage_limit`; `PERCENT` 1–100, `FIXED` VND, `FREESHIP` VND hoặc phần trăm phí ship. Không có audience/targeting; các màn Penpot Seller "Voucher audience / Selected users / Tab followers / Import user IDs / Create targeted voucher" là **ngoài v1**.
 
@@ -42,7 +42,8 @@ Một lần checkout áp được **tối đa 3 loại voucher cùng lúc**, m�
 
 Ràng buộc:
 
-- **Không** cộng dồn hai mã cùng `scope`. Gửi 2 mã `PLATFORM` → `400 CHECKOUT_VOUCHER_SLOT_CONFLICT`.
+- Checkout nhận `voucher_ids`, không nhận mã: `code` chỉ unique trong `(scope, shop_id)` (`docs/db/voucher.md` §4), nên một mã có thể khớp nhiều voucher. Mã nhập tay được đổi sang `voucher_id` qua `GET /vouchers/validate` (trả `AMBIGUOUS_CODE` + `candidates[]` khi khớp nhiều).
+- **Không** cộng dồn hai voucher cùng `scope`. Gửi 2 voucher `PLATFORM` → `400 CHECKOUT_VOUCHER_SLOT_CONFLICT`.
 - Giỏ 3 shop có thể dùng 3 mã `SHOP` khác nhau — mỗi mã chỉ ăn vào shop của nó.
 - Mã `SHOP` gửi kèm mà giỏ không có shop tương ứng → mã đó bị bỏ qua, trả `warning VOUCHER_NOT_APPLICABLE`, **không** chặn đặt hàng.
 - Thứ tự áp dụng cố định (shop → platform → freeship) — xem `checkout.md` §3.2. Đổi thứ tự sẽ ra số khác vì `min_order` của platform tính trên phần đã trừ shop voucher.
@@ -84,6 +85,7 @@ recalculate gỡ voucher / huỷ đơn có mã SHOP / huỷ cả nhóm → RELEA
 |---|---:|---|---|
 | `VOUCHER_CODE_MAX_LENGTH` | 32 | — | Normalize uppercase/trim trước khi so. |
 | `VOUCHER_EXPIRING_SOON_WINDOW` | 7 ngày | — | Filter `status=EXPIRING_SOON` của `GET /vouchers`. |
+| `VOUCHER_EXPIRED_LOOKBACK` | 30 ngày | — | Filter `status=EXPIRED` của `GET /vouchers` chỉ trả voucher hết hạn trong khoảng này. |
 | `PERCENT` value | 1–100 | — | `max_discount_amount` `null` = không trần. |
 | `VOUCHER_PER_USER_LIMIT` | 1 | — | Mỗi buyer dùng mỗi voucher tối đa 1 lần (đếm redemption `HELD`/`REDEEMED`). |
 
@@ -92,7 +94,7 @@ recalculate gỡ voucher / huỷ đơn có mã SHOP / huỷ cả nhóm → RELEA
 | Enum | Giá trị |
 |---|---|
 | `VoucherStatus` | `DRAFT`, `ACTIVE`, `INACTIVE`, `EXPIRED`, `ARCHIVED`. |
-| `DiscountType` | `PERCENT`, `FIXED`, `FREESHIP`. `FREESHIP` chỉ áp lên phí ship; `PERCENT`/`FIXED` chỉ áp lên tiền hàng. |
+| `DiscountType` | `PERCENT`, `FIXED`, `FREESHIP`. Tổ hợp hợp lệ (nguồn chuẩn, khớp `docs/db/voucher.md` §3 và công thức `checkout.md` §3.2): `scope=SHOP`/`PLATFORM` nhận `PERCENT`/`FIXED`, áp lên tiền hàng; `scope=FREESHIP` nhận `FREESHIP` (VND) hoặc `PERCENT` (phần trăm phí ship, có `max_discount_amount`), áp lên phí ship. Tổ hợp khác → `400 CHECKOUT_VOUCHER_INVALID` khi tạo/sửa. |
 | `VoucherScope` | `PLATFORM`, `SHOP`, `FREESHIP`. Vừa là phạm vi áp dụng vừa là **slot cộng dồn**: tối đa 1 mã mỗi scope (`SHOP` là 1 mã **mỗi shop**). |
 | `RedemptionStatus` | `HELD`, `REDEEMED`, `RELEASED` (§3.4). |
 | `AdjustmentType` | `REALLOCATED`, `VOUCHER_REMOVED`, `VOUCHER_ADJUSTMENT_ABSORBED`, `GROUP_CANCELLED`. |

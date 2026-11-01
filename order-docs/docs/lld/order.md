@@ -146,16 +146,16 @@ Ràng buộc bổ sung:
    ```
 
    `orders[].amount = grand_total` của đơn con, `orders[].shipping_fee = shipping_fee − freeship_discount`, `amount = Σ`. Checkout đã bảo đảm `amount > 0` và `shipping_fee < amount` (`checkout-docs/docs/lld/checkout.md` §3.2). Payment lỗi → lưu `payment_id = null`, trả `payment_next_action.type = RETRY_LATER`; job retry tạo payment với cùng key, đơn VNPAY vẫn bị huỷ nếu quá hạn.
-4. COD: gọi Inventory `POST /internal/inventory/reservations/{reservationId}/commit` ngay. Lỗi → retry nền (idempotent); đơn vẫn `CONFIRMED`.
+4. COD: gọi Inventory `POST /internal/inventory/reservations/{reservationId}/commit` ngay cho reservation **của từng đơn** (`body.order_id` = đơn đó). Lỗi → retry nền (idempotent); đơn vẫn `CONFIRMED`.
 5. Trả `orders[]` (id, `order_number`, status, payment status), `payment_next_action`, `reservation_expires_at`.
 
 ### 3.3 Huỷ đơn và tính lại voucher
 
 1. Buyer (`PATCH /orders/{id}/cancel`), seller (`POST /seller/orders/{id}/cancel`) hoặc hệ thống (`payment.expired`, timeout) huỷ theo state machine §3.1.
 2. MySQL transaction: `status=CANCELLED`, `order_status_history`, outbox `order.cancelled`, tạo `voucher_recalc_requests` (`PENDING`) nếu đơn có `checkout_group_id`.
-3. Compensation sau commit: Inventory `release`; VNPAY đã capture → Payment `POST /api/v1/payments/{paymentId}/refunds`; shipment còn `CREATED` → Shipment tự huỷ khi nhận `order.cancelled` (consumer đã có code).
+3. Compensation sau commit: Inventory `release` reservation của chính đơn bị huỷ (mỗi đơn một reservation, không ảnh hưởng đơn khác trong group); VNPAY đã capture → Payment `POST /api/v1/payments/{paymentId}/refunds`; shipment còn `CREATED` → Shipment tự huỷ khi nhận `order.cancelled` (consumer đã có code).
 4. `VoucherRecalcJob` gọi `checkout-service` `POST /internal/checkout-groups/{checkoutGroupId}/recalculate` (Idempotency-Key `cancel-{order_id}`) với `cancelled_order_ids` và `remaining_orders[]` kèm `payment_captured` (= `payment_status = SUCCESS`).
-5. Áp kết quả lên các đơn còn lại: cập nhật `amounts`, `order_vouchers`, `grand_total` (chỉ đơn chưa thu tiền), ghi `order_status_history` loại `AMOUNT_ADJUSTED`. Đơn đã thu tiền giữ `grand_total`, ghi `absorbed_amount` vào audit.
+5. Áp kết quả lên các đơn còn lại: cập nhật `amounts`, `order_vouchers`, `order_items.discount_allocated`/`tax_amount` theo `items[].order_item_id`, `grand_total` (chỉ đơn chưa thu tiền), ghi `order_status_history` loại `AMOUNT_ADJUSTED`. Đơn đã thu tiền giữ `grand_total` và lưu `absorbed_amount`, nên bất biến `grand_total = subtotal − discount + shipping_fee − freeship_discount − absorbed_amount` vẫn đúng (`docs/db/order.md` §3.1).
 6. Checkout down → request giữ `PENDING`, retry backoff; không chặn việc huỷ.
 
 ### 3.4 Fulfill và shipment

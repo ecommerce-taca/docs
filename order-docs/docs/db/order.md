@@ -44,13 +44,13 @@ Không còn bảng giỏ hay `vouchers`/`voucher_redemptions` (đã sang `cart-s
 | `shop_id` | BINARY(16) | N | — |
 | `shop_name_snapshot` | VARCHAR(255) | N | — |
 | `status` | VARCHAR(32) | N | `OrderStatus`. |
-| `subtotal`, `shop_discount`, `platform_discount`, `shipping_fee`, `freeship_discount`, `discount`, `tax`, `grand_total` | BIGINT | N | `≥0`; `discount = shop_discount + platform_discount`; `grand_total = subtotal − discount + shipping_fee − freeship_discount ≥ 1`. |
+| `subtotal`, `shop_discount`, `platform_discount`, `shipping_fee`, `freeship_discount`, `discount`, `tax`, `grand_total` | BIGINT | N | `≥0`; `discount = shop_discount + platform_discount`; `grand_total = subtotal − discount + shipping_fee − freeship_discount − absorbed_amount` (`absorbed_amount` = 0 trừ khi đơn đã thu tiền bị gỡ voucher sau recalculate); `grand_total ≥ 1`. |
 | `absorbed_amount` | BIGINT | N | Mặc định 0; phần sàn chịu sau recalculate khi đơn đã thu tiền. |
 | `payment_method` | VARCHAR(16) | N | `VNPAY`/`COD`. |
 | `payment_status` | VARCHAR(32) | N | `PaymentStatusProjection`. |
 | `payment_id` | BINARY(16) | Y | Payment-Wallet reference; `null` khi tạo payment lỗi. |
 | `address_snapshot` | JSON | N | Không log raw. |
-| `reservation_id` | BINARY(16) | Y | Inventory reference. |
+| `reservation_id` | BINARY(16) | Y | Inventory reference, riêng cho từng đơn (không dùng chung trong group). |
 | `shipment_id`, `shipment_status`, `carrier`, `tracking_code` | — | Y | Shipment projection. |
 | `cancellation_reason` | VARCHAR(32) | Y | `CancellationReason`. |
 | `created_at/placed_at/updated_at/delivered_at` | DATETIME(6) | N/Y | UTC. |
@@ -58,13 +58,13 @@ Không còn bảng giỏ hay `vouchers`/`voucher_redemptions` (đã sang `cart-s
 
 ### 3.2 `order_items`
 
-`id`, `order_id`, `product_id`, `sku_id`, `shop_id`, `title_snapshot`, `variant_label_snapshot`, `seller_sku_snapshot`, `unit_price`, `quantity`, `line_total`, `tax_rate_bps`, `tax_amount`, `discount_allocated`, `created_at`. Quantity 1–999; `line_total = unit_price × quantity`.
+`id` (= `order_item_id` do Checkout sinh), `order_id`, `product_id`, `sku_id`, `shop_id`, `title_snapshot`, `variant_label_snapshot`, `seller_sku_snapshot`, `unit_price`, `quantity`, `line_total`, `tax_rate_bps`, `tax_amount`, `discount_allocated`, `created_at`. Quantity 1–999; `line_total = unit_price × quantity`.
 
 | Field | Kiểu | Ý nghĩa |
 |---|---|---|
 | `tax_rate_bps` | INT | Thuế suất snapshot tại checkout (10% = `1000`), bất biến. Nguồn: `checkout-docs/docs/lld/checkout.md` §6.3. |
 | `tax_amount` | BIGINT | VAT **đã nằm trong** `line_total`, tách ra để ghi hoá đơn; không cộng vào `grand_total`. |
-| `discount_allocated` | BIGINT | Giảm shop + platform phân bổ về dòng này (Checkout tính). |
+| `discount_allocated` | BIGINT | Giảm shop + platform phân bổ về dòng này (Checkout tính). Recalculate ghi đè cùng `tax_amount` theo `items[]` của response. |
 
 ### 3.3 `order_vouchers`
 

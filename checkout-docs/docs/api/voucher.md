@@ -30,7 +30,7 @@ Số thứ tự theo bảng tổng ở `docs/api/checkout.md` §2.
 
 ## 3. Chi tiết endpoint
 
-### 3.1 `GET /vouchers/validate?code=&cart_id=`
+### 3.1 `GET /vouchers/validate?code=&cart_id=&shop_id=&item_ids=`
 
 Preview áp mã trên cart hiện tại. **Không** giữ chỗ voucher; `usage_limit`/redemption được kiểm tra lại (và tăng) trong `POST /checkout`.
 
@@ -38,11 +38,16 @@ Preview áp mã trên cart hiện tại. **Không** giữ chỗ voucher; `usage_
 |---|---|---|---|
 | `code` | string | Có | 1–32 ký tự, normalize uppercase/trim trước khi so |
 | `cart_id` | string (UUIDv7) | Có | Phải thuộc buyer trong token |
+| `shop_id` | string (UUIDv7) | Không | Chỉ tìm voucher `SHOP` của shop này. Dùng khi buyer nhập mã trong khung voucher của một shop. |
+| `item_ids` | string (CSV) | Không | Item buyer đang chọn (1–100). Bỏ trống = cả giỏ. |
+
+Mã được tìm trong các voucher `ACTIVE` khớp `code` thuộc: `SHOP` của các shop có trong phần giỏ đang xét (hoặc đúng `shop_id`), `PLATFORM`, `FREESHIP`. Đúng một voucher khớp → trả voucher đó kèm `voucher_id`. Nhiều voucher khớp (vd hai shop trong giỏ cùng có `SAVE10`) → `valid:false`, `reason=AMBIGUOUS_CODE` và `candidates[]` gồm `{voucher_id, scope, shop_id, title}` để UI cho buyer chọn.
 
 ```json
 {
   "data": {
     "valid": true,
+    "voucher_id": "vch-01912fc3",
     "code": "SHOP10",
     "scope": "SHOP",
     "shop_id": "shop-01912f31",
@@ -58,7 +63,7 @@ Preview áp mã trên cart hiện tại. **Không** giữ chỗ voucher; `usage_
 }
 ```
 
-Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOUND`/`EXPIRED`/`MIN_ORDER_NOT_MET`/`USAGE_LIMIT_REACHED`/`SCOPE_MISMATCH`/`ALREADY_USED`) để UI hiển thị — **không** dùng `404` cho mã sai (tránh dò mã).
+Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOUND`/`EXPIRED`/`MIN_ORDER_NOT_MET`/`USAGE_LIMIT_REACHED`/`SCOPE_MISMATCH`/`ALREADY_USED`/`AMBIGUOUS_CODE`) để UI hiển thị — **không** dùng `404` cho mã sai (tránh dò mã).
 
 ### 3.2 `GET /vouchers` — danh sách voucher khả dụng
 
@@ -70,6 +75,7 @@ Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOU
 | `shop_id` | string (UUIDv7) | Không | Lọc voucher của một shop — dùng cho `Shop / Voucher strip` |
 | `product_id` | string (UUIDv7) | Không | Voucher áp được cho sản phẩm — dùng cho `PDP / Voucher strip` |
 | `cart_id` | string (UUIDv7) | Không | Có thì server tính `eligible` + `discount_amount` theo giỏ hiện tại |
+| `item_ids` | string (CSV) | Không | Chỉ dùng cùng `cart_id`: tính theo các item buyer đang chọn (1–100). Bỏ trống = cả giỏ. |
 | `status` | enum | Không | `AVAILABLE` (mặc định) \| `EXPIRING_SOON` \| `EXPIRED` |
 | `page`, `size` | int | Không | `size` mặc định 20, max 100 |
 
@@ -77,6 +83,7 @@ Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOU
 {
   "data": [
     {
+      "voucher_id": "vch-01912fc7",
       "code": "TACA200K",
       "scope": "PLATFORM",
       "shop_id": null,
@@ -93,6 +100,7 @@ Mã không hợp lệ vẫn trả `200` với `valid:false` + `reason` (`NOT_FOU
       "discount_amount": 200000
     },
     {
+      "voucher_id": "vch-01912fd2",
       "code": "TACA9SALE",
       "scope": "PLATFORM",
       "shop_id": null,
@@ -117,7 +125,9 @@ Quy tắc:
 
 - `eligible`/`discount_amount` **chỉ có nghĩa khi truyền `cart_id`**; không truyền thì `eligible` trả `null` và UI chỉ hiển thị điều kiện.
 - `ineligible_reason` dùng đúng bộ mã của `validate`: `EXPIRED`, `MIN_ORDER_NOT_MET`, `USAGE_LIMIT_REACHED`, `SCOPE_MISMATCH`, `ALREADY_USED`. Đây là nguồn cho trạng thái `Voucher option / TACA9SALE disabled` trên Penpot.
-- Chỉ trả voucher `status=ACTIVE` và còn trong cửa sổ thời gian; voucher `DRAFT`/`ARCHIVED` không bao giờ lộ ra buyer.
+- `status=AVAILABLE`/`EXPIRING_SOON`: chỉ trả voucher `status=ACTIVE` và còn trong cửa sổ thời gian.
+- `status=EXPIRED` (ngoại lệ duy nhất của quy tắc trên): trả voucher đã hết hạn trong `VOUCHER_EXPIRED_LOOKBACK` (30 ngày) gần nhất, tức `expires_at` đã qua hoặc `VoucherStatus=EXPIRED`; luôn `eligible=false`, `ineligible_reason=EXPIRED`, `discount_amount=0`. Phục vụ tab "Hết hạn" của My Vouchers.
+- Voucher `DRAFT`/`INACTIVE`/`ARCHIVED` không bao giờ lộ ra buyer, kể cả với `status=EXPIRED`.
 - Endpoint này **không** giữ chỗ và **không** tăng `used_count`; redemption vẫn chốt ở `POST /checkout`.
 - `EXPIRING_SOON` = hết hạn trong 7 ngày; phục vụ metric `Voucher metric / Sắp hết hạn`.
 

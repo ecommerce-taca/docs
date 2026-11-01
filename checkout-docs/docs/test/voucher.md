@@ -30,6 +30,9 @@ Theo `docs/test/checkout.md` §1.
 | VCH-API-07 | Seller CRUD; seller thử tạo `PLATFORM` | Shop voucher OK; `scope` luôn `SHOP`; trùng code → `409 CHECKOUT_VOUCHER_CODE_EXISTS`; đổi code khi `used_count>0` → `409 CHECKOUT_VOUCHER_CODE_LOCKED`. |
 | VCH-API-08 | `POST/PUT/DELETE /admin/vouchers` có/không `VOUCHER_MANAGE`, có/không step-up | Có quyền → OK; không → `403 CHECKOUT_FORBIDDEN`. `scope=SHOP` → `400`. |
 | VCH-API-09 | Body có field audience/segment | Bị bỏ qua hoặc `400`; v1 không targeting. |
+| VCH-API-10 | `validate?code=SAVE10` khi 2 shop trong giỏ cùng có `SAVE10` | `valid=false`, `reason=AMBIGUOUS_CODE`, `candidates[]` 2 phần tử; thêm `shop_id` → đúng 1 voucher kèm `voucher_id`. `POST /checkout` với `voucher_ids` của cả hai → mỗi mã áp đúng shop của nó. |
+| VCH-API-11 | `GET /vouchers?status=EXPIRED` | Chỉ voucher hết hạn ≤30 ngày; `eligible=false`, `ineligible_reason=EXPIRED`; không lộ `DRAFT`/`ARCHIVED`. |
+| VCH-API-12 | Tạo voucher `scope=FREESHIP` + `PERCENT` 50%, `max_discount_amount` 20k, ship 60k | Tạo OK; checkout giảm ship `20.000`. `scope=SHOP` + `FREESHIP` → `400 CHECKOUT_VOUCHER_INVALID`. |
 
 ### 3.1 Vòng đời lượt dùng và tính lại khi huỷ
 
@@ -41,6 +44,8 @@ Theo `docs/test/checkout.md` §1.
 | VCH-RECALC-04 | Huỷ cả nhóm | Mọi voucher `RELEASED`; `used_count` về giá trị trước checkout. |
 | VCH-RECALC-05 | Gọi lại recalculate cùng `Idempotency-Key` | Cùng response, không nhả `used_count` hai lần. |
 | VCH-RECALC-06 | Đơn bị huỷ có mã `SHOP` | Mã đó `RELEASED`, mã của shop khác không đổi. |
+| VCH-RECALC-07 | Đơn còn lại có 2 dòng thuế suất khác nhau (10% và 5%), voucher bị gỡ | Tính lại từ `checkout_group_items`; `items[]` trả đủ 2 dòng với `discount_allocated`/`tax_amount` mới; `Σ items[].tax_amount = amounts.tax`. |
+| VCH-RECALC-08 | Ví dụ `docs/api/checkout.md` §3.4 | `items[]` = `187.500/28.409` và `112.500/17.045`; `tax = 45.454`. |
 | VCH-HOLD-01 | 2 buyer đồng thời dùng voucher còn 1 lượt | Đúng 1 người `HELD`; người kia `409 CHECKOUT_VOUCHER_LIMIT_REACHED`. |
 | VCH-HOLD-02 | Reserve kho thất bại sau khi giữ lượt | Redemption `RELEASED`, `used_count` trả lại. |
 

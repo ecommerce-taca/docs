@@ -22,6 +22,7 @@ Tài liệu này là **tổng quan** DB của Checkout Service: quy ước, quan
 ```mermaid
 erDiagram
     CHECKOUT_GROUPS ||--o{ CHECKOUT_GROUP_ORDERS : splits
+    CHECKOUT_GROUP_ORDERS ||--o{ CHECKOUT_GROUP_ITEMS : contains
     CHECKOUT_GROUPS ||--o{ VOUCHER_REDEMPTIONS : holds
     VOUCHERS ||--o{ VOUCHER_REDEMPTIONS : redeemed
     CHECKOUT_GROUPS ||--o{ VOUCHER_ADJUSTMENTS : audits
@@ -42,8 +43,7 @@ erDiagram
 | `idempotency_key` | VARCHAR(128) | N | Key của `POST /checkout`. |
 | `payment_method` | VARCHAR(16) | N | `VNPAY`/`COD`. |
 | `status` | VARCHAR(16) | N | `CheckoutGroupStatus`. |
-| `reservation_id` | BINARY(16) | Y | Inventory reference, có sau bước reserve. |
-| `voucher_codes` | JSON | N | Mã buyer gửi (đã normalize). |
+| `voucher_ids` | JSON | N | `voucher_id` buyer gửi trong `POST /checkout`. |
 | `grand_total` | BIGINT | N | Tổng nhóm tại lúc place. |
 | `failure_reason` | VARCHAR(64) | Y | Mã lỗi khi `FAILED`. |
 | `created_at/updated_at` | DATETIME(6) | N | UTC. |
@@ -58,9 +58,25 @@ Số tiền phân bổ của từng đơn con tại lúc place, dùng làm đầ
 | `checkout_group_id` | BINARY(16) | N | FK → `checkout_groups`. |
 | `order_id` | BINARY(16) | N | Checkout sinh trước khi gọi `order-service`; PK cùng `checkout_group_id`. |
 | `shop_id` | BINARY(16) | N | — |
-| `subtotal`, `shop_discount`, `platform_discount`, `shipping_fee`, `freeship_discount`, `tax`, `grand_total` | BIGINT | N | `≥0`; `grand_total = subtotal − shop_discount − platform_discount + shipping_fee − freeship_discount`. |
+| `reservation_id` | BINARY(16) | Y | Inventory reference, có sau bước reserve. **Mỗi đơn con một reservation** (`docs/lld/checkout.md` §6.1). |
+| `subtotal`, `shop_discount`, `platform_discount`, `shipping_fee`, `freeship_discount`, `tax`, `grand_total`, `absorbed_amount` | BIGINT | N | `≥0`; `absorbed_amount` mặc định 0; `grand_total = subtotal − shop_discount − platform_discount + shipping_fee − freeship_discount − absorbed_amount`. |
 | `status` | VARCHAR(16) | N | `ACTIVE`/`CANCELLED`. |
 | `updated_at` | DATETIME(6) | N | UTC. |
+
+### 3.2a `checkout_group_items`
+
+Snapshot **bất biến** từng dòng hàng lúc place. Recalculate cần nó để chạy lại `CheckoutCalculator` theo dòng (thuế suất có thể khác nhau giữa các dòng) và trả phân bổ mới về từng dòng cho `order-service`.
+
+| Cột | Type | Null | Ràng buộc |
+|---|---|---:|---|
+| `order_item_id` | BINARY(16) | N | PK. Checkout sinh trước (UUIDv7) và gửi sang `order-service`; `order_items.id` dùng đúng giá trị này. |
+| `checkout_group_id` | BINARY(16) | N | FK → `checkout_groups`. |
+| `order_id` | BINARY(16) | N | FK `(checkout_group_id, order_id)` → `checkout_group_orders`. |
+| `product_id`, `sku_id` | BINARY(16) | N | Reference Product Catalog. |
+| `unit_price` | BIGINT | N | `≥1`, giá đã gồm VAT tại lúc place. |
+| `quantity` | INT | N | 1–999. |
+| `tax_rate_bps` | INT | N | Snapshot từ Product Catalog (`docs/lld/checkout.md` §6.3). |
+| `discount_allocated`, `tax_amount` | BIGINT | N | Kết quả tính hiện hành của dòng; recalculate ghi đè. |
 
 ### 3.3 Bảng voucher
 
@@ -79,6 +95,7 @@ Số tiền phân bổ của từng đơn con tại lúc place, dùng làm đầ
 |---|---|
 | `checkout_groups` | unique `(buyer_user_id, idempotency_key)`; `(status, updated_at)` cho job reconcile. |
 | `checkout_group_orders` | PK `(checkout_group_id, order_id)`; unique `order_id`. |
+| `checkout_group_items` | PK `order_item_id`; `(checkout_group_id, order_id)`. |
 | `outbox_events` | `(published_at, occurred_at)`; `(aggregate_type, aggregate_id, occurred_at)` |
 | `idempotency_keys` | PK `(key,user_id,operation)`; `expires_at` |
 
@@ -99,7 +116,7 @@ Index bảng voucher ở `docs/db/voucher.md` §4.
 | 001 | Tạo database `checkoutdb`, charset/collation | — |
 | 002 | Tạo `vouchers` (unique normalized `code` theo scope/shop) | — |
 | 003 | Tạo `checkout_groups` | — |
-| 004 | Tạo `checkout_group_orders`, FK → `checkout_groups` | `checkout_groups` |
+| 004 | Tạo `checkout_group_orders`, FK → `checkout_groups`; tạo `checkout_group_items`, FK → `checkout_group_orders` | `checkout_groups` |
 | 005 | Tạo `voucher_redemptions`, FK → `vouchers`, `checkout_groups` | 002, 003 |
 | 006 | Tạo `voucher_adjustments`, FK → `checkout_groups` | 003 |
 | 007 | Tạo `outbox_events` | — |
