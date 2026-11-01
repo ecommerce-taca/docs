@@ -118,19 +118,21 @@ REST/WebSocket → authenticate → participant authorization
 
 ## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Ghi chú |
-|---|---:|---|
-| `MESSAGE_MAX_LENGTH` | 5000 | Unicode characters. |
-| `CONVERSATION_PARTICIPANT_MAX` | 20 | Support thread; buyer-seller baseline 2. |
-| `ATTACHMENT_MAX_COUNT` | 6 | Per message. |
-| `ATTACHMENT_MAX_SIZE` | 20 MiB | Image/document baseline. |
-| `MESSAGE_PAGE_SIZE_DEFAULT` | 50 | Max 100, cursor-based. |
-| `EDIT_WINDOW` | 15 phút | Baseline, cần confirm. |
-| `WEBSOCKET_IDLE_TIMEOUT` | 30 phút | Reconnect via REST cursor. |
-| `SOCKET_RATE_LIMIT` | 60 events/phút/connection | Bounded. |
-| `OUTBOX_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
-| `MEDIA_SIGNED_URL_TTL` | 10 phút | Private object. |
-| `TIMESTAMP_FORMAT` | UTC ISO-8601 | MongoDB Date. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| `MESSAGE_MAX_LENGTH` | 5000 | — | Unicode characters. |
+| `CONVERSATION_PARTICIPANT_MAX` | 20 | — | Support thread; buyer-seller baseline 2. |
+| `ATTACHMENT_MAX_COUNT` | 6 | — | Per message. |
+| `ATTACHMENT_MAX_SIZE` | 20 MiB | — | Image/document baseline. |
+| `MESSAGE_PAGE_SIZE_DEFAULT` | 50 | — | Max 100, cursor-based. |
+| `EDIT_WINDOW` | 15 phút | — | Baseline, cần confirm. |
+| `WEBSOCKET_IDLE_TIMEOUT` | 30 phút | — | Reconnect via REST cursor. |
+| `SOCKET_RATE_LIMIT` | 60 events/phút/connection | — | Bounded. |
+| `OUTBOX_RETRY_COUNT` | 3 | — | Backoff 2s rồi DLQ. |
+| `MEDIA_SIGNED_URL_TTL` | 10 phút | — | Private object. |
+| `TIMESTAMP_FORMAT` | UTC ISO-8601 | — | MongoDB Date. |
+
+Service chưa có code nên cột biến môi trường để `—`; khi triển khai, đặt tên env theo `CONTRACT-MATRIX.md` §8.
 
 ## 5. Enum & trạng thái
 

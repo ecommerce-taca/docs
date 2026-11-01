@@ -1,6 +1,6 @@
 # LLD — Search Service
 
-> Nguồn: `HighLevelDesign/HLD.md` · `FrontendDesign/Taca.penpot.zip` · Code: `ecommerce-taca/search-service` @ `develop` (`9750a2f`) · Cập nhật: `2026-10-31`
+> Nguồn: `HighLevelDesign/HLD.md` · `FrontendDesign/Taca.penpot.zip` · Code: `ecommerce-taca/search-service` @ `develop` (`13d36e3`) · Cập nhật: `2026-10-31`
 > Trạng thái triển khai: ✅ Đã triển khai — search, suggest, readiness, admin status/reindex/cancel, Kafka consumer 5 topic, DLQ; nhánh `main` mới chỉ có README, code nằm ở `develop`.
 > Tech stack: Node.js + NestJS 11 · `@elastic/elasticsearch` 8.15 · `kafkajs` · `nestjs-pino` · `prom-client` · Elasticsearch · Kafka consumer (domain event do CDC — Debezium MongoDB Outbox Event Router — đọc outbox collection của Product Catalog và publish) · REST qua API Gateway
 
@@ -127,40 +127,40 @@ Ràng buộc: `size` mặc định 20, tối đa 100; keyword tối đa 200 ký 
 
 ## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Ghi chú |
-|---|---:|---|
-| `PAGE_SIZE_DEFAULT` | 20 | `PAGE_SIZE_MAX=100`. |
-| `SUGGEST_LIMIT` | 10 | Max suggestion/request. |
-| `QUERY_MAX_LENGTH` | 200 | Unicode characters. |
-| `PREFIX_MAX_LENGTH` | 100 | Autocomplete. |
-| `ES_REQUEST_TIMEOUT` | 2s | Search request; trả 504 SEARCH_TIMEOUT khi quá hạn. |
-| `ES_BULK_BATCH_SIZE` | 500 | Max documents/bulk request. |
-| `ES_REFRESH_INTERVAL` | 1s | Không refresh từng document. |
-| `EVENT_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
-| `EVENT_MAX_LAG_ALERT` | 60s | Alert consumer lag. |
-| `INDEX_ALIAS` | `products-read` | Client không truyền index name. |
-| `MAPPING_VERSION` | 1 | Đổi mapping phải reindex. |
-| `INTERNAL_TIMEOUT` | 5s | Admin/reindex adapter; không dùng trong public query. |
-| `TIMESTAMP_FORMAT` | ISO-8601 UTC | Log/response/event metadata. |
-| `MAX_RESULT_WINDOW` | 10000 | `page × size` tối đa. |
-| `MAX_QUERY_ATTRIBUTE_KEYS` / `_VALUES_PER_KEY` | 10 / 20 | Filter `attribute[key]`; key ≤64, value ≤100 ký tự. |
-| `MAX_ATTRIBUTE_FACET_KEYS` / `_VALUES` | 10 / 30 | Facet attribute trả về. |
-| `MAX_PRICE_VALUE` | 1 000 000 000 000 | `min_price`/`max_price`. |
-| `PRICE_BUCKETS` | `lt_5m`, `5m_20m`, `gte_20m` | Facet giá cố định. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| `PAGE_SIZE_DEFAULT` | 20 | — | `PAGE_SIZE_MAX=100`. |
+| `SUGGEST_LIMIT` | 10 | — | Max suggestion/request. |
+| `QUERY_MAX_LENGTH` | 200 | — | Unicode characters. |
+| `PREFIX_MAX_LENGTH` | 100 | — | Autocomplete. |
+| `ES_REQUEST_TIMEOUT` | 2s | — | Search request; trả 504 SEARCH_TIMEOUT khi quá hạn. |
+| `ES_BULK_BATCH_SIZE` | 500 | — | Max documents/bulk request. |
+| `ES_REFRESH_INTERVAL` | 1s | — | Không refresh từng document. |
+| `EVENT_RETRY_COUNT` | 3 | — | Backoff 2s rồi DLQ. |
+| `EVENT_MAX_LAG_ALERT` | 60s | — | Alert consumer lag. |
+| `INDEX_ALIAS` | `products-read` | — | Client không truyền index name. |
+| `MAPPING_VERSION` | 1 | — | Đổi mapping phải reindex. |
+| `INTERNAL_TIMEOUT` | 5s | — | Admin/reindex adapter; không dùng trong public query. |
+| `TIMESTAMP_FORMAT` | ISO-8601 UTC | — | Log/response/event metadata. |
+| `MAX_RESULT_WINDOW` | 10000 | — | `page × size` tối đa. |
+| `MAX_QUERY_ATTRIBUTE_KEYS` / `_VALUES_PER_KEY` | 10 / 20 | — | Filter `attribute[key]`; key ≤64, value ≤100 ký tự. |
+| `MAX_ATTRIBUTE_FACET_KEYS` / `_VALUES` | 10 / 30 | — | Facet attribute trả về. |
+| `MAX_PRICE_VALUE` | 1 000 000 000 000 | — | `min_price`/`max_price`. |
+| `PRICE_BUCKETS` | `lt_5m`, `5m_20m`, `gte_20m` | — | Facet giá cố định. |
 
 Các hằng số trên ở `src/common/constants.ts` và `src/search-query/constants.ts`. Biến môi trường (`src/config/env.validation.ts`, thiếu biến bắt buộc → app không khởi động):
 
-| Biến | Mặc định | Ghi chú |
-|---|---|---|
-| `PORT` | `3000` | |
-| `SERVICE_NAME` | `search-service` | |
-| `APP_ENV` / `APP_VERSION` | `development` / `1.0.0` | Đưa vào log. |
-| `ES_NODE` | — (bắt buộc) | URL Elasticsearch. |
-| `ES_INDEX_PREFIX` | `""` | Tiền tố cho mọi index/alias. |
-| `KAFKA_BROKERS` | — (bắt buộc) | |
-| `KAFKA_CLIENT_ID` / `KAFKA_GROUP_ID` | `search-service` / `search-service-group` | Reindex `KAFKA_REPLAY` dùng group `search-reindex-<jobId>`. |
-| `KAFKA_TOPIC_PREFIX` | `""` | Tiền tố cho mọi topic. |
-| `KAFKA_CONSUMER_ENABLED` | `true` | |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| Port HTTP | `3000` | `PORT` | |
+| Tên service | `search-service` | `SERVICE_NAME` | |
+| Môi trường / phiên bản | `development` / `1.0.0` | `APP_ENV` / `APP_VERSION` | Đưa vào log. |
+| Elasticsearch | — (bắt buộc) | `ES_NODE` | URL Elasticsearch. |
+| Tiền tố index | `""` | `ES_INDEX_PREFIX` | Tiền tố cho mọi index/alias. |
+| Kafka broker | — (bắt buộc) | `KAFKA_BROKERS` | |
+| Kafka client / group | `search-service` / `search-service-group` | `KAFKA_CLIENT_ID` / `KAFKA_GROUP_ID` | Reindex `KAFKA_REPLAY` dùng group `search-reindex-<jobId>`. |
+| Tiền tố topic | `""` | `KAFKA_TOPIC_PREFIX` | Tiền tố cho mọi topic. |
+| Bật consumer | `true` | `KAFKA_CONSUMER_ENABLED` | |
 
 ## 5. Enum & trạng thái
 

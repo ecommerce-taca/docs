@@ -117,7 +117,7 @@ Chi tiết đầy đủ sẽ nằm ở `docs/db/auth-user.md`; LLD chỉ chốt 
 
 | Endpoint | Quyền | Kiểm tra |
 |---|---|---|
-| `GET /actuator/health` | Public (permitAll) | ✅ Path thật trong code: Spring Actuator, `show-details: never`. |
+| `GET /actuator/health` | Public (permitAll) | ✅ Path thật trong code: Spring Actuator, `show-details: never`. Trên K8s có thêm `/actuator/health/liveness`, `/actuator/health/readiness` (probe của manifest `deploy/k8s/dev`). |
 | `GET /health/live` | Internal/ops | ⏳ Chưa có. Thiết kế: process-only; Gateway active healthcheck gọi (`api-gateway-docs/docs/lld/api-gateway.md` §5.2). |
 | `GET /health/ready` | Internal/ops | ⏳ Chưa có. Thiết kế: MySQL `userdb`, Kafka, config bắt buộc. |
 
@@ -480,45 +480,66 @@ Ràng buộc:
 
 ## 4. Hằng số & cấu hình
 
-| Tên | Giá trị | Đơn vị | Ghi chú |
-|---|---:|---|---|
-| `ACCESS_TOKEN_TTL` | 900 | giây | JWT access token, 15 phút. |
-| `REFRESH_TOKEN_TTL` | 30 | ngày | Rotation bắt buộc. |
-| `REFRESH_TOKEN_ROTATION` | `true` | boolean | Token cũ bị revoke sau mỗi refresh. |
-| `PASSWORD_HASH_ALGORITHM` | `Argon2id` | algorithm | Không lưu raw password. |
-| `PASSWORD_MIN_LENGTH` | 12 | ký tự | `PASSWORD_MAX_LENGTH=72`. |
-| `FULL_NAME_MAX_LENGTH` | 120 | Unicode characters | Trim hai đầu. |
-| `EMAIL_MAX_LENGTH` | 254 | ký tự | Lowercase normalization. |
-| `PHONE_FORMAT` | E.164 | format | Phone chỉ unique khi non-null. |
-| `LOGIN_FAILURE_LIMIT` | 5 | lần | Trong `LOGIN_FAILURE_WINDOW`. |
-| `LOGIN_FAILURE_WINDOW` | 15 | phút | Theo user/identifier hash. |
-| `ACCOUNT_LOCK_DURATION` | 15 | phút | Tự mở khóa sau TTL nếu không bị suspend. |
-| `MAX_ADDRESSES_PER_USER` | 20 | address | Chỉ tính record chưa soft delete. |
-| `MAX_FAVORITES_PER_USER` | 500 | product | Vượt trả `409 FAVORITE_LIMIT_REACHED`. |
-| `MAX_FOLLOWED_SHOPS_PER_USER` | 1000 | shop | Vượt trả `409 SHOP_FOLLOW_LIMIT_REACHED`. |
-| `FAVORITES_CONTAINS_MAX_IDS` | 100 | product_id/request | Batch check trạng thái tim. |
-| `PAGE_SIZE_DEFAULT` | 20 | record | `PAGE_SIZE_MAX=100`. |
-| `EMAIL_VERIFICATION_TTL` | 30 | phút | `AUTH_EMAIL_VERIFICATION_TTL_MINUTES`; token dùng một lần. |
-| `PHONE_OTP_TTL` | 5 | phút | `PHONE_OTP_MAX_ATTEMPTS=5`. |
-| `PASSWORD_RESET_TTL` | 30 | phút | Reset token dùng một lần. |
-| `EMAIL_RESEND_LIMIT` | 3 | lần/giờ | Theo user. |
-| `MFA_CHALLENGE_TTL` | 5 | phút | Step-up token cho admin. |
-| `TOTP_STEP` | 30 | giây | Chuẩn TOTP. |
-| `KYC_MAX_FILE_SIZE` | 10 | MiB/file | PDF/JPG/PNG trong v1. |
-| `KYC_MAX_FILES_PER_CASE` | 10 | file/case | Object private. |
-| `SIGNED_URL_TTL` | 10 | phút | KYC presign/download, shop logo URL. |
-| `KYC_SUBMISSION_EXPIRY` | 30 | ngày | `AUTH_KYC_SUBMISSION_EXPIRY_DAYS`. |
-| `REVOKED_USER_CACHE_TTL` | 15 | phút | Redis, bằng access token TTL. |
-| `GOOGLE_STATE_COOKIE_TTL` | 10 | phút | Authorization-code flow. |
-| Outbox publisher | batch 50, delay 2000 ms, max-retries 3, backoff 2s, send-timeout 35000 ms | — | `auth.outbox-publisher.*`, `AUTH_OUTBOX_PUBLISHER_ENABLED` (default `true`). |
-| Outbox cleanup | published 7 ngày, failed 30 ngày, batch 500, mỗi 1h | — | `auth.outbox-cleanup.*`. |
-| KYC expiry job | batch 50, fixed-delay 60000 ms | — | `AUTH_KYC_EXPIRY_ENABLED`, `AUTH_KYC_EXPIRY_*` (thay cho lịch `00:05` UTC trong thiết kế). |
-| Topic | `notification.commands.v1`, `user.events.v1`, `shop.events.v1`, DLQ `auth-user.events.dlq.v1` | — | `auth.kafka.topics.*`; topic guard `AUTH_KAFKA_TOPIC_GUARD_ENABLED`. |
-| `INTERNAL_REQUEST_TIMEOUT` | 5 | giây | Storage/Notification adapter. |
-| `KAFKA_RETRY_COUNT` | 3 | lần | Cách nhau `KAFKA_RETRY_BACKOFF=2s`. |
-| `KAFKA_RETRY_BACKOFF` | 2 | giây | Sau đó dead-letter. |
-| `AUDIT_RETENTION` | 365 | ngày | Không lưu secret/OTP/token raw. |
-| `TIMESTAMP_STORAGE` | UTC | timezone | API trả ISO-8601; UI hiển thị user timezone. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| `ACCESS_TOKEN_TTL` | 900 giây | — | JWT access token, 15 phút. |
+| `REFRESH_TOKEN_TTL` | 30 ngày | — | Rotation bắt buộc. |
+| `REFRESH_TOKEN_ROTATION` | `true` | — | Token cũ bị revoke sau mỗi refresh. |
+| `PASSWORD_HASH_ALGORITHM` | `Argon2id` | — | Không lưu raw password. |
+| `PASSWORD_MIN_LENGTH` | 12 ký tự | — | `PASSWORD_MAX_LENGTH=72`. |
+| `FULL_NAME_MAX_LENGTH` | 120 Unicode characters | — | Trim hai đầu. |
+| `EMAIL_MAX_LENGTH` | 254 ký tự | — | Lowercase normalization. |
+| `PHONE_FORMAT` | E.164 | — | Phone chỉ unique khi non-null. |
+| `LOGIN_FAILURE_LIMIT` | 5 lần | — | Trong `LOGIN_FAILURE_WINDOW`. |
+| `LOGIN_FAILURE_WINDOW` | 15 phút | — | Theo user/identifier hash. |
+| `ACCOUNT_LOCK_DURATION` | 15 phút | — | Tự mở khóa sau TTL nếu không bị suspend. |
+| `MAX_ADDRESSES_PER_USER` | 20 address | — | Chỉ tính record chưa soft delete. |
+| `MAX_FAVORITES_PER_USER` | 500 product | — | Vượt trả `409 FAVORITE_LIMIT_REACHED`. |
+| `MAX_FOLLOWED_SHOPS_PER_USER` | 1000 shop | — | Vượt trả `409 SHOP_FOLLOW_LIMIT_REACHED`. |
+| `FAVORITES_CONTAINS_MAX_IDS` | 100 product_id/request | — | Batch check trạng thái tim. |
+| `PAGE_SIZE_DEFAULT` | 20 record | — | `PAGE_SIZE_MAX=100`. |
+| `EMAIL_VERIFICATION_TTL` | 30 phút | `AUTH_EMAIL_VERIFICATION_TTL_MINUTES` | `AUTH_EMAIL_VERIFICATION_TTL_MINUTES`; token dùng một lần. |
+| `PHONE_OTP_TTL` | 5 phút | — | `PHONE_OTP_MAX_ATTEMPTS=5`. |
+| `PASSWORD_RESET_TTL` | 30 phút | — | Reset token dùng một lần. |
+| `EMAIL_RESEND_LIMIT` | 3 lần/giờ | — | Theo user. |
+| `MFA_CHALLENGE_TTL` | 5 phút | — | Step-up token cho admin. |
+| `TOTP_STEP` | 30 giây | — | Chuẩn TOTP. |
+| `KYC_MAX_FILE_SIZE` | 10 MiB/file | — | PDF/JPG/PNG trong v1. |
+| `KYC_MAX_FILES_PER_CASE` | 10 file/case | — | Object private. |
+| `SIGNED_URL_TTL` | 10 phút | — | KYC presign/download, shop logo URL. |
+| `KYC_SUBMISSION_EXPIRY` | 30 ngày | `AUTH_KYC_SUBMISSION_EXPIRY_DAYS` | `AUTH_KYC_SUBMISSION_EXPIRY_DAYS`. |
+| `REVOKED_USER_CACHE_TTL` | 15 phút | — | Redis, bằng access token TTL. |
+| `GOOGLE_STATE_COOKIE_TTL` | 10 phút | — | Authorization-code flow. |
+| Outbox publisher | batch 50, delay 2000 ms, max-retries 3, backoff 2s, send-timeout 35000 ms | `auth.outbox-publisher.*`, `AUTH_OUTBOX_PUBLISHER_ENABLED`, `AUTH_OUTBOX_PUBLISHER_SEND_TIMEOUT_MS` | `auth.outbox-publisher.*`, `AUTH_OUTBOX_PUBLISHER_ENABLED` (default `true`). |
+| Outbox cleanup | published 7 ngày, failed 30 ngày, batch 500, mỗi 1h | `AUTH_OUTBOX_CLEANUP_*` | `auth.outbox-cleanup.*`. |
+| KYC expiry job | batch 50, fixed-delay 60000 ms | `AUTH_KYC_EXPIRY_ENABLED`, `AUTH_KYC_EXPIRY_BATCH_SIZE`, `AUTH_KYC_EXPIRY_FIXED_DELAY_MS` | `AUTH_KYC_EXPIRY_ENABLED`, `AUTH_KYC_EXPIRY_*` (thay cho lịch `00:05` UTC trong thiết kế). |
+| Topic | `notification.commands.v1`, `user.events.v1`, `shop.events.v1`, DLQ `auth-user.events.dlq.v1` | `auth.kafka.topics.*`, `AUTH_KAFKA_TOPIC_GUARD_ENABLED` | `auth.kafka.topics.*`; topic guard `AUTH_KAFKA_TOPIC_GUARD_ENABLED`. |
+| `INTERNAL_REQUEST_TIMEOUT` | 5 giây | — | Storage/Notification adapter. |
+| `KAFKA_RETRY_COUNT` | 3 lần | — | Cách nhau `KAFKA_RETRY_BACKOFF=2s`. |
+| `KAFKA_RETRY_BACKOFF` | 2 giây | — | Sau đó dead-letter. |
+| `AUDIT_RETENTION` | 365 ngày | — | Không lưu secret/OTP/token raw. |
+| `TIMESTAMP_STORAGE` | UTC | — | API trả ISO-8601; UI hiển thị user timezone. |
+
+Biến môi trường thật (`src/main/resources/application-local.yaml`; `application.yaml` chỉ chọn profile `SPRING_PROFILES_ACTIVE`, mặc định `local`):
+
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| Profile | `local` | `SPRING_PROFILES_ACTIVE` | Mọi cấu hình bên dưới nằm trong profile `local`. |
+| Port HTTP | `8081` | `SERVER_PORT` | |
+| MySQL | `jdbc:mysql://localhost:3306/userdb?...` | `DB_URL`, `MYSQL_USER`, `MYSQL_PASSWORD` | Mật khẩu phải lấy từ secret khi deploy. |
+| Redis | `localhost:6379`, timeout 2s | `REDIS_HOST`, `REDIS_PORT`, `REDIS_CONNECT_TIMEOUT`, `REDIS_TIMEOUT` | Manifest K8s set thêm `SPRING_DATA_REDIS_PASSWORD`. |
+| Kafka broker | `localhost:19092` | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Producer `acks=all`, idempotent. |
+| Kafka producer retries | `10` | `SPRING_KAFKA_PRODUCER_RETRIES` | |
+| Topic guard | bật, timeout 10 s | `AUTH_KAFKA_TOPIC_GUARD_ENABLED`, `AUTH_KAFKA_TOPIC_GUARD_TIMEOUT_SECONDS` | |
+| Outbox publisher | bật, send-timeout 35000 ms | `AUTH_OUTBOX_PUBLISHER_ENABLED`, `AUTH_OUTBOX_PUBLISHER_SEND_TIMEOUT_MS` | Batch 50, delay 2000 ms, 3 retry, backoff 2 s là giá trị cố định trong yaml. |
+| Outbox health | pending ≤ 1000, oldest ≤ 300 s, failed ≤ 0 | `AUTH_OUTBOX_MAX_PENDING_EVENTS`, `AUTH_OUTBOX_MAX_OLDEST_PENDING_AGE_SECONDS`, `AUTH_OUTBOX_MAX_FAILED_EVENTS` | |
+| Outbox cleanup | bật, mỗi 3600000 ms, giữ 7/30 ngày, batch 500 | `AUTH_OUTBOX_CLEANUP_ENABLED`, `AUTH_OUTBOX_CLEANUP_FIXED_DELAY_MS`, `AUTH_OUTBOX_CLEANUP_PUBLISHED_RETENTION_DAYS`, `AUTH_OUTBOX_CLEANUP_FAILED_RETENTION_DAYS`, `AUTH_OUTBOX_CLEANUP_BATCH_SIZE` | |
+| Khoá mã hoá/hash | (không default, bắt buộc) | `AUTH_OUTBOX_ENCRYPTION_KEY_BASE64`, `AUTH_AUDIT_HASH_KEY_BASE64`, `AUTH_OTP_HASH_KEY_BASE64`, `AUTH_MFA_ENCRYPTION_KEY_BASE64` | |
+| JWT | key id `auth-user-key-local-1` | `AUTH_JWT_PRIVATE_KEY_BASE64`, `AUTH_JWT_PUBLIC_KEY_BASE64`, `JWT_KEY_ID`, `JWT_PREVIOUS_KEY_ID`, `JWT_PREVIOUS_PUBLIC_KEY_BASE64` | Key cũ dùng khi xoay khoá. |
+| Link trong email | `https://taca.vn`, `/verify`, `/reset-password` | `AUTH_PUBLIC_BASE_URL`, `AUTH_EMAIL_VERIFICATION_PATH`, `AUTH_PASSWORD_RESET_PATH` | |
+| Email verification TTL | `30` phút | `AUTH_EMAIL_VERIFICATION_TTL_MINUTES` | |
+| KYC expiry | bật, batch 50, 60000 ms, hết hạn sau 30 ngày | `AUTH_KYC_EXPIRY_ENABLED`, `AUTH_KYC_EXPIRY_BATCH_SIZE`, `AUTH_KYC_EXPIRY_FIXED_DELAY_MS`, `AUTH_KYC_SUBMISSION_EXPIRY_DAYS` | |
+| Google sign-in | rỗng; JWKS `https://www.googleapis.com/oauth2/v3/certs`; cookie secure `true` | `AUTH_GOOGLE_ALLOWED_CLIENT_IDS`, `AUTH_GOOGLE_JWK_SET_URI`, `AUTH_GOOGLE_AUTHORIZATION_CLIENT_ID`, `AUTH_GOOGLE_AUTHORIZATION_CLIENT_SECRET`, `AUTH_GOOGLE_AUTHORIZATION_REDIRECT_URI`, `AUTH_GOOGLE_AUTHORIZATION_COOKIE_SECURE` | |
 
 ## 5. Enum & trạng thái
 
@@ -673,7 +694,7 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `AUTH_ACCOUNT_LOCKED` | 423 | Account đang bị lock tạm thời | `Tài khoản đang tạm khóa. Vui lòng thử lại sau.` |
 | `AUTH_ACCOUNT_SUSPENDED` | 403 | Account suspended/deleted | `Tài khoản hiện không thể sử dụng.` |
 | `AUTH_EMAIL_NOT_VERIFIED` | 403 | Action yêu cầu email verified | `Vui lòng xác thực email trước.` |
-| `AUTH_PHONE_NOT_VERIFIED` | 403 | Dùng phone chưa verified để login | `Vui lòng xác thực số điện thoại trước.` |
+| `AUTH_PHONE_NOT_VERIFIED` ⏳ | 403 | Dùng phone chưa verified để login | `Vui lòng xác thực số điện thoại trước.` |
 | `AUTH_USER_NOT_FOUND` | 404 | User không tồn tại hoặc đã xoá | `Không tìm thấy tài khoản.` |
 | `AUTH_TOKEN_INVALID` | 401 | Access/refresh token sai | `Phiên đăng nhập không hợp lệ.` |
 | `AUTH_TOKEN_EXPIRED` | 401 | Token hết hạn | `Phiên đăng nhập đã hết hạn.` |
@@ -702,8 +723,9 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `SHOP_NOT_FOUND` | 404 | Shop không tồn tại | `Không tìm thấy gian hàng.` |
 | `SHOP_SLUG_EXISTS` | 409 | Slug trùng | `Đường dẫn gian hàng đã tồn tại.` |
 | `SHOP_INVALID_STATE` | 409 | Action không hợp lệ với shop status | `Trạng thái gian hàng không cho phép thao tác này.` |
-| `KYC_REQUIRED` | 403 | Chưa đạt điều kiện KYC | `Vui lòng hoàn tất xác minh gian hàng.` |
-| `KYC_DOCUMENT_INVALID` | 400 | Sai type/checksum/object metadata | `Tài liệu không hợp lệ.` |
+| `KYC_REQUIRED` ⏳ | 403 | Chưa đạt điều kiện KYC | `Vui lòng hoàn tất xác minh gian hàng.` |
+| `KYC_DOCUMENT_REQUEST_INVALID`, `KYC_DOCUMENT_TYPE_UNSUPPORTED`, `KYC_DOCUMENT_FILENAME_INVALID`, `KYC_DOCUMENT_CONTENT_TYPE_UNSUPPORTED`, `KYC_DOCUMENT_SIZE_INVALID`, `KYC_DOCUMENT_CHECKSUM_INVALID`, `KYC_DOCUMENT_STATE_INVALID`, `KYC_DOCUMENT_VERIFICATION_FAILED`, `KYC_DOCUMENT_UPLOAD_INCOMPLETE`, `KYC_DOCUMENT_REQUIRED` | 400 | `InvalidKycDocumentException.Reason` (một mã cho mỗi lý do; chi tiết ở `api/auth-user.md` §4) | Theo `GlobalExceptionHandler`. |
+| `KYC_DOCUMENT_DUPLICATE` | 409 | Tài liệu cùng checksum đã có trong case | `Tài liệu đã tồn tại.` |
 | `KYC_DOCUMENT_TOO_LARGE` | 413 | File vượt 10 MiB | `Tài liệu vượt quá dung lượng cho phép.` |
 | `KYC_DOCUMENT_LIMIT_REACHED` | 409 | Quá 10 file/case | `Hồ sơ đã đạt giới hạn số tài liệu.` |
 | `KYC_DOCUMENT_NOT_FOUND` | 404 | Document không tồn tại | `Không tìm thấy tài liệu.` |
@@ -714,8 +736,8 @@ APPROVED ──risk action──► SUSPENDED ──admin restore──► APPRO
 | `BANK_ACCOUNT_INVALID` | 409 | Bank account không hợp lệ | `Thông tin tài khoản ngân hàng chưa hợp lệ.` |
 | `FAVORITE_LIMIT_REACHED` | 409 | Đã đạt `MAX_FAVORITES_PER_USER` | `Bạn đã đạt giới hạn số sản phẩm yêu thích.` |
 | `SHOP_FOLLOW_LIMIT_REACHED` | 409 | Đã đạt `MAX_FOLLOWED_SHOPS_PER_USER` | `Bạn đã đạt giới hạn số shop theo dõi.` |
-| `RATE_LIMITED` | 429 | Vượt request limit | `Bạn thao tác quá nhanh. Vui lòng thử lại sau.` |
-| `INTERNAL_ERROR` | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
+| `RATE_LIMITED` ⏳ | 429 | Vượt request limit | `Bạn thao tác quá nhanh. Vui lòng thử lại sau.` |
+| `INTERNAL_ERROR` ⏳ | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
 
 ## 8. Giả định & câu hỏi mở
 

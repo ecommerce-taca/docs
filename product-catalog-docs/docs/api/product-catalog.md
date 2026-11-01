@@ -1,6 +1,6 @@
 # API Spec — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Nguồn: `docs/lld/product-catalog.md` · `docs/db/product-catalog.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`6572ece`) · Cập nhật: `2026-10-31`
 > Trạng thái triển khai: ✅ Đã triển khai — public/seller/admin REST, import/export Excel, media S3, moderation, outbox (CDC Debezium), consumer `shop`/`inventory`/`rating`. Lệch thiết kế ghi rõ ở từng mục (event SKU/category chưa phát, step-up admin chưa kiểm).
 > Base path: `/api/v1` (env `GLOBAL_PREFIX`; `/health/*` không có prefix) · Port mặc định `3000` · Public traffic đi qua API Gateway · Content-Type: `application/json`
 

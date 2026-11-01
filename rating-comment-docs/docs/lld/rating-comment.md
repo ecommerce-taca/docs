@@ -104,18 +104,20 @@ src/
 
 ## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Ghi chú |
-|---|---:|---|
-| `RATING_MIN/MAX` | 1/5 | Integer. |
-| `COMMENT_MAX_LENGTH` | 5000 | Unicode characters. |
-| `REPLY_MAX_LENGTH` | 2000 | Unicode characters. |
-| `REVIEW_MEDIA_MAX_COUNT` | 6 | Per review. |
-| `REVIEW_IMAGE_MAX_SIZE` | 10 MiB | JPG/PNG/WebP baseline. |
-| `REVIEW_EDIT_WINDOW` | 30 ngày | Sau delivered, cần confirm. |
-| `PAGE_SIZE_DEFAULT` | 20 | Max 100. |
-| `OUTBOX_RETRY_COUNT` | 3 | Backoff 2s rồi DLQ. |
-| `MEDIA_SIGNED_URL_TTL` | 10 phút | Private object. |
-| `TIMESTAMP_FORMAT` | UTC ISO-8601 | MongoDB Date. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| `RATING_MIN/MAX` | 1/5 | — | Integer. |
+| `COMMENT_MAX_LENGTH` | 5000 | — | Unicode characters. |
+| `REPLY_MAX_LENGTH` | 2000 | — | Unicode characters. |
+| `REVIEW_MEDIA_MAX_COUNT` | 6 | — | Per review. |
+| `REVIEW_IMAGE_MAX_SIZE` | 10 MiB | — | JPG/PNG/WebP baseline. |
+| `REVIEW_EDIT_WINDOW` | 30 ngày | — | Sau delivered, cần confirm. |
+| `PAGE_SIZE_DEFAULT` | 20 | — | Max 100. |
+| `OUTBOX_RETRY_COUNT` | 3 | — | Backoff 2s rồi DLQ. |
+| `MEDIA_SIGNED_URL_TTL` | 10 phút | — | Private object. |
+| `TIMESTAMP_FORMAT` | UTC ISO-8601 | — | MongoDB Date. |
+
+Service chưa có code nên cột biến môi trường để `—`; khi triển khai, đặt tên env theo `CONTRACT-MATRIX.md` §8.
 
 ## 5. Enum & trạng thái
 

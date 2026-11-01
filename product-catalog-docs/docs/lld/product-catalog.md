@@ -1,6 +1,6 @@
 # LLD — Product Catalog Service
 
-> Nguồn: `HighLevelDesign/HLD.md` · `FrontendDesign/Taca.penpot.zip` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Nguồn: `HighLevelDesign/HLD.md` · `FrontendDesign/Taca.penpot.zip` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`6572ece`) · Cập nhật: `2026-10-31`
 > Trạng thái triển khai: ✅ Đã triển khai — public/seller/admin REST, import/export Excel, media S3, moderation, outbox (CDC Debezium), consumer `shop`/`inventory`/`rating`. Lệch thiết kế ghi rõ ở từng mục (event SKU/category chưa phát, step-up admin chưa kiểm).
 > Tech stack đã chốt: Node.js + NestJS · MongoDB/Mongoose · Kafka outbox (relay bởi CDC — Debezium MongoDB Outbox Event Router, xem §1.1/giả định #25) · S3/MinIO cho media · REST nội bộ với Inventory/Search/Auth User
 
@@ -375,42 +375,59 @@ Ràng buộc tuyệt đối:
 
 ## 4. Hằng số & cấu hình
 
-| Tên | Giá trị baseline | Đơn vị | Ghi chú |
-|---|---:|---|---|
-| `PAGE_SIZE_DEFAULT` | 20 | product/SKU | `PAGE_SIZE_MAX=100`. |
-| `PRODUCT_TITLE_MAX_LENGTH` | 200 | Unicode characters | Trim hai đầu; không rỗng khi publish. |
-| `PRODUCT_DESCRIPTION_MAX_LENGTH` | 100000 | Unicode characters | Có sanitize rich text/HTML allowlist. |
-| `BRAND_MAX_LENGTH` | 120 | Unicode characters | Optional nhưng normalize khi tìm kiếm. |
-| `SLUG_MAX_LENGTH` | 160 | ký tự | Lowercase, hyphen, unique trong shop. |
-| `MAX_ATTRIBUTE_DEFINITIONS` | 50 | definition/product | Không giới hạn tên business field; đây là safety cap. |
-| `MAX_VARIANT_DIMENSIONS` | 10 | dimension/product | Không hard-code color/size. |
-| `MAX_SKUS_PER_PRODUCT` | 1000 | SKU/product | Vượt giới hạn cần bulk/import workflow riêng. |
-| `MAX_ATTRIBUTES_PER_SKU` | 50 | attribute/SKU | Bao gồm variant và descriptive attributes. |
-| `ATTRIBUTE_KEY_MAX_LENGTH` | 64 | ký tự | `[a-z0-9_]+` sau normalize. |
-| `ATTRIBUTE_LABEL_MAX_LENGTH` | 120 | Unicode characters | UI label. |
-| `ATTRIBUTE_STRING_MAX_LENGTH` | 500 | Unicode characters | Với specification dài dùng description field. |
-| `ATTRIBUTE_ENUM_MAX_VALUES` | 200 | value/definition | ENUM value unique trong definition. |
-| `PRIMARY_CATEGORY_LIMIT` | 1 | category/product | Bắt buộc khi publish. |
-| `PRODUCT_EXPORT_MAX_ROWS` | 10000 | row/request | `GET /seller/products/export` — vượt trả `400 PRODUCT_EXPORT_TOO_LARGE`. |
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| `PAGE_SIZE_DEFAULT` | 20 product/SKU | — | `PAGE_SIZE_MAX=100`. |
+| `PRODUCT_TITLE_MAX_LENGTH` | 200 Unicode characters | — | Trim hai đầu; không rỗng khi publish. |
+| `PRODUCT_DESCRIPTION_MAX_LENGTH` | 100000 Unicode characters | — | Có sanitize rich text/HTML allowlist. |
+| `BRAND_MAX_LENGTH` | 100 Unicode characters | — | Optional nhưng normalize khi tìm kiếm. |
+| `SLUG_MAX_LENGTH` | 160 ký tự | — | Lowercase, hyphen, unique trong shop. |
+| `MAX_ATTRIBUTE_DEFINITIONS` | 50 definition/product | — | Không giới hạn tên business field; đây là safety cap. |
+| `MAX_VARIANT_DIMENSIONS` | 10 dimension/product | — | Không hard-code color/size. |
+| `MAX_SKUS_PER_PRODUCT` | 1000 SKU/product | — | Vượt giới hạn cần bulk/import workflow riêng. |
+| `MAX_ATTRIBUTES_PER_SKU` | 50 attribute/SKU | — | Bao gồm variant và descriptive attributes. |
+| `ATTRIBUTE_KEY_MAX_LENGTH` | 64 ký tự | — | `[a-z0-9_]+` sau normalize. |
+| `ATTRIBUTE_LABEL_MAX_LENGTH` | 120 Unicode characters | — | UI label. |
+| `ATTRIBUTE_STRING_MAX_LENGTH` | 500 Unicode characters | — | Với specification dài dùng description field. |
+| `ATTRIBUTE_ENUM_MAX_VALUES` | 200 value/definition | — | ENUM value unique trong definition. |
+| `PRIMARY_CATEGORY_LIMIT` | 1 category/product | — | Bắt buộc khi publish. |
+| `PRODUCT_EXPORT_MAX_ROWS` | 10000 row/request | hằng số `export.service.ts` | `GET /seller/products/export` — vượt trả `400 PRODUCT_EXPORT_TOO_LARGE`. |
 | `PRODUCT_EXPORT_URL_TTL` | 30 phút | — | Signed download URL hết hạn, gọi lại endpoint để có URL mới. |
-| `SECONDARY_CATEGORY_LIMIT` | 2 | category/product | Tối đa 2 category phụ. |
-| `CATEGORY_MAX_DEPTH` | 5 | level | Root là depth 1. |
-| `CATEGORY_NAME_MAX_LENGTH` | 120 | Unicode characters | Unique theo cùng parent. |
-| `PRICE_CURRENCY` | `VND` | currency | Số nguyên, không decimal. |
-| `PRICE_MIN` | 1 | VND | Giá bán phải dương khi SKU ACTIVE. |
-| `PRICE_MAX` | 999999999999 | VND | Giới hạn chống overflow/nhập nhầm. |
-| `PRODUCT_IMAGE_MAX_COUNT` | 12 | file/product | Ít nhất 1 cover khi publish. |
-| `PRODUCT_VIDEO_MAX_COUNT` | 3 | file/product | Direct upload; provider/scan cần chốt. |
-| `PRODUCT_IMAGE_MAX_SIZE` | 20 | MiB/file | JPG/PNG/WebP baseline. |
-| `PRODUCT_VIDEO_MAX_SIZE` | 200 | MiB/file | MP4 baseline; chưa áp cho chat attachment. |
-| `MEDIA_SIGNED_URL_TTL` | 10 | phút | URL upload/download private. |
-| `INVENTORY_SNAPSHOT_STALE_AFTER` | 60 | giây | Sau thời gian này hiển thị `STALE`; không ảnh hưởng deduction. |
-| `LOW_STOCK_THRESHOLD` | 5 | quantity | Chỉ là display label; Inventory vẫn quyết định availability. |
-| `SHOP_PROJECTION_MAX_STALE` | 30 | phút | Quá hạn thì không cho publish nếu không có status chắc chắn. |
-| `MONGO_TRANSACTION_REQUIRED` | `true` | boolean | Deployment MongoDB phải là replica set/sharded transaction-capable (bắt buộc cho change stream mà CDC connector dùng). |
-| `INTERNAL_REQUEST_TIMEOUT` | 5 | giây | Auth/media metadata adapter; không dùng cho stock deduction. |
-| `TIMESTAMP_STORAGE` | `UTC` | timezone | API/log ISO-8601. |
-| `OPTIMISTIC_VERSIONING` | `true` | boolean | Mutation seller/admin phải gửi version nếu update document. |
+| `SECONDARY_CATEGORY_LIMIT` | 2 category/product | — | Tối đa 2 category phụ. |
+| `CATEGORY_MAX_DEPTH` | 5 level | — | Root là depth 1. |
+| `CATEGORY_NAME_MAX_LENGTH` | 120 Unicode characters | — | Unique theo cùng parent. |
+| `PRICE_CURRENCY` | `VND` | — | Số nguyên, không decimal. |
+| `PRICE_MIN` | 1 VND | — | Giá bán phải dương khi SKU ACTIVE. |
+| `PRICE_MAX` | 999999999999 VND | — | Giới hạn chống overflow/nhập nhầm. |
+| `PRODUCT_IMAGE_MAX_COUNT` | 12 file/product | — | Ít nhất 1 cover khi publish. |
+| `PRODUCT_VIDEO_MAX_COUNT` | 3 file/product | — | Direct upload; provider/scan cần chốt. |
+| `PRODUCT_IMAGE_MAX_SIZE` | 20 MiB/file | — | JPG/PNG/WebP baseline. |
+| `PRODUCT_VIDEO_MAX_SIZE` | 200 MiB/file | — | MP4 baseline; chưa áp cho chat attachment. |
+| `MEDIA_SIGNED_URL_TTL` | 10 phút | `MEDIA_SIGNED_URL_TTL` (giây, mặc định `600`) | URL upload/download private. |
+| `INVENTORY_SNAPSHOT_STALE_AFTER` | 60 giây | — | Sau thời gian này hiển thị `STALE`; không ảnh hưởng deduction. |
+| `LOW_STOCK_THRESHOLD` | 5 quantity | — | Chỉ là display label; Inventory vẫn quyết định availability. |
+| `SHOP_PROJECTION_MAX_STALE` | 30 phút | — | Quá hạn thì không cho publish nếu không có status chắc chắn. |
+| `MONGO_TRANSACTION_REQUIRED` | `true` | — | Deployment MongoDB phải là replica set/sharded transaction-capable (bắt buộc cho change stream mà CDC connector dùng). |
+| `INTERNAL_REQUEST_TIMEOUT` | 5 giây | — | Auth/media metadata adapter; không dùng cho stock deduction. |
+| `TIMESTAMP_STORAGE` | `UTC` | — | API/log ISO-8601. |
+| `OPTIMISTIC_VERSIONING` | `true` | — | Mutation seller/admin phải gửi version nếu update document. |
+
+Biến môi trường thật (`src/config/*.config.ts`, `integrations/kafka/kafka-consumer.service.ts`):
+
+| Tên | Giá trị mặc định | Biến môi trường/property | Ghi chú |
+|---|---|---|---|
+| Môi trường | `development` | `NODE_ENV` | `test` tắt Kafka consumer. |
+| Port HTTP | `3000` | `PORT` | |
+| Global prefix | `api/v1` | `GLOBAL_PREFIX` | `/health/*` không có prefix. |
+| MongoDB | `mongodb://localhost:27017/product_catalog?replicaSet=rs0&directConnection=true` | `MONGODB_URI` | Phải là replica set (transaction + change stream). |
+| Mongo pool / timeout | pool 5–20, socket 30000 ms, server selection 5000 ms, `primaryPreferred` | `MONGODB_MIN_POOL_SIZE`, `MONGODB_MAX_POOL_SIZE`, `MONGODB_SOCKET_TIMEOUT_MS`, `MONGODB_SERVER_SELECTION_TIMEOUT_MS`, `MONGODB_READ_PREFERENCE` | |
+| Object storage | region `ap-southeast-1`, bucket `taca-product-media-prod`, endpoint `http://localhost:9000`, path-style bật | `AWS_REGION`, `AWS_S3_BUCKET`, `AWS_S3_ENDPOINT`, `AWS_S3_FORCE_PATH_STYLE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Default key là của MinIO local; production phải set. |
+| URL public media | — | `CDN_BASE_URL` (ưu tiên), `AWS_S3_PUBLIC_URL` | |
+| Signed URL TTL | `600` giây | `MEDIA_SIGNED_URL_TTL` | |
+| Verify upload | 4 lần, cách 500 ms | `MEDIA_VERIFY_ATTEMPTS`, `MEDIA_VERIFY_RETRY_DELAY_MS` | |
+| Kafka broker | rỗng → consumer tắt | `KAFKA_BROKERS` | Danh sách cách nhau bởi dấu phẩy. Catalog không có Kafka producer (event đi qua Debezium). |
+| Kafka client / group | `product-catalog-service` / `product-catalog-service` | `KAFKA_CLIENT_ID`, `KAFKA_GROUP_ID` | |
+| Bật consumer | bật khi có broker | `KAFKA_CONSUMER_ENABLED` | `false` để tắt. |
 
 ## 5. Enum & trạng thái
 
@@ -555,7 +572,7 @@ Consumer (`integrations/kafka/kafka-consumer.service.ts`) subscribe `shop.events
 | Nguồn | Event | Xử lý |
 |---|---|---|
 | Auth User | `shop.created` — payload thật `shop_id`, `owner_user_id`, `status` | Tạo shop snapshot để seller/product read. |
-| Auth User | `shop.updated` — payload thật chỉ có `shop_id` + changed fields allowlist (`name`, `slug`, `logo_object_key`, `description`) + `updated_at`/`version` | Cập nhật name/slug/logo/business display snapshot; không có `logo_url` sẵn, Product tự resolve `logo_object_key` thành URL hiển thị (cơ chế: gọi `GET /shops/{shopId}` của auth-user lấy `logo_url` đã resolve, hoặc dựng từ CDN prefix theo object key; **không** gọi presign nội bộ của auth-user — endpoint đó cấm service khác dùng). |
+| Auth User | `shop.updated` — payload thật `shop_id`, `changed_fields[]`, `snapshot` (object lồng, chỉ chứa field đổi trong `name`, `description`, `logo_object_key`; **không có** `slug`, `logo_url`), `updated_at`, `version` | `ShopProjectionService.flattenAuthUserSnapshot` lấy `payload.snapshot.name` khi payload chưa có `name` phẳng (Product-Catalog-Service#44) → cập nhật tên shop và phát `product.shop_snapshot_updated` nếu tên đổi. Slug chỉ đổi khi payload có `slug` phẳng (auth-user không gửi). Logo chỉ đổi khi payload có `logo_url` phẳng; `snapshot.logo_object_key` và `description` hiện **không** được đọc, nên đổi logo bên auth-user chưa cập nhật projection (xem §8). |
 | Auth User | `shop.status_changed` — payload thật `shop_id`, `old_status`, `new_status` (`DRAFT`/`ACTIVE`/`SUSPENDED`/`DELETED` — enum `ShopStatus` ở `auth-user-docs/docs/db/auth-user.md` §5), `reason`, `changed_at` | Cập nhật shop status; không tự đổi product content. |
 | Auth User | `shop.kyc.submitted`/`approved`/`needs_info`/`rejected`/`expired` — payload không mang field `kyc_status` | Cập nhật KYC gate projection; Product tự suy `kyc_status` từ `event_type`; chặn publish/resume nếu không APPROVED. Không có event `shop.kyc.suspended` — đình chỉ shop đến qua `shop.status_changed`. |
 | Inventory | `inventory.stock_snapshot.updated` | Upsert read-only SKU/product stock projection. |
@@ -669,7 +686,7 @@ Contract §6.1–6.5 (topic name, event type, payload nghiệp vụ) **không đ
 | `PRODUCT_BLOCKED` | 403 | Product bị admin block | `Sản phẩm đang bị tạm ẩn.` |
 | `PRODUCT_ARCHIVED` | 409 | Mutation trên archived product | `Sản phẩm đã được lưu trữ.` |
 | `PRODUCT_EXPORT_TOO_LARGE` | 400 | Vượt `PRODUCT_EXPORT_MAX_ROWS` (10.000) khi export | `Kết quả xuất file quá lớn, vui lòng lọc hẹp hơn.` |
-| `INVENTORY_PROJECTION_STALE` | 200/metadata | Stock snapshot quá cũ | `Thông tin tồn kho đang được cập nhật.` |
+| `INVENTORY_PROJECTION_STALE` ⏳ | 200/metadata | Stock snapshot quá cũ | `Thông tin tồn kho đang được cập nhật.` |
 | `INTERNAL_ERROR` | 500 | Lỗi chưa phân loại | `Hệ thống đang bận. Vui lòng thử lại.` |
 
 `INVENTORY_PROJECTION_STALE` không phải lỗi deduction; nó là metadata để frontend không hiểu nhầm số lượng display là realtime.
@@ -705,3 +722,4 @@ Contract §6.1–6.5 (topic name, event type, payload nghiệp vụ) **không đ
 | 24 | Dưới CDC, cửa sổ replay thật của event outbox bị giới hạn bởi **MongoDB oplog retention** (change stream chỉ đọc được trong khoảng oplog còn giữ) cộng với offset đã commit của connector — không phải retention/TTL của collection `outbox_events` như mô hình app-publish cũ. Retention job cho `outbox_events` (nếu có) chỉ dọn dữ liệu cũ, không ảnh hưởng khả năng replay của connector miễn offset còn hợp lệ. | Nếu oplog quá ngắn so với thời gian connector có thể downtime, resume sau downtime dài sẽ mất event mà không có cảnh báo rõ ràng. | Platform/DevOps owner |
 | 25 | `product-catalog` là service **duy nhất** trong 11 service dùng CDC relay (Debezium MongoDB Outbox Event Router) — **8/10** service còn lại phát domain event và dùng app-level outbox publisher (retry/backoff/DLQ ở tầng application): `auth-user`, `inventory`, `message`, `notification`, `order-commerce`, `payment-wallet`, `rating-comment`, `shipment`. `search` và `api-gateway` không phát domain event nào (search chỉ là consumer; api-gateway không sở hữu outbox/Kafka). Đây là lựa chọn có chủ ý: chỉ product-catalog cần đồng bộ gần-real-time và đáng tin cậy cho Search (yêu cầu ban đầu của HLD), MongoDB replica set sẵn có hỗ trợ change stream tốt; 8 service kia dùng MySQL/khác và chưa có nhu cầu tương đương. | Nếu sau này platform muốn thống nhất 1 cơ chế, đây là điểm bất đối xứng cần cân nhắc lại — không phải lỗi, ghi nhận có chủ ý. | Architecture/Cecilia |
 | 26 | ~~CDC ↔ event contract chưa tương thích kỹ thuật với schema outbox~~ — **đã chốt (Cecilia, 2026-09-19, `DOCS-CDC-02`)**: bổ sung field `topic`/`version`/`actor_user_id`/`traceparent` vào `outbox_events` (`docs/db/product-catalog.md` §3.9) + cấu hình connector (field-name mapping, routing theo `topic`, envelope/header placement) ở §6.6. Contract §6.1–6.5 không đổi. | — | Đã đóng |
+| 27 | `shop.updated` của auth-user gửi logo dưới dạng `snapshot.logo_object_key`; `ShopProjectionService` chỉ đọc `logo_url` phẳng nên logo shop trong projection không đổi khi seller đổi logo. Auth-user chỉ cấp logo dạng presigned URL 10 phút (`ShopAssetUrlAdapter`), nên Catalog không thể lưu URL bền. Đề xuất giữ nguyên: `shop.logo_url` của Catalog là `null` và FE lấy logo từ `GET /api/v1/shops/{shopId}` của auth-user. | Nếu FE dùng `shop.logo_url` của Catalog thì sẽ không có logo. | Product + Auth User + FE |

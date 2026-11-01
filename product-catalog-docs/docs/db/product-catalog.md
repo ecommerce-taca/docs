@@ -1,6 +1,6 @@
 # Database — Product Catalog Service
 
-> Nguồn: `docs/lld/product-catalog.md` · `HighLevelDesign/HLD.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`fe1e0d7`) · Cập nhật: `2026-10-31`
+> Nguồn: `docs/lld/product-catalog.md` · `HighLevelDesign/HLD.md` · Code: `ecommerce-taca/Product-Catalog-Service` @ `develop` (`6572ece`) · Cập nhật: `2026-10-31`
 > Trạng thái triển khai: ✅ Đã triển khai — schema Mongoose ở `src/database/schemas/*.schema.ts` (11 collection, gồm `import_jobs`); index do Mongoose tạo.
 > Baseline: MongoDB 8.x + Mongoose · database riêng `product_catalog`
 
@@ -102,7 +102,7 @@ Document mẫu rút gọn:
 | `slug` | string | Có | lowercase, hyphen, tối đa 160 ký tự; unique trong shop. |
 | `title` | string | Có | Trim; tối đa 200 Unicode characters. |
 | `description` | string | Có khi publish | Tối đa 100.000 ký tự; sanitize rich text/HTML allowlist. |
-| `brand` | string/null | Không | Tối đa 120 Unicode characters. |
+| `brand` | string/null | Không | Tối đa 100 Unicode characters (`@MaxLength(100)` trong `create-product.dto.ts`). |
 | `status` | enum | Có | `DRAFT`, `ACTIVE`, `INACTIVE`, `BLOCKED`, `ARCHIVED`. |
 | `price_summary` | object | Có khi publish | Integer VND; thể hiện giá đại diện/min price của SPU (tính từ SKU set); giá SKU là nguồn kiểm tra cuối khi checkout. Khi tạo product chưa có SKU, seller nhập `price_summary` làm giá khởi tạo; ngay khi SKU set không rỗng, `price_summary` được application service **tự tính lại** (`base` = min `base_price` của SKU `ACTIVE`, `sale` = min `sale_price` tương ứng) mỗi lần `PUT /seller/products/{productId}/skus`. |
 | `primary_category_id` | string/null | Có khi publish | Category phải `ACTIVE`. |
