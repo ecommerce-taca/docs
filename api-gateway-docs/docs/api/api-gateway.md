@@ -109,11 +109,13 @@ Gateway chỉ thực hiện coarse gate trong bảng; service đích kiểm tra 
 | 9 | `ANY` | `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/shops/{shopId}/products` | Proxy catalog public/admin | Method/role policy | Upstream pass-through/mapped error |
 | 10 | `ANY` | `/api/v1/seller/products/**` | Proxy seller product CRUD/publish | Seller/admin | Upstream pass-through/mapped error |
 | 11 | `ANY` | `/api/v1/search/**`, `/api/v1/products/search`, `/api/v1/admin/search/**` | Proxy search (public query + admin reindex) | Public GET; admin role-gated | Upstream pass-through/mapped error |
-| 12 | `ANY` | `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/vouchers/**` (trừ `GET /api/v1/vouchers`) | Proxy commerce | Authenticated | Upstream pass-through/mapped error |
-| 12a | `GET` | `/api/v1/vouchers` | List voucher khả dụng (PDP/Shop voucher strip cho khách chưa đăng nhập) | Public; có JWT thì service tính thêm `eligible` | Upstream pass-through/mapped error |
+| 12 | `ANY` | `/api/v1/cart/**` | Proxy giỏ hàng → `cart-service` | Authenticated | Upstream pass-through/mapped error |
+| 12a | `GET` | `/api/v1/vouchers` (→ `checkout-service`) | List voucher khả dụng (PDP/Shop voucher strip cho khách chưa đăng nhập) | Public; có JWT thì service tính thêm `eligible` | Upstream pass-through/mapped error |
+| 12b | `ANY` | `/api/v1/checkout/**`, `/api/v1/vouchers/**` (trừ `GET /api/v1/vouchers`), `/api/v1/seller/vouchers/**`, `/api/v1/admin/vouchers/**` | Proxy checkout + voucher → `checkout-service` | Authenticated; seller/admin theo endpoint | Upstream pass-through/mapped error |
+| 12c | `ANY` | `/api/v1/orders/**`, `/api/v1/seller/orders/**` (trừ route shipment ở #15; gồm façade `/seller/orders/{orderId}/shipment/carriers`) | Proxy đơn hàng + hoá đơn → `order-service` | Authenticated; seller theo endpoint | Upstream pass-through/mapped error |
 | 13 | `ANY` | `/api/v1/seller/inventory/**`, `/api/v1/admin/inventory/**` | Proxy inventory | Seller/admin | Upstream pass-through/mapped error |
 | 14 | `ANY` | `/api/v1/payments/**` (webhook không JWT), `/api/v1/seller/wallet/**`, `/api/v1/seller/payouts/**`, `GET /api/v1/seller/revenue`, `GET /api/v1/seller/revenue/export`, `/api/v1/admin/payments/**`, `/api/v1/admin/fees/**`, `/api/v1/admin/taxes/**`, `/api/v1/admin/settlements/**`, `/api/v1/admin/finance/**` | Proxy payment/wallet + admin finance | Authenticated/seller/admin (`FINANCE_OPS` cho `/admin/**`); `POST /payments` + `POST /payments/{paymentId}/refunds` là internal, service tự chặn bằng actor scope | Upstream pass-through/mapped error |
-| 15 | `ANY` | `/api/v1/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment/carriers`, `POST /api/v1/webhooks/shipping/{carrier}` | Proxy shipment tracking + carrier webhook | Buyer/seller theo endpoint; webhook không JWT | Upstream pass-through/mapped error |
+| 15 | `ANY` | `/api/v1/orders/{orderId}/shipment`, `/api/v1/seller/orders/{orderId}/shipment`, `POST /api/v1/webhooks/shipping/{carrier}` | Proxy shipment tracking + carrier webhook | Buyer/seller theo endpoint; webhook không JWT | Upstream pass-through/mapped error |
 | 16 | `ANY` | `/api/v1/products/{productId}/reviews`, `/api/v1/reviews/**`, `/api/v1/seller/reviews/**` | Proxy rating/comment | Public GET/auth write | Upstream pass-through/mapped error |
 | 17 | `ANY` | `/api/v1/notifications/**` | Proxy notification center | Authenticated | Upstream pass-through/mapped error |
 | 17a | `ANY` | `/api/v1/admin/notifications/**` | Proxy notification delivery/retry diagnostics | Admin permission | Upstream pass-through/mapped error |
@@ -361,7 +363,7 @@ Upstream 4xx allowlist error:
 ```json
 {
   "error": {
-    "code": "ORDER_STOCK_UNAVAILABLE",
+    "code": "CHECKOUT_STOCK_UNAVAILABLE",
     "message": "Sản phẩm không còn đủ tồn kho.",
     "details": {
       "item_id": "item-01912f31"
