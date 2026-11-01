@@ -286,7 +286,8 @@ Ràng buộc riêng của Kong:
 | `X-Trace-ID` | Tracing layer | Propagate W3C trace context; không dùng làm authorization. |
 | `X-User-ID` | JWT `sub` | Gateway strip header đầu vào và set lại sau khi validate. |
 | `X-User-Roles` | JWT `roles` | Giá trị serialize an toàn; service không được tin nếu request không đi từ trusted Gateway network. |
-| `X-User-Permissions` | JWT `permissions` | Chỉ là coarse context, không thay thế policy service. |
+| `X-User-Permissions` | JWT `permissions` | Chỉ là coarse context, không thay thế policy service. Auth-user chỉ đưa claim này vào token của user có role admin (permission SYSTEM, ví dụ `SEARCH_ADMIN`) — user-auth-service#115. |
+| `X-MFA-Step-Up` | Client gửi token opaque | Route tới `up-auth-user`: forward nguyên token (auth-user tự verify). Route `/admin/**` tới service khác (Search, Payment-Wallet): Gateway gọi `POST /api/v1/auth/2fa/step-up/check` của auth-user với `Authorization` của chính request + header này; `200` → set `X-MFA-Step-Up: true` rồi forward; `428 RBAC_MFA_REQUIRED` → trả nguyên lỗi (kèm challenge) cho client, không forward. Không có header → strip, upstream tự trả lỗi step-up. (C16, user-auth-service#115) |
 | `X-User-Shop-Scope` | JWT shop scope | Có thể rỗng hoặc nhiều shop; service phải kiểm tra record thật. |
 | `X-Auth-Method` | Gateway | Giá trị v1 `jwt`; không cho client tự set. |
 | `X-Forwarded-For` | Trusted proxy chain | Chỉ lấy client IP từ proxy đã khai báo; không tin chuỗi header tùy ý. |

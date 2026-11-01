@@ -143,6 +143,7 @@ Kafka header (không nằm trong payload) mang `traceparent`, `request_id` — t
 | 10 | `POST` | `/auth/password/reset` | Đặt password mới | Public với reset token | Reset password | ✅ |
 | 11 | `POST` | `/auth/2fa/setup` | Tạo TOTP enrollment | Admin authenticated | Admin security settings | ✅ |
 | 12 | `POST` | `/auth/2fa/verify` | Verify login/2FA enrollment | Challenge/authenticated | Admin login/step-up | ✅ |
+| 12b | `POST` | `/auth/2fa/step-up/check` | Gateway verify token `X-MFA-Step-Up` trước khi forward tới service khác; `200 {data:{step_up_valid:true}}` hoặc `428 RBAC_MFA_REQUIRED` kèm challenge | Authenticated (bearer của chính user) | — (Gateway nội bộ) | 🟡 user-auth-service#115 |
 | 13 | `GET` | `/users/me` | Đọc profile | Authenticated | Buyer Account/Profile | ✅ |
 | 14 | `PUT` | `/users/me` | Cập nhật profile | Authenticated | Buyer Account/Profile | ✅ |
 | 15 | `GET` | `/users/me/addresses` | Danh sách địa chỉ | Authenticated | Address book/checkout | ✅ |
