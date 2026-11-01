@@ -8,8 +8,8 @@
 
 | Thành phần | Fixture/baseline |
 |---|---|
-| Runtime | Spring Boot/Java 25, JUnit 5, MockMvc/Testcontainers MongoDB. |
-| Dependency doubles | Product batch (active/inactive/timeout), Inventory availability. |
+| Runtime | Spring Boot/Java 25, JUnit 5, MockMvc/Testcontainers MongoDB (replica set, cần cho transaction §3.1a DB). |
+| Dependency doubles | Product detail `GET /products/{productId}` (có `skus[]` với `sku_id`, `price.sale_price`, `attributes`; product `404`; SKU không có trong `skus[]`; timeout), Inventory availability. |
 | Data | Seed ở `docs/db/cart.md` §6. |
 | Actors | Buyer owner, buyer khác, thiếu JWT, internal caller có/không token. |
 
@@ -34,6 +34,8 @@
 | CART-API-07 | `checked-out` G1 → G2 → gọi lại G1 | Không xoá item nào ngoài `item_ids` của G1; lần gọi lại trả `removed_item_ids=[]`, `200`. |
 | CART-API-08 | Không có TTL | Document không bị xoá sau 30+ ngày (kiểm không có TTL index). |
 | CART-API-09 | `POST /cart/items` gửi 2 lần cùng `Idempotency-Key` | Quantity chỉ cộng 1 lần, lần 2 trả cùng response; cùng key khác body → `409 CART_IDEMPOTENCY_CONFLICT`. |
+| CART-API-11 | 21 lần thêm cùng SKU với key K1…K21 (mỗi lần +1), rồi gửi lại K1 trong 24h | Quantity giữ 21; K1 trả response gốc (không có giới hạn số key). Hai request đồng thời cùng key → chỉ cộng 1 lần. |
+| CART-API-12 | `GET /cart` giỏ có SKU đã bị seller tắt | SKU không có trong `skus[]` của product detail → item `available=false`, không lỗi. |
 | CART-API-10 | `GET /internal/carts/{id}` không có `item_ids` | Trả mọi item trong giỏ; giỏ chưa có → `items=[]`. |
 
 ## 4. Unit test
@@ -48,7 +50,7 @@
 
 ## 5. Contract/security/resilience
 
-- Contract Cart→Product: batch ≤100, timeout dùng snapshot cũ.
+- Contract Cart→Product: `GET /products/{productId}` theo `product-catalog-docs/docs/api/product-catalog.md` §3.1; map giá từ `skus[].price.sale_price`, nhãn từ `skus[].attributes`; SKU vắng trong `skus[]` hoặc product `404` → `available=false`; timeout dùng snapshot cũ; tối đa 10 lời gọi song song; cùng `product_id` trong 30s chỉ gọi 1 lần (cache). **Không** dùng batch `GET /products?product_ids=` (không có `skus[]`).
 - Contract Checkout→Cart: shape §3.5/§3.6 khớp `checkout-docs/docs/lld/checkout.md` §3.3.
 - Security: IDOR item/cart, token nội bộ, Gateway không expose `/internal/**`.
 - Load: `GET /cart` lúc sale; update đồng thời cùng giỏ → `CART_VERSION_CONFLICT`, không mất item.

@@ -45,6 +45,7 @@ erDiagram
 | `status` | VARCHAR(16) | N | `CheckoutGroupStatus`. |
 | `voucher_ids` | JSON | N | `voucher_id` buyer gửi trong `POST /checkout`. |
 | `grand_total` | BIGINT | N | Tổng nhóm tại lúc place. |
+| `order_create_request` | JSON | Y | Body `POST /internal/orders` nguyên văn (`order-docs/docs/api/order.md` §3.7), ghi một lần sau khi reserve xong, trước lần gọi Order đầu tiên; bất biến sau đó. Reconcile gửi lại đúng body này (`docs/lld/checkout.md` §3.5). Chứa PII (email, SĐT, địa chỉ): không log, xoá sau `ORDER_CREATE_REQUEST_RETENTION`. |
 | `failure_reason` | VARCHAR(64) | Y | Mã lỗi khi `FAILED`. |
 | `created_at/updated_at` | DATETIME(6) | N | UTC. |
 | `version` | BIGINT | N | Optimistic lock. |

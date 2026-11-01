@@ -210,7 +210,7 @@ Order-Commerce (chưa có code) được tách thành `cart-service` (`cart-docs
 
 ### 10.1 Recheck chi tiết sau khi tách (2026-11-01)
 
-Một lượt rà contract chi tiết sau PR tách service tìm thêm 12 điểm (ký hiệu R để không trùng S11/S12 ở trên). Tất cả đã sửa trong docs cart/checkout/order; không đổi contract của service đã có code.
+Một lượt rà contract chi tiết sau PR tách service tìm thêm 12 điểm (ký hiệu R để không trùng S11/S12 ở trên), lượt rà lại sau đó tìm thêm 3 điểm (F01–F03). Tất cả đã sửa trong docs cart/checkout/order; không đổi contract của service đã có code.
 
 | # | Điểm kiểm | Xử lý |
 |---|---|---|
@@ -226,3 +226,6 @@ Một lượt rà contract chi tiết sau PR tách service tìm thêm 12 điểm
 | R10 | `CO-CALC-06` còn giảm 200.000. | Sửa thành 199.999 theo trần `subtotal_s − 1`. |
 | R11 | `status=EXPIRED` mâu thuẫn quy tắc chỉ trả `ACTIVE`. | Định nghĩa nhánh `EXPIRED` (30 ngày gần nhất, `eligible=false`). |
 | R12 | Enum `DiscountType` nói `PERCENT` chỉ áp tiền hàng, DB cho `FREESHIP` + `PERCENT`. | Một bảng tổ hợp hợp lệ trong `lld/voucher.md` §5. |
+| F01 | Reconcile gửi lại "cùng body" nhưng DB Checkout không lưu đủ field để dựng lại (email, địa chỉ, snapshot item, hạn reservation). | Lưu nguyên body vào `checkout_groups.order_create_request` trước lần gọi Order đầu tiên; reconcile gửi lại đúng body đó. |
+| F02 | Cart hứa giữ `Idempotency-Key` 24h nhưng chỉ lưu 20 key mỗi giỏ. | Collection riêng `cart_idempotency_keys` (TTL 24h, không giới hạn số key), ghi cùng transaction với giỏ. |
+| F03 | Test plan Cart và ghi chú Catalog còn nói Cart dùng batch. | Đổi sang `GET /products/{productId}`, thêm case SKU vắng/timeout/cache. |
