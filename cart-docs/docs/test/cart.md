@@ -47,7 +47,7 @@
 | CART-API-20 | `GET /internal/carts/{buyerUserId}` với `?item_ids=` rỗng, trùng ID, >100 ID | 400 cho rỗng/>100, dedupe giữ thứ tự cho ID trùng. |
 | CART-API-21 | GET giỏ 100 product khác nhau; Product/Inventory chậm | Tối đa 10 concurrent Product calls, Product cache 30s; Inventory không fan-out không giới hạn, dùng budget còn lại; hydrate tổng ≤3s + HTTP overhead hợp lý; `200` fallback. DTO và cách batch/fan-out Inventory kiểm theo contract thực tế. |
 | CART-API-22 | Product invalid/timeout phối hợp Inventory đủ/thiếu/timeout | Product invalid → `PRODUCT_UNAVAILABLE` ưu tiên hơn Inventory; Product timeout → `STALE`; Product valid + Inventory đủ/thiếu/timeout → `AVAILABLE`/`OUT_OF_STOCK`/`UNKNOWN`; `available` hint không dùng chốt order. |
-| CART-API-23 | Header `X-User-ID` giả mạo, thiếu actor context, token nội bộ sai | Gateway strip/inject; direct public access bị chặn; thiếu/sai internal token `401`. |
+| CART-API-23 | Header `X-User-ID` giả mạo, thiếu actor context, token nội bộ sai | Gateway strip/inject; direct public access bị chặn; thiếu/sai internal token `401`. Caller đã xác thực nhưng không có quyền truy cập route/tài nguyên; không dùng thay cho 404 chống IDOR.|
 | CART-API-24 | Mongo transaction/write conflict/unknown commit/DB outage | Không partial commit cart/key; known conflict chưa commit → retry bounded; keyed POST unknown commit → kiểm key/hash trước replay, không được cộng đôi; không thể xác minh → `503 CART_STORAGE_UNAVAILABLE`; no-key POST mất ACK → không tự retry phép cộng; DB down → `503`. |
 | CART-API-25 | SKU capped 999/no-op PUT; DELETE sau đó re-add | No-op không tăng revision/version; capped POST có key vẫn lưu response idempotency 201; add lại tạo `item_id` mới, stale checked-out không xoá item mới. |
 

@@ -132,6 +132,7 @@ Chỉ Checkout gọi **sau khi place/order thành công**. `expected_item_revisi
 |---|---:|---|
 | `CART_INVALID_INPUT` | 400 | Payload/query sai. |
 | `CART_UNAUTHENTICATED` | 401 | Thiếu login hoặc token nội bộ. |
+| `CART_FORBIDDEN` | 403 | Caller đã xác thực nhưng không có quyền truy cập route/tài nguyên; không dùng thay cho 404 chống IDOR. |
 | `CART_ITEM_NOT_FOUND` | 404 | Item/cart không thuộc buyer. |
 | `CART_PRODUCT_UNAVAILABLE` | 409 | Product/SKU không active. |
 | `CART_TOO_MANY_ITEMS` | 409 | Vượt 100 dòng. |
