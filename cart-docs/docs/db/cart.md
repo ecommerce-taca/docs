@@ -1,8 +1,7 @@
 # Database — Cart Service
 
-> Nguồn: `docs/lld/cart.md` · `docs/api/cart.md` · Code: chưa có repo (`ecommerce-taca/cart-service`) · Cập nhật: `2026-11-01`
-> Trạng thái triển khai: ⏳ Chưa triển khai — tách từ Order-Commerce ngày 2026-11-01; toàn bộ nội dung là thiết kế.
-> Baseline: MongoDB 8.x · database riêng `cartdb`
+> Nguồn: `docs/lld/cart.md` · `docs/api/cart.md` · Cập nhật: `2026-11-17`
+> Baseline: MongoDB `7.0` · database riêng `cartdb`
 
 ## 1. Quy ước chung
 
@@ -80,7 +79,7 @@ Không có enum trạng thái cart. Rules: một cart/buyer, tối đa 100 dòng
 
 ## 6. Migration và seed
 
-⏳ Chưa có code. Index tạo bằng init script khi khởi động (ví dụ Mongock changeset `001-create-carts-indexes`).
+`CartIndexInitializer` tạo index khi ứng dụng khởi động ở profile `local` và `prod` (`cart.indexes.initialize=true`); profile `test` tắt auto-initialization. Không dùng Mongock. Index tạo gồm unique `carts.buyer_user_id`, `carts.updated_at` và TTL `cart_idempotency_keys.expires_at`.
 
 | Seed (local/test) | Giá trị |
 |---|---|
