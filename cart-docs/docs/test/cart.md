@@ -1,17 +1,16 @@
 # Test Plan — Cart Service
 
-> Nguồn: `docs/lld/cart.md` · `docs/api/cart.md` · `docs/db/cart.md` · Code: chưa có repo (`ecommerce-taca/cart-service`) · Cập nhật: `2026-11-01`
-> Trạng thái triển khai: ⏳ Chưa triển khai — tách từ Order-Commerce ngày 2026-11-01; toàn bộ nội dung là thiết kế.
-> Môi trường: Spring Boot/Java 25, JUnit 5, MockMvc, Testcontainers (MongoDB 8)
+> Nguồn: `docs/lld/cart.md` · `docs/api/cart.md` · `docs/db/cart.md` · Cập nhật: `2026-11-17`
+> Môi trường: Java 25/Spring Boot 4, JUnit 5, Mockito (`@MockitoBean`), MockMvc, `mongo:7.0` Testcontainers replica set, fake HTTP `HttpServer`, PowerShell/Maven.
 
 ## 1. Chuẩn bị
 
 | Thành phần | Fixture/baseline |
 |---|---|
-| Runtime | Spring Boot/Java 25, JUnit 5, MockMvc/Testcontainers MongoDB 8 replica set (transaction §3.1a DB); TestClock để điều khiển thời gian TTL 24h, kiểm tra indexes. |
-| Dependency doubles | Product detail `GET /products/{productId}` (`skus[].sku_id`, `price.sale_price`, `attributes`, product inactive, `404`, SKU không thuộc product, 5xx, timeout); Inventory availability đủ/thiếu/timeout; fake HTTP server kiểm concurrency và hydrate budget. Verify status/DTO theo contract thực tế trước khi viết mapper. |
+| Runtime | Java 25, Maven, Spring Boot 4, JUnit 5, MockMvc/Testcontainers `mongo:7.0` replica set (transaction); test `Clock` điều chỉnh TTL cache 30s; kiểm Mongo indexes/idempotency. |
+| Dependency doubles | Product `GET /api/v1/products/{productId}`: ACTIVE/404/inactive/missing SKU/price lỗi/timeout; Inventory batch `GET /internal/inventory/availability?sku_ids=...`: đủ/thiếu/missing SKU, 401/503, timeout; `HttpServer` fake và Mockito. Không đánh đồng mock pass với provider contract pass. |
 | Data | Seed ở `docs/db/cart.md` §6. |
-| Actors | Buyer owner, buyer khác, thiếu JWT/context, `X-User-ID` giả mạo/tự inject, direct service caller, internal caller có/không/sai token; Gateway private routes. |
+| Actors | Buyer owner, buyer khác, thiếu JWT/context, `X-User-ID` giả mạo/tự inject, gateway token có/không/sai, direct service caller, internal caller có/không/sai token, monitoring scraper; Gateway private routes. |
 
 ## 2. Manual QA
 
@@ -45,15 +44,42 @@
 | CART-API-18 | Buyer đổi qty từ 2→5 trong lúc Checkout place | checked-out với revision cũ không xoá item qty 5; `skipped_modified_item_ids` chứa item; không tự trừ số lượng. |
 | CART-API-19 | checked-out thiếu/map revision sai, hoặc cart_id không thuộc buyer | Thiếu/sai revision → 400; sai cart/buyer → 404; không xoá dữ liệu. |
 | CART-API-20 | `GET /internal/carts/{buyerUserId}` với `?item_ids=` rỗng, trùng ID, >100 ID | 400 cho rỗng/>100, dedupe giữ thứ tự cho ID trùng. |
-| CART-API-21 | GET giỏ 100 product khác nhau; Product/Inventory chậm | Tối đa 10 concurrent Product calls, Product cache 30s; Inventory không fan-out không giới hạn, dùng budget còn lại; hydrate tổng ≤3s + HTTP overhead hợp lý; `200` fallback. DTO và cách batch/fan-out Inventory kiểm theo contract thực tế. |
+| CART-API-21 | GET giỏ 100 Product khác nhau; Product/Inventory chậm | Test mặc định Product concurrency ≤10, Product cache 30s, Inventory tối đa 100 SKU/batch, budget hydrate 3s (+HTTP/JVM overhead), `200` với partial fallback. |
 | CART-API-22 | Product invalid/timeout phối hợp Inventory đủ/thiếu/timeout | Product invalid → `PRODUCT_UNAVAILABLE` ưu tiên hơn Inventory; Product timeout → `STALE`; Product valid + Inventory đủ/thiếu/timeout → `AVAILABLE`/`OUT_OF_STOCK`/`UNKNOWN`; `available` hint không dùng chốt order. |
-| CART-API-23 | Header `X-User-ID` giả mạo, thiếu actor context, token nội bộ sai | Gateway strip/inject; direct public access bị chặn; thiếu/sai internal token `401`. Caller đã xác thực nhưng không có quyền truy cập route/tài nguyên; không dùng thay cho 404 chống IDOR.|
+| CART-API-23 | Header `X-User-ID` giả mạo, thiếu actor context, gateway/internal token sai | Gateway strip/inject; buyer route cần `X-Gateway-Service-Token`; direct public access bị chặn; thiếu/sai token `401`. |
 | CART-API-24 | Mongo transaction/write conflict/unknown commit/DB outage | Không partial commit cart/key; known conflict chưa commit → retry bounded; keyed POST unknown commit → kiểm key/hash trước replay, không được cộng đôi; không thể xác minh → `503 CART_STORAGE_UNAVAILABLE`; no-key POST mất ACK → không tự retry phép cộng; DB down → `503`. |
 | CART-API-25 | SKU capped 999/no-op PUT; DELETE sau đó re-add | No-op không tăng revision/version; capped POST có key vẫn lưu response idempotency 201; add lại tạo `item_id` mới, stale checked-out không xoá item mới. |
+| CART-API-26 | Health và Prometheus | `/health/live`/`ready` không cần auth; `/actuator/prometheus` cần Bearer `CART_MONITORING_TOKEN`; caller xác thực đi route bị deny nhận `403 CART_FORBIDDEN`. |
 
-## 4. Unit test
+## 4. Test coverage
 
-⏳ Repo chưa có test class; mọi module dưới đây là test còn thiếu.
+| Nhóm | Test class | Phạm vi |
+|---|---|---|
+| Product response | `CartProductResponseHydratorTest` | Mapping response Product, giá và line_total mới; Product unavailable/stale; giữ Cart snapshot không đổi. |
+| Product adapter | `HttpProductHydrationClientTest` | Product GET detail, parse SKUs, inactive/404, schema/price lỗi, timeout và fallback. |
+| Product cache | `CachedProductHydrationServiceTest` | Cache 30s, expiry, negative cache (`UNAVAILABLE`), không cache `STALE`, single-flight, semaphore, saturation/permit release. |
+| Inventory | `HttpInventoryAvailabilityClientTest`, `CartInventoryResponseHydratorTest` | Auth token, batch request, status/quantity mapping, malformed/partial data, timeout, concurrency và thứ tự ưu tiên Product trước Inventory. |
+| Hydration | `CartHydrationOrchestratorTest`, `CartQueryServiceTest`, `CartHydrationHttpIntegrationTest`, `CartHydrationRegressionIntegrationTest` | Distinct Product, budget chung, fallback, cache/single-flight và GET đồng thời mutation. |
+| Cart mutation | `CartCrudHttpIntegrationTest`, `HttpProductCatalogClientTest`, `CartIdempotencyHttpRegressionTest` | CRUD, POST fresh Product read và replay/idempotency. |
+| HTTP contract | `CartContractFixtureTest`, `CartBuyerHttpContractTest`, `CheckoutCartHttpContractTest`, `CartDependencyHttpContractTest` | Request/response buyer/internal và Cart→Product/Inventory với provider giả lập. |
+| End-to-end | `CartCrossServiceE2EIntegrationTest`, `CartFailureConcurrencyE2EIntegrationTest` | Luồng Cart qua HTTP tới Product/Inventory giả lập, persistence Testcontainers, lỗi dependency và concurrency. |
+
+Các regression giữ mô hình **MongoDB Testcontainers thật**, `CartQueryService`, persistence và orchestrator thật ở HTTP integration suite; chỉ mock adapter dependency ngoài (`ProductHydrationClient`, `InventoryAvailabilityClient`) khi cần kiểm soát timing và lỗi. `CartHydrationHttpIntegrationTest` có thể mock lớp cache cho các kịch bản mapping/HTTP riêng, còn `CartHydrationRegressionIntegrationTest` cố ý giữ `CachedProductHydrationService` thật để xác minh cache/single-flight từ GET HTTP. Test contract/E2E mới dùng fixture và `HttpServer` giả lập, nên không thay thế consumer/provider contract test với Inventory thật.
+
+### 4.1 Chạy suite trên Windows PowerShell
+
+```powershell
+mvn "-Dtest=CartProductResponseHydratorTest,HttpProductHydrationClientTest,CachedProductHydrationServiceTest,HttpInventoryAvailabilityClientTest,CartInventoryResponseHydratorTest,CartHydrationOrchestratorTest" test
+mvn "-Dtest=CartQueryServiceTest,CartHydrationHttpIntegrationTest,CartHydrationRegressionIntegrationTest" test
+mvn "-Dtest=CartCrudHttpIntegrationTest,CartIdempotencyHttpRegressionTest,HttpProductCatalogClientTest" test
+mvn "-Dtest=CartContractFixtureTest,CartBuyerHttpContractTest,CheckoutCartHttpContractTest,CartDependencyHttpContractTest,CartCrossServiceE2EIntegrationTest,CartFailureConcurrencyE2EIntegrationTest" test
+mvn clean test
+mvn clean package
+```
+
+Bật Docker Desktop để chạy MongoDB Testcontainers. Với concurrency/timing tests có thể lặp lại suite 6G nhiều lần để phát hiện flakiness; không sửa race condition bằng cách chỉ nới timeout khi chưa hiểu nguyên nhân.
+
+### 4.2 Các nhóm kiểm thử nền tảng tiếp tục duy trì
 
 | Module | Cases |
 |---|---|
@@ -67,14 +93,14 @@
 ## 5. Contract/security/resilience
 
 - Contract Cart→Product: `GET /products/{productId}` theo `product-catalog-docs/docs/api/product-catalog.md` §3.1; map giá từ `skus[].price.sale_price`, nhãn từ `skus[].attributes`; SKU vắng hoặc product `404`/inactive → `PRODUCT_UNAVAILABLE`; timeout dùng snapshot cũ (`STALE`). Max 10 lời gọi song song, cache `product_id` 30s, timeout per-call 2s và toàn hydrate 3s. **Không** dùng batch `GET /products?product_ids=` (không có `skus[]`). Field active phải verify contract Product thực tế.
-- Contract Cart→Inventory: availability read-only theo `inventory-docs/docs/api/inventory.md` #1; khi thiếu quantity → `OUT_OF_STOCK`, timeout → `UNKNOWN`. Request/response DTO chưa nằm trong bộ Cart docs, phải verify trước implement adapter.
+- Contract Cart→Inventory: Cart adapter đã parse `GET /internal/inventory/availability?sku_ids=` và response `data[]` gồm `sku_id`, `available_qty`, `status`, `as_of`; một request tối đa 100 SKU, có `X-Internal-Service-Token`, timeout → `UNKNOWN`. `CartDependencyHttpContractTest` và E2E test xác minh contract này với HTTP fixture/provider giả lập. **Provider Inventory endpoint hiện chưa triển khai**; vẫn cần consumer/provider contract test trước tích hợp thực.
 - Contract Checkout→Cart: §3.5/§3.6 **đã thay đổi** so với `checkout-docs/docs/lld/checkout.md` §3.3: internal GET thêm `item_revision`, checked-out bắt buộc `expected_item_revisions`; phải cập nhật caller/contract tests phía Checkout trước khi tích hợp, không khẳng định sẵn tương thích.
-- Security: IDOR item/cart, token nội bộ compare constant-time, Gateway strip/inject actor header, deny direct access, private `/internal/**`, không log token/cart content; kiểm tra public ingress và network policy.
+- Security: IDOR item/cart, gateway/internal/monitoring token compare constant-time, Gateway strip/inject actor header, buyer route bắt buộc `X-Gateway-Service-Token`, deny direct access, private `/internal/**`, health public, Prometheus có Bearer token, không log token/cart content; kiểm tra public ingress và network policy.
 - Load: `GET /cart` lúc sale; update đồng thời cùng giỏ → retry/CAS hoặc `CART_VERSION_CONFLICT`, không lost update. Kiểm tra Product fan-out ≤10, Inventory bounded fan-out (ngưỡng theo contract đã xác minh), hydrate tổng 3s, Mongo transaction fail/retry và expiry reclaim key. Verify các P0 Product/Inventory/Gateway/Checkout bằng contract và môi trường thực tế trước integration; chưa coi là pass khi thiếu nguồn đối chiếu.
 
 ## 6. Tiêu chí pass/phát hành
 
-Mọi case §3 pass; không mất item dưới ghi đồng thời/Checkout cleanup; replay key không cộng đôi kể cả expiry chưa dọn; GET hydrate không ghi DB và fallback trong timeout budget; không log nội dung giỏ/token; `/internal/**` không truy cập qua Gateway; Product/Inventory/Checkout contract đã được đối chiếu trước integration; MongoDB replica set + indexes sẵn sàng.
+Mọi case §3 cần pass; không mất item dưới ghi đồng thời/Checkout cleanup; replay key không cộng đôi kể cả expiry chưa dọn; GET hydrate không ghi DB và fallback trong timeout budget; không log nội dung giỏ/token; `/internal/**` không truy cập qua Gateway; MongoDB replica set + indexes sẵn sàng.
 
 ## 7. Giả định & câu hỏi mở
 
@@ -82,4 +108,5 @@ Mọi case §3 pass; không mất item dưới ghi đồng thời/Checkout clean
 |---|---|---|---|
 | 1 | ID test đổi từ `O-API-01..03` (Order-Commerce) sang `CART-API-*`. | Trace với test cũ qua bảng này. | QA |
 | 2 | Bổ sung tests cho thay đổi contract `expected_item_revisions` của Checkout. | Caller/LLD Checkout hiện chưa được xác minh trong bộ tài liệu này. | Checkout + QA |
-| 3 | Product active field, Inventory DTO, Gateway ingress chưa có nguồn đính kèm. | Phải dùng contract thực tế làm fixture; không suy đoán schema. | Product/Inventory/Gateway owner |
+| 3 | Cart Inventory adapter có batch DTO và token nhưng provider Inventory route chưa triển khai; cần xác minh Gateway ingress. | Cần consumer/provider contract test cho Inventory, kiểm `sku_ids` query encoding và internal auth trước khi tích hợp. | Product/Inventory/Gateway owner |
+| 4 | Test concurrency và timeout dùng dependency giả lập, không chứng minh hard real-time hoặc kill HTTP request vật lý. | Đo latency, thread/concurrency dưới tải thật và kiểm cancellation khi staging. | SRE/QA |
